@@ -207,37 +207,21 @@ input[type="file"] {
   padding: 10px;
 }
 
-/* 日期：加大易撳（報表、後補） */
-input[type="date"] {
-  min-height: 56px;
-  font-size: 20px;
-  padding: 16px 18px;
-  line-height: 1.2;
+/* 手打日期／數字：大字、高格，方便電話戳 */
+input.input-xl {
+  min-height: 58px;
+  font-size: 22px;
+  padding: 18px 16px;
+  line-height: 1.25;
+  width: 100%;
 }
 
-/* 仍有 datetime-local / time 時一併放大 */
+input[type="date"],
 input[type="time"],
 input[type="datetime-local"] {
   min-height: 56px;
   font-size: 20px;
   padding: 16px 18px;
-}
-
-/* 後補：時／分下拉 */
-select.input-touch-big {
-  min-height: 56px;
-  font-size: 20px;
-  padding: 14px 12px;
-  -webkit-appearance: menulist;
-  width: 100%;
-}
-
-.time-pair {
-  margin-top: 6px;
-}
-.time-pair > * {
-  flex: 1;
-  min-width: 0;
 }
 
 .select-inline {

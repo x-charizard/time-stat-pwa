@@ -44,16 +44,17 @@
     </div>
     <div class="card">
       <h2 style="margin-top:0;">後補：自己填日期同時間</h2>
-      <p class="muted" style="margin-top:0;">時間用<strong>時／分</strong>下拉（電話上較穩定）。</p>
+      <p class="muted" style="margin-top:0;">
+        全部<strong>手打數字</strong>，唔使撳日曆／細掣；格式錯會提示。
+      </p>
       <label for="manualActivity">Activity（可手打或揀建議）</label>
       <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
-      <label for="manualDate" style="margin-top:10px;">日期</label>
-      <input type="date" id="manualDate" class="input-date-big" />
-      <label style="margin-top:12px;">時間</label>
-      <div class="row time-pair">
-        <select id="manualHour" class="input-touch-big" aria-label="時"></select>
-        <select id="manualMinute" class="input-touch-big" aria-label="分"></select>
-      </div>
+      <label for="manualDateStr" style="margin-top:12px;">日期（YYYY-MM-DD）</label>
+      <input type="text" id="manualDateStr" class="input-xl" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="2026-05-03" />
+      <label for="manualHourStr" style="margin-top:12px;">時（0–23）</label>
+      <input type="text" id="manualHourStr" class="input-xl" inputmode="numeric" maxlength="2" autocomplete="off" placeholder="14" />
+      <label for="manualMinuteStr" style="margin-top:12px;">分（0–59）</label>
+      <input type="text" id="manualMinuteStr" class="input-xl" inputmode="numeric" maxlength="2" autocomplete="off" placeholder="05" />
       <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
       <input type="text" id="manualPlace" autocomplete="off" />
       <label for="manualCategory" style="margin-top:10px;">類別（可選）</label>
@@ -120,12 +121,12 @@
 
   <section data-panel="report" class="hidden">
     <div class="card">
-      <label for="reportFrom">由</label>
-      <input type="date" id="reportFrom" class="input-date-big" />
-      <label for="reportTo" style="margin-top:10px;">至</label>
-      <input type="date" id="reportTo" class="input-date-big" />
+      <label for="reportFromStr">由（YYYY-MM-DD）</label>
+      <input type="text" id="reportFromStr" class="input-xl" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="2024-12-21" />
+      <label for="reportToStr" style="margin-top:12px;">至（YYYY-MM-DD）</label>
+      <input type="text" id="reportToStr" class="input-xl" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="2026-05-03" />
       <button type="button" class="primary" id="btnReport" style="margin-top:12px;width:100%;">更新報表</button>
-      <p class="muted" style="margin-top:10px;">只計「開始時間」落喺範圍內、且有下一筆嘅區間（最後一筆無「時長」）。有匯入資料時，「由／至」會自動對齊紀錄最早／最尾一日。</p>
+      <p class="muted" style="margin-top:10px;">只計「開始時間」落喺範圍內、且有下一筆嘅區間。「由／至」請手打 YYYY-MM-DD；有資料時會自動填最早／最尾一日。</p>
     </div>
     <h2>按 Activity（小時）</h2>
     <div class="card" id="reportSummary"></div>

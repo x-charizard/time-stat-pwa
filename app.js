@@ -60,6 +60,27 @@
     return d.innerHTML;
   }
 
+  /** 手打日期 YYYY-MM-DD，唔靠原生 date picker */
+  function parseYMDStrict(s) {
+    const t = String(s || "").trim();
+    const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return null;
+    const y = parseInt(m[1], 10);
+    const mo = parseInt(m[2], 10);
+    const d = parseInt(m[3], 10);
+    const dt = new Date(y, mo - 1, d);
+    if (dt.getFullYear() !== y || dt.getMonth() !== mo - 1 || dt.getDate() !== d) return null;
+    return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  }
+
+  function parseHourMinute(hs, ms) {
+    const h = parseInt(String(hs).trim(), 10);
+    const min = parseInt(String(ms).trim(), 10);
+    if (Number.isNaN(h) || Number.isNaN(min)) return null;
+    if (h < 0 || h > 23 || min < 0 || min > 59) return null;
+    return { h, m: min };
+  }
+
   function activityById(activities, id) {
     return activities.find((e) => e.id === id);
   }
@@ -247,14 +268,18 @@
   document.getElementById("btnManual").addEventListener("click", () => {
     const label = document.getElementById("manualActivity").value.trim();
     const act = getOrCreateActivity(label);
-    const dateStr = document.getElementById("manualDate").value;
-    const hourStr = document.getElementById("manualHour").value;
-    const minuteStr = document.getElementById("manualMinute").value;
-    if (!act || !dateStr || hourStr === "" || minuteStr === "") {
-      toast("輸入 Activity + 日期 + 時間");
+    const dateNorm = parseYMDStrict(document.getElementById("manualDateStr").value);
+    const hm = parseHourMinute(
+      document.getElementById("manualHourStr").value,
+      document.getElementById("manualMinuteStr").value
+    );
+    if (!act || !dateNorm || !hm) {
+      toast("請填：Activity；日期 YYYY-MM-DD；時 0–23；分 0–59");
       return;
     }
-    const d = new Date(`${dateStr}T${hourStr}:${minuteStr}:00`);
+    const d = new Date(
+      `${dateNorm}T${String(hm.h).padStart(2, "0")}:${String(hm.m).padStart(2, "0")}:00`
+    );
     if (Number.isNaN(d.getTime())) {
       toast("日期／時間唔有效");
       return;
@@ -389,15 +414,19 @@
   });
 
   function renderReport() {
-    const from = document.getElementById("reportFrom").value;
-    const to = document.getElementById("reportTo").value;
+    const from = parseYMDStrict(document.getElementById("reportFromStr").value);
+    const to = parseYMDStrict(document.getElementById("reportToStr").value);
     const box = document.getElementById("reportSummary");
     if (!from || !to) {
-      box.innerHTML = `<p class="muted">揀日期範圍</p>`;
+      box.innerHTML = `<p class="muted">「由／至」請用手打 <strong>YYYY-MM-DD</strong>（例：2026-05-03）</p>`;
       return;
     }
     const t0 = new Date(from + "T00:00:00").getTime();
     const t1 = new Date(to + "T23:59:59.999").getTime();
+    if (t0 > t1) {
+      box.innerHTML = `<p class="muted">「由」要早過或等於「至」</p>`;
+      return;
+    }
     const list = sortedEvents();
     const byEnt = {};
     for (let i = 0; i < list.length; i++) {
@@ -642,8 +671,9 @@
   /** 無紀錄時：最近 7 日；有紀錄時：覆蓋資料最早～最尾一日（避免舊 CSV 跌出預設範圍） */
   function syncReportDatesFromEvents() {
     const list = sortedEvents();
-    const fromEl = document.getElementById("reportFrom");
-    const toEl = document.getElementById("reportTo");
+    const fromEl = document.getElementById("reportFromStr");
+    const toEl = document.getElementById("reportToStr");
+    if (!fromEl || !toEl) return;
     if (list.length === 0) {
       const to = new Date();
       const from = new Date();
@@ -656,39 +686,21 @@
     toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
-  function ensureManualTimeSelects() {
-    const hEl = document.getElementById("manualHour");
-    const mEl = document.getElementById("manualMinute");
-    if (!hEl || !mEl) return;
-    if (hEl.options.length === 0) {
-      for (let i = 0; i < 24; i++) {
-        const v = String(i).padStart(2, "0");
-        hEl.add(new Option(v + " 時", v));
-      }
-    }
-    if (mEl.options.length === 0) {
-      for (let i = 0; i < 60; i++) {
-        const v = String(i).padStart(2, "0");
-        mEl.add(new Option(v + " 分", v));
-      }
-    }
-  }
-
-  /** 後補：預填今日 + 而家時／分 */
+  /** 後補：預填今日 + 而家時／分（文字格） */
   function initManualDateTime() {
-    const dateEl = document.getElementById("manualDate");
-    const hEl = document.getElementById("manualHour");
-    const mEl = document.getElementById("manualMinute");
-    if (!dateEl || !hEl || !mEl) return;
+    const ds = document.getElementById("manualDateStr");
+    const hs = document.getElementById("manualHourStr");
+    const ms = document.getElementById("manualMinuteStr");
+    if (!ds || !hs || !ms) return;
     const d = new Date();
-    dateEl.value =
+    ds.value =
       d.getFullYear() +
       "-" +
       String(d.getMonth() + 1).padStart(2, "0") +
       "-" +
       String(d.getDate()).padStart(2, "0");
-    hEl.value = String(d.getHours()).padStart(2, "0");
-    mEl.value = String(d.getMinutes()).padStart(2, "0");
+    hs.value = String(d.getHours());
+    ms.value = String(d.getMinutes()).padStart(2, "0");
   }
 
   refreshActivityDatalist();
@@ -697,7 +709,6 @@
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
-  ensureManualTimeSelects();
   initManualDateTime();
 
   if (window.matchMedia("(display-mode: standalone)").matches) {
