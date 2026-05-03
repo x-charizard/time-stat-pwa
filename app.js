@@ -311,9 +311,8 @@
         const meta = document.createElement("div");
         meta.className = "timeline-cal-block-meta";
         const startStr = evStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
-        const durStr = formatDur(segMs);
-        const extra = [ev.place, ev.category].filter(Boolean).join(" · ");
-        meta.textContent = extra ? `${startStr} · ${durStr} · ${extra}` : `${startStr} · ${durStr}`;
+        const durMin = Math.round(segMs / 60000);
+        meta.textContent = `${startStr} · ${durMin} 分`;
         blk.appendChild(meta);
 
         col.appendChild(blk);
