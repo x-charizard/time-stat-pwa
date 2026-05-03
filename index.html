@@ -43,18 +43,25 @@
       <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄開始時間（而家）</button>
     </div>
     <div class="card">
-      <h2 style="margin-top:0;">後補：自己填日期同時間</h2>
+      <h2 style="margin-top:0;">後補：揀日期同時間</h2>
       <p class="muted" style="margin-top:0;">
-        全部<strong>手打數字</strong>，唔使撳日曆／細掣；格式錯會提示。
+        日期：<strong>過去 7 日</strong>（含今日）。時間：<strong>24 小時</strong> × <strong>60 分鐘</strong>。
       </p>
       <label for="manualActivity">Activity（可手打或揀建議）</label>
       <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
-      <label for="manualDateStr" style="margin-top:12px;">日期（YYYY-MM-DD）</label>
-      <input type="text" id="manualDateStr" class="input-xl" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="2026-05-03" />
-      <label for="manualHourStr" style="margin-top:12px;">時（0–23）</label>
-      <input type="text" id="manualHourStr" class="input-xl" inputmode="numeric" maxlength="2" autocomplete="off" placeholder="14" />
-      <label for="manualMinuteStr" style="margin-top:12px;">分（0–59）</label>
-      <input type="text" id="manualMinuteStr" class="input-xl" inputmode="numeric" maxlength="2" autocomplete="off" placeholder="05" />
+      <label for="manualDatePick" style="margin-top:12px;">日期（過去 7 日）</label>
+      <select id="manualDatePick" class="select-xl" aria-label="日期"></select>
+      <label style="margin-top:12px;">時間</label>
+      <div class="row manual-time-row">
+        <div>
+          <label for="manualHour" class="sr-only">時</label>
+          <select id="manualHour" class="select-xl" aria-label="時 0–23"></select>
+        </div>
+        <div>
+          <label for="manualMinute" class="sr-only">分</label>
+          <select id="manualMinute" class="select-xl" aria-label="分 0–59"></select>
+        </div>
+      </div>
       <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
       <input type="text" id="manualPlace" autocomplete="off" />
       <label for="manualCategory" style="margin-top:10px;">類別（可選）</label>
