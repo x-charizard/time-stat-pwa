@@ -392,7 +392,14 @@
     }
     const rows = Object.entries(byEnt).sort((a, b) => b[1] - a[1]);
     if (rows.length === 0) {
-      box.innerHTML = `<p class="muted">範圍內（按開始時間計）無完整區間。</p>`;
+      const n = state.events.length;
+      box.innerHTML =
+        `<p class="muted">呢個範圍內沒有可計時長嘅紀錄。</p>` +
+        `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
+        `<li>若果啱啱匯入舊 CSV：請將<strong>「由／至」</strong>拉到包住所謂資料嘅日期（預設會跟住你紀錄嘅最早／最尾一日）。</li>` +
+        `<li>本機尚未匯入：<strong>匯入 CSV</strong> 後先會有嘢。</li>` +
+        `<li>每一日<strong>最後一條</strong>紀錄冇「下一筆」，唔會計入時長（目前共 ${n} 條紀錄）。</li>` +
+        `</ul>`;
       return;
     }
     let html = `<table><thead><tr><th>Entity</th><th>小時</th></tr></thead><tbody>`;
@@ -433,6 +440,7 @@
         fillEntitySelect(document.getElementById("mergeTo"), false);
         renderEntityList();
         renderTimeline();
+        syncReportDatesFromEvents();
         renderReport();
         toast("已還原備份");
       } catch (e) {
@@ -586,6 +594,7 @@
     fillEntitySelect(document.getElementById("mergeTo"), false);
     renderEntityList();
     renderTimeline();
+    syncReportDatesFromEvents();
     renderReport();
     toast(`已匯入 ${n} 筆（略過 ${skip} 行）`);
   });
@@ -603,12 +612,21 @@
     });
   });
 
-  function initReportDates() {
-    const to = new Date();
-    const from = new Date();
-    from.setDate(from.getDate() - 6);
-    document.getElementById("reportTo").value = to.toISOString().slice(0, 10);
-    document.getElementById("reportFrom").value = from.toISOString().slice(0, 10);
+  /** 無紀錄時：最近 7 日；有紀錄時：覆蓋資料最早～最尾一日（避免舊 CSV 跌出預設範圍） */
+  function syncReportDatesFromEvents() {
+    const list = sortedEvents();
+    const fromEl = document.getElementById("reportFrom");
+    const toEl = document.getElementById("reportTo");
+    if (list.length === 0) {
+      const to = new Date();
+      const from = new Date();
+      from.setDate(from.getDate() - 6);
+      toEl.value = to.toISOString().slice(0, 10);
+      fromEl.value = from.toISOString().slice(0, 10);
+      return;
+    }
+    fromEl.value = list[0].start.slice(0, 10);
+    toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
   function initManualNow() {
@@ -624,7 +642,7 @@
   fillEntitySelect(document.getElementById("mergeTo"), false);
   renderEntityList();
   renderTimeline();
-  initReportDates();
+  syncReportDatesFromEvents();
   renderReport();
   initManualNow();
 
