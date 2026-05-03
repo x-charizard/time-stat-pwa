@@ -1,7 +1,7 @@
 {
-  "name": "Time Stat",
-  "short_name": "Time Stat",
-  "description": "開始時間紀錄 · 本機",
+  "name": "記錄",
+  "short_name": "記錄",
+  "description": "記錄",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0f1115",

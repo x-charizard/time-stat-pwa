@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#0f1115" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>Time Stat</title>
+  <title>記錄</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
@@ -14,9 +14,6 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
-  <h1>Time Stat</h1>
-  <p class="lead">每筆記 <strong>開始時間</strong>；下一筆開始＝上一段結束。資料喺本機，記得匯出 JSON 備份。</p>
-
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="log">記錄</button>
     <button type="button" data-tab="timeline">時間軸</button>
@@ -28,15 +25,14 @@
 
   <section data-panel="log">
     <div class="card">
-      <h2 style="margin-top:0;">快速：自動用而家時間</h2>
-      <label for="quickActivity">Activity（可手打或揀建議）</label>
+      <label for="quickActivity" style="margin-top:0;">Activity</label>
       <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
       <datalist id="activitySuggest"></datalist>
-      <label for="quickPlace" style="margin-top:10px;">地點（可選）</label>
+      <label for="quickPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
-      <label for="quickCategory" style="margin-top:10px;">類別（可選，例如 Work / Rest）</label>
+      <label for="quickCategory" style="margin-top:10px;">類別</label>
       <input type="text" id="quickCategory" autocomplete="off" />
-      <label for="quickPeople" style="margin-top:10px;">人物（可選，逗號分隔）</label>
+      <label for="quickPeople" style="margin-top:10px;">人物，逗號分隔</label>
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">備註</label>
       <textarea id="quickRemark" placeholder=""></textarea>
@@ -47,7 +43,7 @@
       <p class="muted" style="margin-top:0;">
         <strong>日期</strong>：預設今日；撳下面一行可改過去 7 日。<strong>時間</strong>：預設而家；撳格用系統時間轉盤（較穩陣）。
       </p>
-      <label for="manualActivity">Activity（可手打或揀建議）</label>
+      <label for="manualActivity">Activity</label>
       <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
       <details class="pick-details" id="manualDateDetails">
         <summary class="pick-summary" id="manualDateSummary"></summary>
@@ -56,11 +52,11 @@
       </details>
       <label for="manualTimeInput" style="margin-top:12px;">時間</label>
       <input type="time" id="manualTimeInput" step="60" class="input-time-xl" autocomplete="off" />
-      <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
+      <label for="manualPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="manualPlace" autocomplete="off" />
-      <label for="manualCategory" style="margin-top:10px;">類別（可選）</label>
+      <label for="manualCategory" style="margin-top:10px;">類別</label>
       <input type="text" id="manualCategory" autocomplete="off" />
-      <label for="manualPeople" style="margin-top:10px;">人物（可選）</label>
+      <label for="manualPeople" style="margin-top:10px;">人物</label>
       <input type="text" id="manualPeople" autocomplete="off" />
       <label for="manualRemark" style="margin-top:10px;">備註</label>
       <textarea id="manualRemark"></textarea>
