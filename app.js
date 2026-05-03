@@ -1,0 +1,640 @@
+(function () {
+  const STORAGE_KEY = "time-stat-state-v1";
+
+  /** @typedef {{ id: string, name: string, aliases: string[] }} Entity */
+  /** @typedef {{ id: string, start: string, entityId: string, remark?: string, people?: string[], place?: string, category?: string }} Event */
+
+  /** @returns {{ version: number, entities: Entity[], events: Event[] }} */
+  function defaultState() {
+    return {
+      version: 1,
+      entities: [],
+      events: [],
+    };
+  }
+
+  function uid() {
+    return crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return defaultState();
+      const o = JSON.parse(raw);
+      if (!Array.isArray(o.entities) || !Array.isArray(o.events)) return defaultState();
+      return o;
+    } catch {
+      return defaultState();
+    }
+  }
+
+  let state = loadState();
+
+  function save() {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  }
+
+  function toast(msg) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("show"), 2200);
+  }
+
+  function escapeHtml(s) {
+    const d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  /** @param {Entity[]} entities */
+  function entityById(entities, id) {
+    return entities.find((e) => e.id === id);
+  }
+
+  function entityDisplayName(id) {
+    const e = entityById(state.entities, id);
+    return e ? e.name : "（已刪 entity）";
+  }
+
+  /** Find entity by name or alias (exact trim) */
+  function resolveEntityByLabel(label) {
+    const t = String(label || "").trim();
+    if (!t) return null;
+    for (const e of state.entities) {
+      if (e.name === t) return e;
+      if (e.aliases && e.aliases.includes(t)) return e;
+    }
+    return null;
+  }
+
+  function getOrCreateEntity(name) {
+    const t = String(name || "").trim();
+    if (!t) return null;
+    const existing = resolveEntityByLabel(t);
+    if (existing) return existing;
+    const e = { id: uid(), name: t, aliases: [] };
+    state.entities.push(e);
+    return e;
+  }
+
+  function sortedEvents() {
+    return [...state.events].sort((a, b) => new Date(a.start) - new Date(b.start));
+  }
+
+  function durationMs(ev, nextEv) {
+    if (!nextEv) return null;
+    return new Date(nextEv.start) - new Date(ev.start);
+  }
+
+  function formatDur(ms) {
+    if (ms == null || ms < 0) return "—";
+    const s = Math.floor(ms / 1000);
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  }
+
+  function formatDurHours(ms) {
+    if (ms == null || ms < 0) return "—";
+    return (ms / 3600000).toFixed(2) + " h";
+  }
+
+  /** Google Sheet style: MM/DD/YYYY HH:mm:ss */
+  function parseSheetsTimestamp(cell) {
+    if (cell == null) return null;
+    const s = String(cell).trim();
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2}):(\d{2})$/);
+    if (!m) return null;
+    const mo = parseInt(m[1], 10);
+    const d = parseInt(m[2], 10);
+    const y = parseInt(m[3], 10);
+    const hh = parseInt(m[4], 10);
+    const mi = parseInt(m[5], 10);
+    const ss = parseInt(m[6], 10);
+    const dt = new Date(y, mo - 1, d, hh, mi, ss);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString();
+  }
+
+  function fillEntitySelect(sel, withEmpty) {
+    sel.innerHTML = "";
+    if (withEmpty) {
+      const o = document.createElement("option");
+      o.value = "";
+      o.textContent = "—";
+      sel.appendChild(o);
+    }
+    state.entities.forEach((e) => {
+      const o = document.createElement("option");
+      o.value = e.id;
+      o.textContent = e.name;
+      sel.appendChild(o);
+    });
+  }
+
+  function renderTimeline() {
+    const tbody = document.getElementById("timelineBody");
+    const empty = document.getElementById("timelineEmpty");
+    const list = sortedEvents();
+    tbody.innerHTML = "";
+    if (list.length === 0) {
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const next = list[i + 1];
+      const ms = durationMs(ev, next);
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td class="mono">${escapeHtml(new Date(ev.start).toLocaleString("zh-Hant"))}</td>` +
+        `<td>${escapeHtml(entityDisplayName(ev.entityId))}</td>` +
+        `<td class="mono">${ms != null ? formatDur(ms) : "—"}</td>` +
+        `<td class="muted">${escapeHtml([ev.place, ev.category].filter(Boolean).join(" · ") || "—")}</td>` +
+        `<td class="muted">${escapeHtml((ev.people || []).join(", ") || "—")}</td>` +
+        `<td class="muted">${escapeHtml(ev.remark || "—")}</td>`;
+      const tdAct = document.createElement("td");
+      tdAct.className = "mono";
+      const bEdit = document.createElement("button");
+      bEdit.type = "button";
+      bEdit.className = "ghost";
+      bEdit.textContent = "改時間";
+      bEdit.addEventListener("click", () => openEditDialog(ev));
+      const bDel = document.createElement("button");
+      bDel.type = "button";
+      bDel.className = "danger";
+      bDel.textContent = "刪";
+      bDel.style.marginTop = "6px";
+      bDel.addEventListener("click", () => {
+        if (!confirm("刪除此筆？")) return;
+        state.events = state.events.filter((x) => x.id !== ev.id);
+        save();
+        renderTimeline();
+        renderReport();
+        toast("已刪除");
+      });
+      tdAct.appendChild(bEdit);
+      tdAct.appendChild(bDel);
+      tr.appendChild(tdAct);
+      tbody.appendChild(tr);
+    }
+  }
+
+  function openEditDialog(ev) {
+    const iso = ev.start.slice(0, 16);
+    const input = prompt("修改開始時間（格式：YYYY-MM-DDTHH:MM，本地）", iso);
+    if (input == null) return;
+    const d = new Date(input);
+    if (Number.isNaN(d.getTime())) {
+      toast("時間格式唔啱");
+      return;
+    }
+    ev.start = d.toISOString();
+    save();
+    renderTimeline();
+    renderReport();
+    toast("已更新");
+  }
+
+  document.getElementById("btnLogNow").addEventListener("click", () => {
+    const sid = document.getElementById("quickEntity").value;
+    if (!sid) {
+      toast("請先新增 Entity");
+      return;
+    }
+    state.events.push({
+      id: uid(),
+      start: new Date().toISOString(),
+      entityId: sid,
+      remark: document.getElementById("quickRemark").value.trim() || undefined,
+      people: splitPeople(document.getElementById("quickPeople").value),
+      place: document.getElementById("quickPlace").value.trim() || undefined,
+      category: document.getElementById("quickCategory").value.trim() || undefined,
+    });
+    save();
+    renderTimeline();
+    renderReport();
+    toast("已記錄開始時間");
+  });
+
+  document.getElementById("btnManual").addEventListener("click", () => {
+    const sid = document.getElementById("manualEntity").value;
+    const dt = document.getElementById("manualStart").value;
+    if (!sid || !dt) {
+      toast("揀 Entity + 開始時間");
+      return;
+    }
+    const d = new Date(dt);
+    if (Number.isNaN(d.getTime())) {
+      toast("時間唔有效");
+      return;
+    }
+    state.events.push({
+      id: uid(),
+      start: d.toISOString(),
+      entityId: sid,
+      remark: document.getElementById("manualRemark").value.trim() || undefined,
+      people: splitPeople(document.getElementById("manualPeople").value),
+      place: document.getElementById("manualPlace").value.trim() || undefined,
+      category: document.getElementById("manualCategory").value.trim() || undefined,
+    });
+    save();
+    renderTimeline();
+    renderReport();
+    toast("已加入（後補）");
+  });
+
+  function splitPeople(s) {
+    return String(s || "")
+      .split(/[,，、]/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+  }
+
+  function renderEntityList() {
+    const root = document.getElementById("entityList");
+    root.innerHTML = "";
+    state.entities.forEach((e) => {
+      const card = document.createElement("div");
+      card.className = "card";
+      const aliasesStr = (e.aliases || []).join(", ");
+      card.innerHTML =
+        `<label>名稱（改名會把舊名加入 alias）</label>` +
+        `<div class="row"><input type="text" data-id="${e.id}" class="entity-name" value="${escapeHtml(e.name)}" />` +
+        `<button type="button" class="danger fixed" data-del="${e.id}">刪</button></div>` +
+        `<p class="muted" style="margin:8px 0 0;">Aliases：${escapeHtml(aliasesStr || "—")}</p>`;
+      root.appendChild(card);
+    });
+    root.querySelectorAll(".entity-name").forEach((inp) => {
+      inp.addEventListener("change", () => {
+        const id = inp.getAttribute("data-id");
+        const ent = entityById(state.entities, id);
+        if (!ent) return;
+        const nv = inp.value.trim();
+        if (!nv) {
+          inp.value = ent.name;
+          return;
+        }
+        if (nv !== ent.name) {
+          if (!ent.aliases) ent.aliases = [];
+          if (!ent.aliases.includes(ent.name)) ent.aliases.push(ent.name);
+          ent.name = nv;
+          save();
+          fillEntitySelect(document.getElementById("quickEntity"), false);
+          fillEntitySelect(document.getElementById("manualEntity"), false);
+          fillEntitySelect(document.getElementById("mergeFrom"), false);
+          fillEntitySelect(document.getElementById("mergeTo"), false);
+          renderTimeline();
+          renderReport();
+          renderEntityList();
+          toast("已改名並保留 alias");
+        }
+      });
+    });
+    root.querySelectorAll("button[data-del]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const id = btn.getAttribute("data-del");
+        const has = state.events.some((ev) => ev.entityId === id);
+        if (has && !confirm("仍有紀錄用緊此 Entity；刪除後會顯示「已刪 entity」。繼續？")) return;
+        if (!has && !confirm("確定刪除此 Entity？")) return;
+        state.entities = state.entities.filter((e) => e.id !== id);
+        save();
+        fillEntitySelect(document.getElementById("quickEntity"), false);
+        fillEntitySelect(document.getElementById("manualEntity"), false);
+        fillEntitySelect(document.getElementById("mergeFrom"), false);
+        fillEntitySelect(document.getElementById("mergeTo"), false);
+        renderEntityList();
+        renderTimeline();
+        renderReport();
+        toast("已刪除 Entity");
+      });
+    });
+  }
+
+  document.getElementById("btnAddEntity").addEventListener("click", () => {
+    const name = document.getElementById("newEntityName").value.trim();
+    if (!name) {
+      toast("輸入名稱");
+      return;
+    }
+    if (resolveEntityByLabel(name)) {
+      toast("已有同名／alias");
+      return;
+    }
+    state.entities.push({ id: uid(), name, aliases: [] });
+    document.getElementById("newEntityName").value = "";
+    save();
+    fillEntitySelect(document.getElementById("quickEntity"), false);
+    fillEntitySelect(document.getElementById("manualEntity"), false);
+    fillEntitySelect(document.getElementById("mergeFrom"), false);
+    fillEntitySelect(document.getElementById("mergeTo"), false);
+    renderEntityList();
+    toast("已新增");
+  });
+
+  document.getElementById("btnMerge").addEventListener("click", () => {
+    const fromId = document.getElementById("mergeFrom").value;
+    const toId = document.getElementById("mergeTo").value;
+    if (!fromId || !toId || fromId === toId) {
+      toast("揀兩個唔同 Entity");
+      return;
+    }
+    const fromE = entityById(state.entities, fromId);
+    const toE = entityById(state.entities, toId);
+    if (!fromE || !toE) return;
+    if (!confirm(`將「${fromE.name}」合併入「${toE.name}」？所有紀錄會指去後者，前者會刪除。`)) return;
+    if (!toE.aliases) toE.aliases = [];
+    if (!toE.aliases.includes(fromE.name)) toE.aliases.push(fromE.name);
+    (fromE.aliases || []).forEach((a) => {
+      if (!toE.aliases.includes(a)) toE.aliases.push(a);
+    });
+    state.events.forEach((ev) => {
+      if (ev.entityId === fromId) ev.entityId = toId;
+    });
+    state.entities = state.entities.filter((e) => e.id !== fromId);
+    save();
+    fillEntitySelect(document.getElementById("quickEntity"), false);
+    fillEntitySelect(document.getElementById("manualEntity"), false);
+    fillEntitySelect(document.getElementById("mergeFrom"), false);
+    fillEntitySelect(document.getElementById("mergeTo"), false);
+    renderEntityList();
+    renderTimeline();
+    renderReport();
+    toast("已合併");
+  });
+
+  function renderReport() {
+    const from = document.getElementById("reportFrom").value;
+    const to = document.getElementById("reportTo").value;
+    const box = document.getElementById("reportSummary");
+    if (!from || !to) {
+      box.innerHTML = `<p class="muted">揀日期範圍</p>`;
+      return;
+    }
+    const t0 = new Date(from + "T00:00:00").getTime();
+    const t1 = new Date(to + "T23:59:59.999").getTime();
+    const list = sortedEvents();
+    const byEnt = {};
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const st = new Date(ev.start).getTime();
+      if (st < t0 || st > t1) continue;
+      const next = list[i + 1];
+      const ms = durationMs(ev, next);
+      if (ms == null) continue;
+      byEnt[ev.entityId] = (byEnt[ev.entityId] || 0) + ms;
+    }
+    const rows = Object.entries(byEnt).sort((a, b) => b[1] - a[1]);
+    if (rows.length === 0) {
+      box.innerHTML = `<p class="muted">範圍內（按開始時間計）無完整區間。</p>`;
+      return;
+    }
+    let html = `<table><thead><tr><th>Entity</th><th>小時</th></tr></thead><tbody>`;
+    let total = 0;
+    rows.forEach(([eid, ms]) => {
+      total += ms;
+      html += `<tr><td>${escapeHtml(entityDisplayName(eid))}</td><td class="mono">${(ms / 3600000).toFixed(2)}</td></tr>`;
+    });
+    html += `</tbody></table><p class="muted" style="margin-top:10px;">合計：<strong style="color:var(--text);">${(total / 3600000).toFixed(2)}</strong> 小時（僅計有「下一筆」嘅區間）</p>`;
+    box.innerHTML = html;
+  }
+
+  document.getElementById("btnReport").addEventListener("click", () => renderReport());
+
+  document.getElementById("btnExportJson").addEventListener("click", () => {
+    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "time-stat-backup-" + new Date().toISOString().slice(0, 10) + ".json";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("已下載 JSON");
+  });
+
+  document.getElementById("btnImportJson").addEventListener("change", function () {
+    const f = this.files && this.files[0];
+    if (!f) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const o = JSON.parse(r.result);
+        if (!Array.isArray(o.entities) || !Array.isArray(o.events)) throw new Error("格式唔似備份");
+        state = o;
+        save();
+        fillEntitySelect(document.getElementById("quickEntity"), false);
+        fillEntitySelect(document.getElementById("manualEntity"), false);
+        fillEntitySelect(document.getElementById("mergeFrom"), false);
+        fillEntitySelect(document.getElementById("mergeTo"), false);
+        renderEntityList();
+        renderTimeline();
+        renderReport();
+        toast("已還原備份");
+      } catch (e) {
+        toast("匯入失敗：" + (e.message || ""));
+      }
+      this.value = "";
+    };
+    r.readAsText(f);
+  });
+
+  document.getElementById("btnExportCsv").addEventListener("click", () => {
+    const list = sortedEvents();
+    const lines = ["start_iso,entity,place,category,people,remark,duration_to_next_sec"];
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const next = list[i + 1];
+      const ms = durationMs(ev, next);
+      const sec = ms != null ? Math.round(ms / 1000) : "";
+      lines.push(
+        [
+          ev.start,
+          csv(entityDisplayName(ev.entityId)),
+          csv(ev.place || ""),
+          csv(ev.category || ""),
+          csv((ev.people || []).join(";")),
+          csv(ev.remark || ""),
+          sec,
+        ].join(",")
+      );
+    }
+    const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "time-stat-export.csv";
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast("已匯出 CSV");
+  });
+
+  function csv(s) {
+    const t = String(s).replace(/"/g, '""');
+    if (/[",\n\r]/.test(t)) return '"' + t + '"';
+    return t;
+  }
+
+  /** ---------- CSV import (Papa) ---------- */
+  let lastParsed = null;
+
+  document.getElementById("csvFile").addEventListener("change", function () {
+    const f = this.files && this.files[0];
+    if (!f || typeof Papa === "undefined") {
+      if (typeof Papa === "undefined") toast("Papa Parse 未載入");
+      return;
+    }
+    const seenH = {};
+    function transformHeader(h) {
+      const base = h == null || h === "" ? "Column" : String(h);
+      seenH[base] = (seenH[base] || 0) + 1;
+      if (seenH[base] === 1) return base;
+      return base + "__" + seenH[base];
+    }
+    Papa.parse(f, {
+      header: true,
+      transformHeader,
+      skipEmptyLines: false,
+      complete: (res) => {
+        lastParsed = res;
+        const headers = res.meta.fields || [];
+        const selTs = document.getElementById("mapTimestamp");
+        const selAct = document.getElementById("mapActivity");
+        const selPlace = document.getElementById("mapPlace");
+        const selCat = document.getElementById("mapCategory");
+        [selTs, selAct, selPlace, selCat].forEach((sel) => {
+          sel.innerHTML = '<option value="">—</option>';
+          headers.forEach((h) => {
+            const o = document.createElement("option");
+            o.value = h;
+            o.textContent = h;
+            sel.appendChild(o);
+          });
+        });
+        function pick(pred) {
+          for (let i = 0; i < headers.length; i++) {
+            if (pred(headers[i])) return headers[i];
+          }
+          return "";
+        }
+        selTs.value = pick((h) => h === "Timestamp") || pick((h) => /timestamp/i.test(h)) || "";
+        selAct.value = pick((h) => h === "Activities") || pick((h) => /^activity$/i.test(h)) || "";
+        selPlace.value =
+          pick((h) => /^Place__\d+$/.test(h)) ||
+          pick((h) => h.startsWith("Place__")) ||
+          pick((h) => h === "Place") ||
+          "";
+        selCat.value = pick((h) => h === "Category") || pick((h) => h === "Category__2") || "";
+
+        document.getElementById("importPreview").textContent =
+          `讀取 ${res.data.length} 行；請確認欄位對應再按「匯入」。`;
+        toast("CSV 已解析");
+      },
+      error: (err) => toast("CSV 錯：" + err.message),
+    });
+    this.value = "";
+  });
+
+  document.getElementById("btnImportCsv").addEventListener("click", () => {
+    if (!lastParsed || !lastParsed.data) {
+      toast("請先揀 CSV 檔");
+      return;
+    }
+    const tsCol = document.getElementById("mapTimestamp").value;
+    const actCol = document.getElementById("mapActivity").value;
+    if (!tsCol || !actCol) {
+      toast("揀 Timestamp 同 Activity 欄");
+      return;
+    }
+    const placeCol = document.getElementById("mapPlace").value;
+    const catCol = document.getElementById("mapCategory").value;
+    let n = 0;
+    let skip = 0;
+    const rows = lastParsed.data;
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rawTs = row[tsCol];
+      const iso = parseSheetsTimestamp(rawTs);
+      if (!iso) {
+        skip++;
+        continue;
+      }
+      const actLabel = String(row[actCol] || "").trim();
+      if (!actLabel) {
+        skip++;
+        continue;
+      }
+      let ent = getOrCreateEntity(actLabel);
+      if (!ent) continue;
+      const ev = {
+        id: uid(),
+        start: iso,
+        entityId: ent.id,
+      };
+      if (placeCol && row[placeCol]) ev.place = String(row[placeCol]).trim();
+      if (catCol && row[catCol]) ev.category = String(row[catCol]).trim();
+      state.events.push(ev);
+      n++;
+    }
+    save();
+    fillEntitySelect(document.getElementById("quickEntity"), false);
+    fillEntitySelect(document.getElementById("manualEntity"), false);
+    fillEntitySelect(document.getElementById("mergeFrom"), false);
+    fillEntitySelect(document.getElementById("mergeTo"), false);
+    renderEntityList();
+    renderTimeline();
+    renderReport();
+    toast(`已匯入 ${n} 筆（略過 ${skip} 行）`);
+  });
+
+  document.querySelectorAll(".tabs button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.getAttribute("data-tab");
+      document.querySelectorAll(".tabs button").forEach((b) => {
+        b.classList.toggle("active", b === btn);
+      });
+      document.querySelectorAll("[data-panel]").forEach((p) => {
+        p.classList.toggle("hidden", p.getAttribute("data-panel") !== tab);
+      });
+      if (tab === "report") renderReport();
+    });
+  });
+
+  function initReportDates() {
+    const to = new Date();
+    const from = new Date();
+    from.setDate(from.getDate() - 6);
+    document.getElementById("reportTo").value = to.toISOString().slice(0, 10);
+    document.getElementById("reportFrom").value = from.toISOString().slice(0, 10);
+  }
+
+  function initManualNow() {
+    const el = document.getElementById("manualStart");
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    el.value = d.toISOString().slice(0, 16);
+  }
+
+  fillEntitySelect(document.getElementById("quickEntity"), false);
+  fillEntitySelect(document.getElementById("manualEntity"), false);
+  fillEntitySelect(document.getElementById("mergeFrom"), false);
+  fillEntitySelect(document.getElementById("mergeTo"), false);
+  renderEntityList();
+  renderTimeline();
+  initReportDates();
+  renderReport();
+  initManualNow();
+
+  if (window.matchMedia("(display-mode: standalone)").matches) {
+    document.getElementById("installHint").classList.remove("visible");
+  } else if (/iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+    document.getElementById("installHint").classList.add("visible");
+  }
+
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();

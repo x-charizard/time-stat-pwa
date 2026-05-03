@@ -1,0 +1,10 @@
+.DS_Store
+.idea/
+*.log
+venv/
+.env
+.env.*
+
+# 若果唔想將備份／匯出 commit 上 git，取消下面註解：
+# data/*.json
+# data/*.csv

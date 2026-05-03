@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1115" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>Time Stat</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+</head>
+<body>
+  <h1>Time Stat</h1>
+  <p class="lead">每筆記 <strong>開始時間</strong>；下一筆開始＝上一段結束。資料喺本機，記得匯出 JSON 備份。</p>
+
+  <div class="tabs" role="tablist">
+    <button type="button" class="active" data-tab="log">記錄</button>
+    <button type="button" data-tab="timeline">時間軸</button>
+    <button type="button" data-tab="entities">Entity</button>
+    <button type="button" data-tab="report">報表</button>
+    <button type="button" data-tab="import">匯入 CSV</button>
+    <button type="button" data-tab="backup">備份</button>
+  </div>
+
+  <section data-panel="log">
+    <div class="card">
+      <h2 style="margin-top:0;">快速：記錄「而家」開始</h2>
+      <label for="quickEntity">Entity</label>
+      <select id="quickEntity" aria-label="Entity"></select>
+      <label for="quickPlace" style="margin-top:10px;">地點（可選）</label>
+      <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
+      <label for="quickCategory" style="margin-top:10px;">類別（可選，例如 Work / Rest）</label>
+      <input type="text" id="quickCategory" autocomplete="off" />
+      <label for="quickPeople" style="margin-top:10px;">人物（可選，逗號分隔）</label>
+      <input type="text" id="quickPeople" autocomplete="off" />
+      <label for="quickRemark" style="margin-top:10px;">備註</label>
+      <textarea id="quickRemark" placeholder=""></textarea>
+      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄開始時間（現在）</button>
+    </div>
+    <div class="card">
+      <h2 style="margin-top:0;">後補：自訂開始時間</h2>
+      <label for="manualEntity">Entity</label>
+      <select id="manualEntity"></select>
+      <label for="manualStart" style="margin-top:10px;">開始（本地時間）</label>
+      <input type="datetime-local" id="manualStart" />
+      <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
+      <input type="text" id="manualPlace" autocomplete="off" />
+      <label for="manualCategory" style="margin-top:10px;">類別（可選）</label>
+      <input type="text" id="manualCategory" autocomplete="off" />
+      <label for="manualPeople" style="margin-top:10px;">人物（可選）</label>
+      <input type="text" id="manualPeople" autocomplete="off" />
+      <label for="manualRemark" style="margin-top:10px;">備註</label>
+      <textarea id="manualRemark"></textarea>
+      <button type="button" class="primary" id="btnManual" style="margin-top:12px;width:100%;">加入紀錄</button>
+    </div>
+    <div id="installHint" class="install-hint">
+      <strong>iPhone</strong>：Safari 開此頁（需 https 或本機 server）→ 分享 → <strong>加入主畫面</strong>。
+    </div>
+  </section>
+
+  <section data-panel="timeline" class="hidden">
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="overflow-x:auto;">
+        <table>
+          <thead>
+            <tr>
+              <th>開始</th>
+              <th>Entity</th>
+              <th>時長→下一筆</th>
+              <th>地點·類別</th>
+              <th>人物</th>
+              <th>備註</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="timelineBody"></tbody>
+        </table>
+      </div>
+      <p id="timelineEmpty" class="muted" style="padding:14px;margin:0;">尚無紀錄。</p>
+    </div>
+  </section>
+
+  <section data-panel="entities" class="hidden">
+    <div class="card">
+      <label for="newEntityName">新 Entity 名稱</label>
+      <div class="row">
+        <input type="text" id="newEntityName" placeholder="例如 Trading Practice" autocomplete="off" />
+        <button type="button" class="primary fixed" id="btnAddEntity" style="min-width:100px;">新增</button>
+      </div>
+      <p class="muted" style="margin-top:10px;">改名會將舊名放入 <strong>aliases</strong>，方便對返舊 CSV / Notion 字眼。</p>
+    </div>
+    <h2>合併 Entity</h2>
+    <div class="card">
+      <div class="row">
+        <div>
+          <label for="mergeFrom">由</label>
+          <select id="mergeFrom"></select>
+        </div>
+        <div>
+          <label for="mergeTo">合併到</label>
+          <select id="mergeTo"></select>
+        </div>
+      </div>
+      <button type="button" class="ghost" id="btnMerge" style="margin-top:12px;width:100%;">合併</button>
+    </div>
+    <h2>列表</h2>
+    <div id="entityList"></div>
+  </section>
+
+  <section data-panel="report" class="hidden">
+    <div class="card">
+      <label for="reportFrom">由</label>
+      <input type="date" id="reportFrom" />
+      <label for="reportTo" style="margin-top:10px;">至</label>
+      <input type="date" id="reportTo" />
+      <button type="button" class="primary" id="btnReport" style="margin-top:12px;width:100%;">更新報表</button>
+      <p class="muted" style="margin-top:10px;">只計「開始時間」落喺範圍內、且有下一筆嘅區間（最後一筆無「時長」）。</p>
+    </div>
+    <h2>按 Entity（小時）</h2>
+    <div class="card" id="reportSummary"></div>
+  </section>
+
+  <section data-panel="import" class="hidden">
+    <div class="card">
+      <p class="muted" style="margin-top:0;">Google Sheet export：建議用此頁揀欄。重複欄位名會自動變成 <code>Place__2</code> 等。</p>
+      <label for="csvFile">揀 CSV 檔</label>
+      <input type="file" id="csvFile" accept=".csv,text/csv" />
+      <p id="importPreview" class="muted" style="margin-top:10px;"></p>
+      <label for="mapTimestamp">Timestamp 欄</label>
+      <select id="mapTimestamp"></select>
+      <label for="mapActivity" style="margin-top:10px;">Activity 欄（你表入面叫 Activities）</label>
+      <select id="mapActivity"></select>
+      <label for="mapPlace" style="margin-top:10px;">地點（可選；通常係第二個 Place）</label>
+      <select id="mapPlace"></select>
+      <label for="mapCategory" style="margin-top:10px;">Work/Rest 類（可選；通常係第一個 Category）</label>
+      <select id="mapCategory"></select>
+      <button type="button" class="primary" id="btnImportCsv" style="margin-top:14px;width:100%;">匯入到本機資料</button>
+      <p class="muted" style="margin-top:10px;">未出現過嘅 activity 字會自動 <strong>新建 Entity</strong>。可重複匯入（會加筆）；請自行避免重複檔。</p>
+    </div>
+  </section>
+
+  <section data-panel="backup" class="hidden">
+    <div class="card">
+      <button type="button" class="primary" id="btnExportJson" style="width:100%;">匯出 JSON 備份</button>
+      <label for="btnImportJson" style="margin-top:16px;">還原 JSON（會覆蓋本機現有資料）</label>
+      <input type="file" id="btnImportJson" accept="application/json,.json" style="margin-top:8px;" />
+    </div>
+    <div class="card">
+      <button type="button" class="ghost" id="btnExportCsv" style="width:100%;">匯出紀錄 CSV（含 duration 秒）</button>
+    </div>
+  </section>
+
+  <div id="toast" class="toast" role="status"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
