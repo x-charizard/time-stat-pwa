@@ -263,6 +263,34 @@
     const board = document.createElement("div");
     board.className = "timeline-cal-board";
 
+    /** 時間軸：≥30 分鐘先畫；梅花間竹計「唔畫嘅短段」都要食色位（短段 k+=2） */
+    const MIN_TIMELINE_SEGMENT_MS = 30 * 60 * 1000;
+
+    function passesTimelineMin(ev) {
+      const next = nextById.get(ev.id) || null;
+      const evStart = new Date(ev.start);
+      const startMs = evStart.getTime();
+      const nextMs = next ? new Date(next.start).getTime() : null;
+      if (nextMs != null) return nextMs - startMs >= MIN_TIMELINE_SEGMENT_MS;
+      const ymd = ymdFromLocalDate(evStart);
+      const ps = ymd.split("-").map(Number);
+      const yy = ps[0];
+      const mo = ps[1];
+      const da = ps[2];
+      const d0 = new Date(yy, mo - 1, da, 0, 0, 0, 0).getTime();
+      const d1 = d0 + 24 * 60 * 60 * 1000;
+      const visStartMs = Math.max(startMs, d0);
+      return d1 - visStartMs >= MIN_TIMELINE_SEGMENT_MS;
+    }
+
+    const stripeById = new Map();
+    let stripeSlot = 0;
+    for (const ev of asc) {
+      const ok = passesTimelineMin(ev);
+      if (ok) stripeById.set(ev.id, stripeSlot % 2 === 0 ? "a" : "b");
+      stripeSlot += ok ? 1 : 2;
+    }
+
     for (const c of columns) {
       const col = document.createElement("div");
       col.className = "timeline-cal-day";
@@ -273,11 +301,8 @@
       const da = parts[2];
       const dayStartMs = new Date(yy, mo - 1, da, 0, 0, 0, 0).getTime();
       const dayEndExclusiveMs = dayStartMs + 24 * 60 * 60 * 1000;
-      /** Timetable 只顯示 ≥30 分鐘嘅區間（裁剪後） */
-      const MIN_TIMELINE_SEGMENT_MS = 30 * 60 * 1000;
 
-      for (let evIdx = 0; evIdx < asc.length; evIdx++) {
-        const ev = asc[evIdx];
+      for (const ev of asc) {
         const next = nextById.get(ev.id) || null;
         const evStart = new Date(ev.start);
         const startMs = evStart.getTime();
@@ -309,7 +334,7 @@
 
         const blk = document.createElement("div");
         blk.className = "timeline-cal-block";
-        blk.dataset.stripe = evIdx % 2 === 0 ? "a" : "b";
+        blk.dataset.stripe = stripeById.get(ev.id) || "a";
         blk.style.top = `${topPct}%`;
         blk.style.height = `${hPct}%`;
 
