@@ -474,7 +474,7 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   min-height: 4px;
   border-radius: 6px;
   box-sizing: border-box;
-  padding: 2px 4px 4px;
+  padding: 2px 4px;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -496,17 +496,4 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   white-space: nowrap;
   text-overflow: ellipsis;
   overflow: hidden;
-}
-.timeline-cal-block-btns {
-  display: flex;
-  gap: 4px;
-  margin-top: auto;
-  padding-top: 2px;
-}
-button.timeline-cal-btn {
-  min-height: 26px;
-  padding: 0 6px;
-  width: auto;
-  font-size: 11px;
-  flex: 1;
 }

@@ -318,33 +318,6 @@
         meta.textContent = extra ? `${startStr} · ${durStr} · ${extra}` : `${startStr} · ${durStr}`;
         blk.appendChild(meta);
 
-        const btnRow = document.createElement("div");
-        btnRow.className = "timeline-cal-block-btns";
-        const bEdit = document.createElement("button");
-        bEdit.type = "button";
-        bEdit.className = "ghost timeline-cal-btn";
-        bEdit.textContent = "改";
-        bEdit.addEventListener("click", (e) => {
-          e.stopPropagation();
-          openEditDialog(ev);
-        });
-        const bDel = document.createElement("button");
-        bDel.type = "button";
-        bDel.className = "danger timeline-cal-btn";
-        bDel.textContent = "刪";
-        bDel.addEventListener("click", (e) => {
-          e.stopPropagation();
-          if (!confirm("刪除此筆？")) return;
-          state.events = state.events.filter((x) => x.id !== ev.id);
-          save();
-          renderTimeline();
-          renderReport();
-          toast("已刪除");
-        });
-        btnRow.appendChild(bEdit);
-        btnRow.appendChild(bDel);
-        blk.appendChild(btnRow);
-
         col.appendChild(blk);
       }
       board.appendChild(col);
@@ -353,22 +326,6 @@
     body.appendChild(board);
     inner.appendChild(body);
     root.appendChild(inner);
-  }
-
-  function openEditDialog(ev) {
-    const iso = ev.start.slice(0, 16);
-    const input = prompt("修改開始時間（格式：YYYY-MM-DDTHH:MM，本地）", iso);
-    if (input == null) return;
-    const d = new Date(input);
-    if (Number.isNaN(d.getTime())) {
-      toast("時間格式唔啱");
-      return;
-    }
-    ev.start = d.toISOString();
-    save();
-    renderTimeline();
-    renderReport();
-    toast("已更新");
   }
 
   document.getElementById("btnLogNow").addEventListener("click", () => {
