@@ -312,7 +312,7 @@
         meta.className = "timeline-cal-block-meta";
         const startStr = evStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
         const durMin = Math.round(segMs / 60000);
-        meta.textContent = `${startStr} · ${durMin} 分`;
+        meta.textContent = `${startStr} · ${durMin} mins`;
         blk.appendChild(meta);
 
         col.appendChild(blk);
