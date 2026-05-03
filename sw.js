@@ -1,9 +1,6 @@
-const CACHE = "time-stat-v30";
+const CACHE = "time-stat-v31";
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(["./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg"]))
-  );
   self.skipWaiting();
 });
 
@@ -14,10 +11,37 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
+/** 導航：線上優先；靜態資源：線上優先再寫入 cache（避免永遠食舊 app.js） */
 self.addEventListener("fetch", (e) => {
-  if (e.request.mode === "navigate") {
-    e.respondWith(fetch(e.request).catch(() => caches.match("./index.html")));
+  const req = e.request;
+  const url = new URL(req.url);
+
+  if (req.mode === "navigate") {
+    e.respondWith(fetch(req).catch(() => caches.match("./index.html")));
     return;
   }
-  e.respondWith(caches.match(e.request).then((r) => r || fetch(e.request)));
+
+  const path = url.pathname;
+  const isAsset =
+    path.endsWith(".js") ||
+    path.endsWith(".css") ||
+    path.endsWith(".json") ||
+    path.endsWith(".svg");
+
+  if (isAsset) {
+    e.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put(req, copy));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req, { ignoreSearch: true }))
+    );
+    return;
+  }
+
+  e.respondWith(caches.match(req).then((r) => r || fetch(req)));
 });

@@ -386,22 +386,19 @@
 
   function renderActivityList() {
     const root = document.getElementById("activityCards");
+    if (!root) return;
     root.innerHTML = "";
-    /** 梅花間竹：淺／深（inline 避免快取／規則蓋唔著） */
-    /** 卡底色要同輸入框色「成套」，否則大半視覺被 input（全局 --surface）食晒會似同一灰 */
-    const ACTIVITY_STRIPE_BG = ["#5c6b8a", "#0a0f18"];
-    const ACTIVITY_STRIPE_BORDER = ["#e8ecf7", "#f59e0b"];
-
+    /** 梅花間竹：實際色水由 styles.css :nth-child 控制（唔怕 SW／inline 失效）；badge 方便肉眼確認 */
     state.activities.forEach((e, idx) => {
       const stripe = idx % 2;
       const card = document.createElement("div");
       card.className =
         "card activity-list-row " + (stripe === 0 ? "activity-list-row--a" : "activity-list-row--b");
       card.dataset.stripe = stripe === 0 ? "light" : "dark";
-      card.style.setProperty("background", ACTIVITY_STRIPE_BG[stripe], "important");
-      card.style.setProperty("border-left", `14px solid ${ACTIVITY_STRIPE_BORDER[stripe]}`, "important");
       const aliasesStr = (e.aliases || []).join(", ");
+      const badge = stripe === 0 ? "淺行" : "深行";
       card.innerHTML =
+        `<span class="activity-stripe-badge">${badge}</span>` +
         `<label>名稱（改名會把舊名加入 alias）</label>` +
         `<div class="row"><input type="text" data-id="${e.id}" class="activity-name" value="${escapeHtml(e.name)}" />` +
         `<button type="button" class="danger fixed" data-del="${e.id}">刪</button></div>` +

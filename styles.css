@@ -116,23 +116,51 @@ button.ghost {
   margin-bottom: 12px;
 }
 
-/* Activity「列表」：底色優先用 JS inline；呢度做後備 */
-#activityCards > .activity-list-row--a {
-  background: var(--activity-stripe-a) !important;
-}
-#activityCards > .activity-list-row--b {
-  background: var(--activity-stripe-b) !important;
+/* Activity「列表」梅花間竹：用 :nth-child 鎖死（唔靠 JS inline／唔怕 data-stripe 漏） */
+#activityCards > .activity-list-row {
+  position: relative;
 }
 
-/* 輸入框：唔好用半透明疊色（兩行會望落成同一灰）；改不透明、成套對比 */
-#activityCards .activity-list-row[data-stripe="light"] .activity-name {
-  background: #cad4ea !important;
-  color: #12161c !important;
-  border-color: #9aaac9 !important;
+.activity-stripe-badge {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
-#activityCards .activity-list-row[data-stripe="dark"] .activity-name {
-  background: #1e2d45 !important;
-  color: var(--text) !important;
+
+#activityCards > .activity-list-row:nth-child(odd) {
+  background: var(--activity-stripe-a) !important;
+  border-left: 16px solid #ffffff !important;
+}
+
+#activityCards > .activity-list-row:nth-child(odd) .activity-stripe-badge {
+  background: #ffffff;
+  color: #0f1115;
+}
+
+#activityCards > .activity-list-row:nth-child(even) {
+  background: var(--activity-stripe-b) !important;
+  border-left: 16px solid #f59e0b !important;
+}
+
+#activityCards > .activity-list-row:nth-child(even) .activity-stripe-badge {
+  background: #f59e0b;
+  color: #1a0f00;
+}
+
+/* 輸入框：奇偶行唔同實色（大半視覺係 input） */
+#activityCards > .activity-list-row:nth-child(odd) .activity-name {
+  background: #e8edf7 !important;
+  color: #12161c !important;
+  border-color: #b8c4df !important;
+}
+
+#activityCards > .activity-list-row:nth-child(even) .activity-name {
+  background: #243352 !important;
+  color: #f4f6fb !important;
   border-color: #4a6088 !important;
 }
 
