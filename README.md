@@ -30,6 +30,10 @@ python3 -m http.server 8765
 
 規格、對照 Notion 用字等留喺 Obsidian，唔放喺此 repo 強制同步。
 
+## 資料格式（v2）
+
+- `activities`（舊備份可能係 `entities`）＋ `events[].activityId`（舊備份可能係 `entityId`）。開 app 會自動遷移。
+
 ## Git
 
 ```bash
