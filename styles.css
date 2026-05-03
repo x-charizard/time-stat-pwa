@@ -289,6 +289,43 @@ button.picker-chip.is-active {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* 後補：收合式揀日期／時間（撳 summary 先展開） */
+details.pick-details {
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+details.pick-details > summary.pick-summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-size: 18px;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  user-select: none;
+  -webkit-tap-highlight-color: rgba(94, 234, 212, 0.2);
+}
+
+details.pick-details > summary.pick-summary::-webkit-details-marker {
+  display: none;
+}
+
+details.pick-details[open] > summary.pick-summary {
+  border-bottom: 1px solid var(--border);
+}
+
+details.pick-details #manualDateWrap {
+  padding: 4px 8px 12px;
+}
+
+details.pick-details .manual-time-row {
+  padding: 4px 8px 8px;
+}
+
 input[type="number"].input-xl {
   -moz-appearance: textfield;
 }
