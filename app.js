@@ -1,14 +1,13 @@
 (function () {
   const STORAGE_KEY = "time-stat-state-v1";
 
-  /** @typedef {{ id: string, name: string, aliases: string[] }} Entity */
-  /** @typedef {{ id: string, start: string, entityId: string, remark?: string, people?: string[], place?: string, category?: string }} Event */
+  /** @typedef {{ id: string, name: string, aliases: string[] }} Activity */
+  /** @typedef {{ id: string, start: string, activityId: string, remark?: string, people?: string[], place?: string, category?: string }} Event */
 
-  /** @returns {{ version: number, entities: Entity[], events: Event[] }} */
   function defaultState() {
     return {
       version: 1,
-      entities: [],
+      activities: [],
       events: [],
     };
   }
@@ -17,13 +16,25 @@
     return crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(36).slice(2);
   }
 
+  /** 兼容舊版 entities / entityId 備份 */
   function loadState() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return defaultState();
       const o = JSON.parse(raw);
-      if (!Array.isArray(o.entities) || !Array.isArray(o.events)) return defaultState();
-      return o;
+      const activities = Array.isArray(o.activities)
+        ? o.activities
+        : Array.isArray(o.entities)
+          ? o.entities
+          : null;
+      if (!activities || !Array.isArray(o.events)) return defaultState();
+      const events = o.events.map((ev) => {
+        const n = { ...ev };
+        if (n.activityId == null && n.entityId != null) n.activityId = n.entityId;
+        delete n.entityId;
+        return n;
+      });
+      return { version: o.version || 1, activities, events };
     } catch {
       return defaultState();
     }
@@ -49,34 +60,32 @@
     return d.innerHTML;
   }
 
-  /** @param {Entity[]} entities */
-  function entityById(entities, id) {
-    return entities.find((e) => e.id === id);
+  function activityById(activities, id) {
+    return activities.find((e) => e.id === id);
   }
 
-  function entityDisplayName(id) {
-    const e = entityById(state.entities, id);
-    return e ? e.name : "（已刪 entity）";
+  function activityDisplayName(id) {
+    const e = activityById(state.activities, id);
+    return e ? e.name : "（已刪 Activity）";
   }
 
-  /** Find entity by name or alias (exact trim) */
-  function resolveEntityByLabel(label) {
+  function resolveActivityByLabel(label) {
     const t = String(label || "").trim();
     if (!t) return null;
-    for (const e of state.entities) {
+    for (const e of state.activities) {
       if (e.name === t) return e;
       if (e.aliases && e.aliases.includes(t)) return e;
     }
     return null;
   }
 
-  function getOrCreateEntity(name) {
+  function getOrCreateActivity(name) {
     const t = String(name || "").trim();
     if (!t) return null;
-    const existing = resolveEntityByLabel(t);
+    const existing = resolveActivityByLabel(t);
     if (existing) return existing;
     const e = { id: uid(), name: t, aliases: [] };
-    state.entities.push(e);
+    state.activities.push(e);
     return e;
   }
 
@@ -121,19 +130,28 @@
     return dt.toISOString();
   }
 
-  function fillEntitySelect(sel, withEmpty) {
-    sel.innerHTML = "";
-    if (withEmpty) {
-      const o = document.createElement("option");
-      o.value = "";
-      o.textContent = "—";
-      sel.appendChild(o);
-    }
-    state.entities.forEach((e) => {
-      const o = document.createElement("option");
-      o.value = e.id;
-      o.textContent = e.name;
-      sel.appendChild(o);
+  function fillMergeSelects() {
+    ["mergeFrom", "mergeTo"].forEach((id) => {
+      const sel = document.getElementById(id);
+      if (!sel) return;
+      sel.innerHTML = "";
+      state.activities.forEach((e) => {
+        const o = document.createElement("option");
+        o.value = e.id;
+        o.textContent = e.name;
+        sel.appendChild(o);
+      });
+    });
+  }
+
+  function refreshActivityDatalist() {
+    const dl = document.getElementById("activitySuggest");
+    if (!dl) return;
+    dl.innerHTML = "";
+    state.activities.forEach((e) => {
+      const opt = document.createElement("option");
+      opt.value = e.name;
+      dl.appendChild(opt);
     });
   }
 
@@ -154,7 +172,7 @@
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td class="mono">${escapeHtml(new Date(ev.start).toLocaleString("zh-Hant"))}</td>` +
-        `<td>${escapeHtml(entityDisplayName(ev.entityId))}</td>` +
+        `<td>${escapeHtml(activityDisplayName(ev.activityId))}</td>` +
         `<td class="mono">${ms != null ? formatDur(ms) : "—"}</td>` +
         `<td class="muted">${escapeHtml([ev.place, ev.category].filter(Boolean).join(" · ") || "—")}</td>` +
         `<td class="muted">${escapeHtml((ev.people || []).join(", ") || "—")}</td>` +
@@ -203,31 +221,35 @@
   }
 
   document.getElementById("btnLogNow").addEventListener("click", () => {
-    const sid = document.getElementById("quickEntity").value;
-    if (!sid) {
-      toast("請先新增 Entity");
+    const label = document.getElementById("quickActivity").value.trim();
+    const act = getOrCreateActivity(label);
+    if (!act) {
+      toast("請輸入 Activity 名稱");
       return;
     }
     state.events.push({
       id: uid(),
       start: new Date().toISOString(),
-      entityId: sid,
+      activityId: act.id,
       remark: document.getElementById("quickRemark").value.trim() || undefined,
       people: splitPeople(document.getElementById("quickPeople").value),
       place: document.getElementById("quickPlace").value.trim() || undefined,
       category: document.getElementById("quickCategory").value.trim() || undefined,
     });
     save();
+    refreshActivityDatalist();
+    fillMergeSelects();
     renderTimeline();
     renderReport();
     toast("已記錄開始時間");
   });
 
   document.getElementById("btnManual").addEventListener("click", () => {
-    const sid = document.getElementById("manualEntity").value;
+    const label = document.getElementById("manualActivity").value.trim();
+    const act = getOrCreateActivity(label);
     const dt = document.getElementById("manualStart").value;
-    if (!sid || !dt) {
-      toast("揀 Entity + 開始時間");
+    if (!act || !dt) {
+      toast("輸入 Activity 名稱 + 開始時間");
       return;
     }
     const d = new Date(dt);
@@ -238,13 +260,15 @@
     state.events.push({
       id: uid(),
       start: d.toISOString(),
-      entityId: sid,
+      activityId: act.id,
       remark: document.getElementById("manualRemark").value.trim() || undefined,
       people: splitPeople(document.getElementById("manualPeople").value),
       place: document.getElementById("manualPlace").value.trim() || undefined,
       category: document.getElementById("manualCategory").value.trim() || undefined,
     });
     save();
+    refreshActivityDatalist();
+    fillMergeSelects();
     renderTimeline();
     renderReport();
     toast("已加入（後補）");
@@ -257,24 +281,24 @@
       .filter(Boolean);
   }
 
-  function renderEntityList() {
-    const root = document.getElementById("entityList");
+  function renderActivityList() {
+    const root = document.getElementById("activityCards");
     root.innerHTML = "";
-    state.entities.forEach((e) => {
+    state.activities.forEach((e) => {
       const card = document.createElement("div");
       card.className = "card";
       const aliasesStr = (e.aliases || []).join(", ");
       card.innerHTML =
         `<label>名稱（改名會把舊名加入 alias）</label>` +
-        `<div class="row"><input type="text" data-id="${e.id}" class="entity-name" value="${escapeHtml(e.name)}" />` +
+        `<div class="row"><input type="text" data-id="${e.id}" class="activity-name" value="${escapeHtml(e.name)}" />` +
         `<button type="button" class="danger fixed" data-del="${e.id}">刪</button></div>` +
         `<p class="muted" style="margin:8px 0 0;">Aliases：${escapeHtml(aliasesStr || "—")}</p>`;
       root.appendChild(card);
     });
-    root.querySelectorAll(".entity-name").forEach((inp) => {
+    root.querySelectorAll(".activity-name").forEach((inp) => {
       inp.addEventListener("change", () => {
         const id = inp.getAttribute("data-id");
-        const ent = entityById(state.entities, id);
+        const ent = activityById(state.activities, id);
         if (!ent) return;
         const nv = inp.value.trim();
         if (!nv) {
@@ -286,13 +310,11 @@
           if (!ent.aliases.includes(ent.name)) ent.aliases.push(ent.name);
           ent.name = nv;
           save();
-          fillEntitySelect(document.getElementById("quickEntity"), false);
-          fillEntitySelect(document.getElementById("manualEntity"), false);
-          fillEntitySelect(document.getElementById("mergeFrom"), false);
-          fillEntitySelect(document.getElementById("mergeTo"), false);
+          refreshActivityDatalist();
+          fillMergeSelects();
           renderTimeline();
           renderReport();
-          renderEntityList();
+          renderActivityList();
           toast("已改名並保留 alias");
         }
       });
@@ -300,41 +322,37 @@
     root.querySelectorAll("button[data-del]").forEach((btn) => {
       btn.addEventListener("click", () => {
         const id = btn.getAttribute("data-del");
-        const has = state.events.some((ev) => ev.entityId === id);
-        if (has && !confirm("仍有紀錄用緊此 Entity；刪除後會顯示「已刪 entity」。繼續？")) return;
-        if (!has && !confirm("確定刪除此 Entity？")) return;
-        state.entities = state.entities.filter((e) => e.id !== id);
+        const has = state.events.some((ev) => ev.activityId === id);
+        if (has && !confirm("仍有紀錄用緊此 Activity；刪除後會顯示「已刪 Activity」。繼續？")) return;
+        if (!has && !confirm("確定刪除此 Activity？")) return;
+        state.activities = state.activities.filter((e) => e.id !== id);
         save();
-        fillEntitySelect(document.getElementById("quickEntity"), false);
-        fillEntitySelect(document.getElementById("manualEntity"), false);
-        fillEntitySelect(document.getElementById("mergeFrom"), false);
-        fillEntitySelect(document.getElementById("mergeTo"), false);
-        renderEntityList();
+        refreshActivityDatalist();
+        fillMergeSelects();
+        renderActivityList();
         renderTimeline();
         renderReport();
-        toast("已刪除 Entity");
+        toast("已刪除 Activity");
       });
     });
   }
 
-  document.getElementById("btnAddEntity").addEventListener("click", () => {
-    const name = document.getElementById("newEntityName").value.trim();
+  document.getElementById("btnAddActivity").addEventListener("click", () => {
+    const name = document.getElementById("newActivityName").value.trim();
     if (!name) {
       toast("輸入名稱");
       return;
     }
-    if (resolveEntityByLabel(name)) {
+    if (resolveActivityByLabel(name)) {
       toast("已有同名／alias");
       return;
     }
-    state.entities.push({ id: uid(), name, aliases: [] });
-    document.getElementById("newEntityName").value = "";
+    state.activities.push({ id: uid(), name, aliases: [] });
+    document.getElementById("newActivityName").value = "";
     save();
-    fillEntitySelect(document.getElementById("quickEntity"), false);
-    fillEntitySelect(document.getElementById("manualEntity"), false);
-    fillEntitySelect(document.getElementById("mergeFrom"), false);
-    fillEntitySelect(document.getElementById("mergeTo"), false);
-    renderEntityList();
+    refreshActivityDatalist();
+    fillMergeSelects();
+    renderActivityList();
     toast("已新增");
   });
 
@@ -342,11 +360,11 @@
     const fromId = document.getElementById("mergeFrom").value;
     const toId = document.getElementById("mergeTo").value;
     if (!fromId || !toId || fromId === toId) {
-      toast("揀兩個唔同 Entity");
+      toast("揀兩個唔同 Activity");
       return;
     }
-    const fromE = entityById(state.entities, fromId);
-    const toE = entityById(state.entities, toId);
+    const fromE = activityById(state.activities, fromId);
+    const toE = activityById(state.activities, toId);
     if (!fromE || !toE) return;
     if (!confirm(`將「${fromE.name}」合併入「${toE.name}」？所有紀錄會指去後者，前者會刪除。`)) return;
     if (!toE.aliases) toE.aliases = [];
@@ -355,15 +373,13 @@
       if (!toE.aliases.includes(a)) toE.aliases.push(a);
     });
     state.events.forEach((ev) => {
-      if (ev.entityId === fromId) ev.entityId = toId;
+      if (ev.activityId === fromId) ev.activityId = toId;
     });
-    state.entities = state.entities.filter((e) => e.id !== fromId);
+    state.activities = state.activities.filter((e) => e.id !== fromId);
     save();
-    fillEntitySelect(document.getElementById("quickEntity"), false);
-    fillEntitySelect(document.getElementById("manualEntity"), false);
-    fillEntitySelect(document.getElementById("mergeFrom"), false);
-    fillEntitySelect(document.getElementById("mergeTo"), false);
-    renderEntityList();
+    refreshActivityDatalist();
+    fillMergeSelects();
+    renderActivityList();
     renderTimeline();
     renderReport();
     toast("已合併");
@@ -388,7 +404,7 @@
       const next = list[i + 1];
       const ms = durationMs(ev, next);
       if (ms == null) continue;
-      byEnt[ev.entityId] = (byEnt[ev.entityId] || 0) + ms;
+      byEnt[ev.activityId] = (byEnt[ev.activityId] || 0) + ms;
     }
     const rows = Object.entries(byEnt).sort((a, b) => b[1] - a[1]);
     if (rows.length === 0) {
@@ -402,11 +418,11 @@
         `</ul>`;
       return;
     }
-    let html = `<table><thead><tr><th>Entity</th><th>小時</th></tr></thead><tbody>`;
+    let html = `<table><thead><tr><th>Activity</th><th>小時</th></tr></thead><tbody>`;
     let total = 0;
     rows.forEach(([eid, ms]) => {
       total += ms;
-      html += `<tr><td>${escapeHtml(entityDisplayName(eid))}</td><td class="mono">${(ms / 3600000).toFixed(2)}</td></tr>`;
+      html += `<tr><td>${escapeHtml(activityDisplayName(eid))}</td><td class="mono">${(ms / 3600000).toFixed(2)}</td></tr>`;
     });
     html += `</tbody></table><p class="muted" style="margin-top:10px;">合計：<strong style="color:var(--text);">${(total / 3600000).toFixed(2)}</strong> 小時（僅計有「下一筆」嘅區間）</p>`;
     box.innerHTML = html;
@@ -431,14 +447,23 @@
     r.onload = () => {
       try {
         const o = JSON.parse(r.result);
-        if (!Array.isArray(o.entities) || !Array.isArray(o.events)) throw new Error("格式唔似備份");
-        state = o;
+        const activities = Array.isArray(o.activities)
+          ? o.activities
+          : Array.isArray(o.entities)
+            ? o.entities
+            : null;
+        if (!activities || !Array.isArray(o.events)) throw new Error("格式唔似備份");
+        const events = o.events.map((ev) => {
+          const n = { ...ev };
+          if (n.activityId == null && n.entityId != null) n.activityId = n.entityId;
+          delete n.entityId;
+          return n;
+        });
+        state = { version: o.version || 1, activities, events };
         save();
-        fillEntitySelect(document.getElementById("quickEntity"), false);
-        fillEntitySelect(document.getElementById("manualEntity"), false);
-        fillEntitySelect(document.getElementById("mergeFrom"), false);
-        fillEntitySelect(document.getElementById("mergeTo"), false);
-        renderEntityList();
+        refreshActivityDatalist();
+        fillMergeSelects();
+        renderActivityList();
         renderTimeline();
         syncReportDatesFromEvents();
         renderReport();
@@ -453,7 +478,7 @@
 
   document.getElementById("btnExportCsv").addEventListener("click", () => {
     const list = sortedEvents();
-    const lines = ["start_iso,entity,place,category,people,remark,duration_to_next_sec"];
+    const lines = ["start_iso,activity,place,category,people,remark,duration_to_next_sec"];
     for (let i = 0; i < list.length; i++) {
       const ev = list[i];
       const next = list[i + 1];
@@ -462,7 +487,7 @@
       lines.push(
         [
           ev.start,
-          csv(entityDisplayName(ev.entityId)),
+          csv(activityDisplayName(ev.activityId)),
           csv(ev.place || ""),
           csv(ev.category || ""),
           csv((ev.people || []).join(";")),
@@ -575,12 +600,12 @@
         skip++;
         continue;
       }
-      let ent = getOrCreateEntity(actLabel);
+      let ent = getOrCreateActivity(actLabel);
       if (!ent) continue;
       const ev = {
         id: uid(),
         start: iso,
-        entityId: ent.id,
+        activityId: ent.id,
       };
       if (placeCol && row[placeCol]) ev.place = String(row[placeCol]).trim();
       if (catCol && row[catCol]) ev.category = String(row[catCol]).trim();
@@ -588,11 +613,9 @@
       n++;
     }
     save();
-    fillEntitySelect(document.getElementById("quickEntity"), false);
-    fillEntitySelect(document.getElementById("manualEntity"), false);
-    fillEntitySelect(document.getElementById("mergeFrom"), false);
-    fillEntitySelect(document.getElementById("mergeTo"), false);
-    renderEntityList();
+    refreshActivityDatalist();
+    fillMergeSelects();
+    renderActivityList();
     renderTimeline();
     syncReportDatesFromEvents();
     renderReport();
@@ -609,6 +632,7 @@
         p.classList.toggle("hidden", p.getAttribute("data-panel") !== tab);
       });
       if (tab === "report") renderReport();
+      if (tab === "activities") renderActivityList();
     });
   });
 
@@ -636,11 +660,9 @@
     el.value = d.toISOString().slice(0, 16);
   }
 
-  fillEntitySelect(document.getElementById("quickEntity"), false);
-  fillEntitySelect(document.getElementById("manualEntity"), false);
-  fillEntitySelect(document.getElementById("mergeFrom"), false);
-  fillEntitySelect(document.getElementById("mergeTo"), false);
-  renderEntityList();
+  refreshActivityDatalist();
+  fillMergeSelects();
+  renderActivityList();
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();

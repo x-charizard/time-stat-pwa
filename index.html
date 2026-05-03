@@ -20,7 +20,7 @@
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="log">記錄</button>
     <button type="button" data-tab="timeline">時間軸</button>
-    <button type="button" data-tab="entities">Entity</button>
+    <button type="button" data-tab="activities">Activity</button>
     <button type="button" data-tab="report">報表</button>
     <button type="button" data-tab="import">匯入 CSV</button>
     <button type="button" data-tab="backup">備份</button>
@@ -29,8 +29,9 @@
   <section data-panel="log">
     <div class="card">
       <h2 style="margin-top:0;">快速：記錄「而家」開始</h2>
-      <label for="quickEntity">Entity</label>
-      <select id="quickEntity" aria-label="Entity"></select>
+      <label for="quickActivity">Activity（可手打或揀建議）</label>
+      <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
+      <datalist id="activitySuggest"></datalist>
       <label for="quickPlace" style="margin-top:10px;">地點（可選）</label>
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
       <label for="quickCategory" style="margin-top:10px;">類別（可選，例如 Work / Rest）</label>
@@ -43,8 +44,8 @@
     </div>
     <div class="card">
       <h2 style="margin-top:0;">後補：自訂開始時間</h2>
-      <label for="manualEntity">Entity</label>
-      <select id="manualEntity"></select>
+      <label for="manualActivity">Activity（可手打或揀建議）</label>
+      <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
       <label for="manualStart" style="margin-top:10px;">開始（本地時間）</label>
       <input type="datetime-local" id="manualStart" />
       <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
@@ -69,7 +70,7 @@
           <thead>
             <tr>
               <th>開始</th>
-              <th>Entity</th>
+              <th>Activity</th>
               <th>時長→下一筆</th>
               <th>地點·類別</th>
               <th>人物</th>
@@ -84,16 +85,16 @@
     </div>
   </section>
 
-  <section data-panel="entities" class="hidden">
+  <section data-panel="activities" class="hidden">
     <div class="card">
-      <label for="newEntityName">新 Entity 名稱</label>
+      <label for="newActivityName">新 Activity 名稱</label>
       <div class="row">
-        <input type="text" id="newEntityName" placeholder="例如 Trading Practice" autocomplete="off" />
-        <button type="button" class="primary fixed" id="btnAddEntity" style="min-width:100px;">新增</button>
+        <input type="text" id="newActivityName" placeholder="例如 Trading Practice" autocomplete="off" />
+        <button type="button" class="primary fixed" id="btnAddActivity" style="min-width:100px;">新增</button>
       </div>
       <p class="muted" style="margin-top:10px;">改名會將舊名放入 <strong>aliases</strong>，方便對返舊 CSV / Notion 字眼。</p>
     </div>
-    <h2>合併 Entity</h2>
+    <h2>合併 Activity</h2>
     <div class="card">
       <div class="row">
         <div>
@@ -108,7 +109,7 @@
       <button type="button" class="ghost" id="btnMerge" style="margin-top:12px;width:100%;">合併</button>
     </div>
     <h2>列表</h2>
-    <div id="entityList"></div>
+    <div id="activityCards"></div>
   </section>
 
   <section data-panel="report" class="hidden">
@@ -120,7 +121,7 @@
       <button type="button" class="primary" id="btnReport" style="margin-top:12px;width:100%;">更新報表</button>
       <p class="muted" style="margin-top:10px;">只計「開始時間」落喺範圍內、且有下一筆嘅區間（最後一筆無「時長」）。有匯入資料時，「由／至」會自動對齊紀錄最早／最尾一日。</p>
     </div>
-    <h2>按 Entity（小時）</h2>
+    <h2>按 Activity（小時）</h2>
     <div class="card" id="reportSummary"></div>
   </section>
 
@@ -139,7 +140,7 @@
       <label for="mapCategory" style="margin-top:10px;">Work/Rest 類（可選；通常係第一個 Category）</label>
       <select id="mapCategory"></select>
       <button type="button" class="primary" id="btnImportCsv" style="margin-top:14px;width:100%;">匯入到本機資料</button>
-      <p class="muted" style="margin-top:10px;">未出現過嘅 activity 字會自動 <strong>新建 Entity</strong>。可重複匯入（會加筆）；請自行避免重複檔。</p>
+      <p class="muted" style="margin-top:10px;">未出現過嘅字會自動 <strong>新建 Activity</strong>。可重複匯入（會加筆）；請自行避免重複檔。</p>
     </div>
   </section>
 
