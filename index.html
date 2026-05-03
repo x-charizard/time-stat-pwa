@@ -28,10 +28,12 @@
 
   <section data-panel="log">
     <div class="card">
-      <h2 style="margin-top:0;">快速：記錄「而家」開始</h2>
+      <h2 style="margin-top:0;">快速：Activity + 開始時間</h2>
       <label for="quickActivity">Activity（可手打或揀建議）</label>
       <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
       <datalist id="activitySuggest"></datalist>
+      <label for="quickStart" style="margin-top:10px;">開始時間（本地，可自行改）</label>
+      <input type="datetime-local" id="quickStart" />
       <label for="quickPlace" style="margin-top:10px;">地點（可選）</label>
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
       <label for="quickCategory" style="margin-top:10px;">類別（可選，例如 Work / Rest）</label>
@@ -40,7 +42,7 @@
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">備註</label>
       <textarea id="quickRemark" placeholder=""></textarea>
-      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄開始時間（現在）</button>
+      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄此段開始</button>
     </div>
     <div class="card">
       <h2 style="margin-top:0;">後補：自訂開始時間</h2>

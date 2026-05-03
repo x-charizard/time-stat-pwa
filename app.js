@@ -220,6 +220,13 @@
     toast("已更新");
   }
 
+  function setDatetimeLocalNow(el) {
+    if (!el) return;
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+    el.value = d.toISOString().slice(0, 16);
+  }
+
   document.getElementById("btnLogNow").addEventListener("click", () => {
     const label = document.getElementById("quickActivity").value.trim();
     const act = getOrCreateActivity(label);
@@ -227,9 +234,19 @@
       toast("請輸入 Activity 名稱");
       return;
     }
+    const dt = document.getElementById("quickStart").value;
+    if (!dt) {
+      toast("請填開始時間");
+      return;
+    }
+    const d = new Date(dt);
+    if (Number.isNaN(d.getTime())) {
+      toast("開始時間唔有效");
+      return;
+    }
     state.events.push({
       id: uid(),
-      start: new Date().toISOString(),
+      start: d.toISOString(),
       activityId: act.id,
       remark: document.getElementById("quickRemark").value.trim() || undefined,
       people: splitPeople(document.getElementById("quickPeople").value),
@@ -241,7 +258,8 @@
     fillMergeSelects();
     renderTimeline();
     renderReport();
-    toast("已記錄開始時間");
+    setDatetimeLocalNow(document.getElementById("quickStart"));
+    toast("已記錄");
   });
 
   document.getElementById("btnManual").addEventListener("click", () => {
@@ -653,11 +671,9 @@
     toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
-  function initManualNow() {
-    const el = document.getElementById("manualStart");
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    el.value = d.toISOString().slice(0, 16);
+  function initLogDatetimeInputs() {
+    setDatetimeLocalNow(document.getElementById("quickStart"));
+    setDatetimeLocalNow(document.getElementById("manualStart"));
   }
 
   refreshActivityDatalist();
@@ -666,7 +682,7 @@
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
-  initManualNow();
+  initLogDatetimeInputs();
 
   if (window.matchMedia("(display-mode: standalone)").matches) {
     document.getElementById("installHint").classList.remove("visible");
