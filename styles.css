@@ -289,13 +289,13 @@ button.picker-chip.is-active {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* 後補：收合式揀日期／時間（撳 summary 先展開） */
+/* 後補：收合式揀日期（勿 overflow:hidden，否則 iOS 內嵌選單會被裁切） */
 details.pick-details {
   margin-top: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  overflow: hidden;
+  overflow: visible;
 }
 
 details.pick-details > summary.pick-summary {
@@ -322,8 +322,12 @@ details.pick-details #manualDateWrap {
   padding: 4px 8px 12px;
 }
 
-details.pick-details .manual-time-row {
-  padding: 4px 8px 8px;
+/* 後補時間：跟返系統原生 time（唔改 appearance，方便 iOS 彈轉盤） */
+input[type="time"].input-time-xl {
+  min-height: 56px;
+  font-size: 22px;
+  padding: 14px 16px;
+  width: 100%;
 }
 
 input[type="number"].input-xl {

@@ -261,12 +261,14 @@
     const label = document.getElementById("manualActivity").value.trim();
     const act = getOrCreateActivity(label);
     const dateNorm = document.getElementById("manualDateSelected").value.trim();
-    const hourStr = document.getElementById("manualHourSel").value;
-    const minuteStr = document.getElementById("manualMinuteSel").value;
-    if (!act || !dateNorm || hourStr === "" || minuteStr === "") {
-      toast("請展開「揀日期」同「揀時間」並揀好");
+    const timeRaw = document.getElementById("manualTimeInput").value.trim();
+    const tm = timeRaw.match(/^(\d{2}):(\d{2})$/);
+    if (!act || !dateNorm || !tm) {
+      toast("請揀好日期同時間");
       return;
     }
+    const hourStr = tm[1];
+    const minuteStr = tm[2];
     const d = new Date(`${dateNorm}T${hourStr}:${minuteStr}:00`);
     if (Number.isNaN(d.getTime())) {
       toast("日期／時間唔有效");
@@ -674,45 +676,34 @@
     toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
+  /** 後補日期列：YYYY-MM-DD · 今日／昨日／週x（唔用「撳呢度」教學字） */
+  function manualDateSummaryText(ymd) {
+    const t = String(ymd || "").trim();
+    if (!t) return "—";
+    const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return t;
+    const y = parseInt(m[1], 10);
+    const mo = parseInt(m[2], 10) - 1;
+    const day = parseInt(m[3], 10);
+    const d = new Date(y, mo, day);
+    if (Number.isNaN(d.getTime())) return t;
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const d0 = new Date(y, mo, day);
+    d0.setHours(0, 0, 0, 0);
+    const diff = Math.round((today - d0) / 86400000);
+    const wk = ["日", "一", "二", "三", "四", "五", "六"];
+    if (diff === 0) return `${t} · 今日`;
+    if (diff === 1) return `${t} · 昨日`;
+    return `${t} · 週${wk[d.getDay()]}`;
+  }
+
   function updateManualDateSummary() {
     const hidden = document.getElementById("manualDateSelected");
     const sum = document.getElementById("manualDateSummary");
     if (!sum) return;
     const v = hidden && hidden.value;
-    sum.textContent = v ? `日期：${v}（撳呢度改）` : "撳呢度揀日期（過去 7 日）";
-  }
-
-  function updateManualTimeSummary() {
-    const h = document.getElementById("manualHourSel");
-    const m = document.getElementById("manualMinuteSel");
-    const sum = document.getElementById("manualTimeSummary");
-    if (!h || !m || !sum) return;
-    sum.textContent = `時間：${h.value}:${m.value}（撳呢度改時／分）`;
-  }
-
-  let manualTimeListenersBound = false;
-
-  function ensureManualTimeSelects() {
-    const hEl = document.getElementById("manualHourSel");
-    const mEl = document.getElementById("manualMinuteSel");
-    if (!hEl || !mEl) return;
-    if (hEl.options.length === 0) {
-      for (let i = 0; i < 24; i++) {
-        const v = String(i).padStart(2, "0");
-        hEl.add(new Option(v + " 時", v));
-      }
-    }
-    if (mEl.options.length === 0) {
-      for (let i = 0; i < 60; i++) {
-        const v = String(i).padStart(2, "0");
-        mEl.add(new Option(v + " 分", v));
-      }
-    }
-    if (!manualTimeListenersBound) {
-      hEl.addEventListener("change", updateManualTimeSummary);
-      mEl.addEventListener("change", updateManualTimeSummary);
-      manualTimeListenersBound = true;
-    }
+    sum.textContent = manualDateSummaryText(v);
   }
 
   /** 後補日期：7 個掣（收埋喺 details，撳先見） */
@@ -753,17 +744,13 @@
     updateManualDateSummary();
   }
 
-  /** 後補：預設今日 + 而家時／分 */
+  /** 後補：預設今日 + 而家時間（原生 time，避免 iOS 喺 details 內 select 彈唔出） */
   function initManualDateTime() {
     renderManualDateChips();
-    ensureManualTimeSelects();
-    const hEl = document.getElementById("manualHourSel");
-    const mEl = document.getElementById("manualMinuteSel");
-    if (!hEl || !mEl) return;
+    const ti = document.getElementById("manualTimeInput");
+    if (!ti) return;
     const d = new Date();
-    hEl.value = String(d.getHours()).padStart(2, "0");
-    mEl.value = String(d.getMinutes()).padStart(2, "0");
-    updateManualTimeSummary();
+    ti.value = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
   }
 
   refreshActivityDatalist();
