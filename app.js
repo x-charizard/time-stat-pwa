@@ -769,34 +769,91 @@
     updateManualDateSummary();
   }
 
-  /** 後補：預設今日 + 而家時間（00–23 / 00–59 下拉＝固定 24h 顯示） */
-  function ensureManualTimeSelects() {
-    const hEl = document.getElementById("manualHourSel");
-    const mEl = document.getElementById("manualMinuteSel");
-    if (!hEl || !mEl) return;
-    if (hEl.options.length === 0) {
-      for (let i = 0; i < 24; i++) {
-        const v = String(i).padStart(2, "0");
-        hEl.add(new Option(`${v} 時`, v));
-      }
-    }
-    if (mEl.options.length === 0) {
-      for (let i = 0; i < 60; i++) {
-        const v = String(i).padStart(2, "0");
-        mEl.add(new Option(`${v} 分`, v));
+  /** 後補時間：頁內碌轉盤（scroll-snap、三循環，00 再上＝23／59） */
+  const WHEEL_ITEM_H = 44;
+  const WHEEL_VIEW_H = 220;
+  const WHEEL_REPEAT = 3;
+
+  function wheelPadPx() {
+    return (WHEEL_VIEW_H - WHEEL_ITEM_H) / 2;
+  }
+
+  function buildCycleWheelList(listEl, modulus) {
+    listEl.innerHTML = "";
+    const pad = wheelPadPx();
+    listEl.style.paddingTop = `${pad}px`;
+    listEl.style.paddingBottom = `${pad}px`;
+    for (let r = 0; r < WHEEL_REPEAT; r++) {
+      for (let i = 0; i < modulus; i++) {
+        const div = document.createElement("div");
+        div.className = "manual-wheel-item";
+        const s = String(i).padStart(2, "0");
+        div.textContent = s;
+        div.dataset.value = s;
+        listEl.appendChild(div);
       }
     }
   }
 
+  function finalizeWheelScroll(viewport, hiddenInput, modulus) {
+    const itemH = WHEEL_ITEM_H;
+    let idx = Math.round(viewport.scrollTop / itemH);
+    if (idx < modulus) viewport.scrollTop += modulus * itemH;
+    else if (idx >= modulus * 2) viewport.scrollTop -= modulus * itemH;
+    idx = Math.round(viewport.scrollTop / itemH);
+    const v = ((idx % modulus) + modulus) % modulus;
+    hiddenInput.value = String(v).padStart(2, "0");
+  }
+
+  function attachWheel(viewport, hiddenInput, modulus) {
+    let debounceT;
+    function schedule() {
+      clearTimeout(debounceT);
+      debounceT = setTimeout(() => finalizeWheelScroll(viewport, hiddenInput, modulus), 90);
+    }
+    viewport.addEventListener("scroll", schedule, { passive: true });
+    viewport.addEventListener("touchend", () => setTimeout(() => finalizeWheelScroll(viewport, hiddenInput, modulus), 150));
+    viewport.addEventListener("scrollend", () => finalizeWheelScroll(viewport, hiddenInput, modulus));
+  }
+
+  function setWheelToValue(viewport, hiddenInput, modulus, valNum) {
+    const v = Math.max(0, Math.min(modulus - 1, Math.floor(valNum)));
+    const idx = modulus + v;
+    viewport.scrollTop = idx * WHEEL_ITEM_H;
+    hiddenInput.value = String(v).padStart(2, "0");
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => finalizeWheelScroll(viewport, hiddenInput, modulus));
+    });
+  }
+
+  let manualWheelsReady = false;
+  function initManualWheelsOnce() {
+    if (manualWheelsReady) return;
+    const hList = document.getElementById("manualHourWheelList");
+    const mList = document.getElementById("manualMinuteWheelList");
+    const hVp = document.getElementById("manualHourWheelViewport");
+    const mVp = document.getElementById("manualMinuteWheelViewport");
+    const hHid = document.getElementById("manualHourSel");
+    const mHid = document.getElementById("manualMinuteSel");
+    if (!hList || !mList || !hVp || !mVp || !hHid || !mHid) return;
+    buildCycleWheelList(hList, 24);
+    buildCycleWheelList(mList, 60);
+    attachWheel(hVp, hHid, 24);
+    attachWheel(mVp, mHid, 60);
+    manualWheelsReady = true;
+  }
+
   function initManualDateTime() {
     renderManualDateChips();
-    ensureManualTimeSelects();
-    const hEl = document.getElementById("manualHourSel");
-    const mEl = document.getElementById("manualMinuteSel");
-    if (!hEl || !mEl) return;
+    initManualWheelsOnce();
+    const hVp = document.getElementById("manualHourWheelViewport");
+    const mVp = document.getElementById("manualMinuteWheelViewport");
+    const hHid = document.getElementById("manualHourSel");
+    const mHid = document.getElementById("manualMinuteSel");
+    if (!hVp || !mVp || !hHid || !mHid) return;
     const d = new Date();
-    hEl.value = String(d.getHours()).padStart(2, "0");
-    mEl.value = String(d.getMinutes()).padStart(2, "0");
+    setWheelToValue(hVp, hHid, 24, d.getHours());
+    setWheelToValue(mVp, mHid, 60, d.getMinutes());
   }
 
   refreshActivityDatalist();

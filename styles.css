@@ -260,6 +260,64 @@ select.select-xl {
   min-width: 0;
 }
 
+/* 後補時間：頁內碌轉盤（24h，循環），唔用原生 select 全屏 */
+.manual-wheel-row {
+  align-items: flex-start;
+}
+.manual-wheel-col {
+  flex: 1;
+  min-width: 0;
+}
+.manual-wheel-caption {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.manual-wheel-shell {
+  position: relative;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  overflow: hidden;
+}
+.manual-wheel-shell::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 44px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 2;
+  opacity: 0.4;
+}
+.manual-wheel-viewport {
+  position: relative;
+  height: 220px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scroll-snap-type: y mandatory;
+  -webkit-overflow-scrolling: touch;
+  z-index: 1;
+}
+.manual-wheel-list {
+  background: var(--surface);
+}
+.manual-wheel-item {
+  height: 44px;
+  line-height: 44px;
+  text-align: center;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  scroll-snap-align: center;
+  scroll-snap-stop: always;
+  color: var(--text);
+}
+
 /* 後補日期：大掣（唔用 select） */
 .picker-chip-stack {
   display: flex;

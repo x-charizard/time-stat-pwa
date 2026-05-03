@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>記錄</title>
-  <link rel="stylesheet" href="styles.css?v=21" />
+  <link rel="stylesheet" href="styles.css?v=22" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -49,17 +49,27 @@
         <input type="hidden" id="manualDateSelected" value="" />
         <div id="manualDateWrap" class="picker-chip-stack" role="group" aria-label="揀日期"></div>
       </details>
-      <p class="muted" style="margin:12px 0 0;font-size:0.85rem;">時間（24 小時制）</p>
-      <div class="row manual-time-row">
-        <div>
-          <label for="manualHourSel">時</label>
-          <select id="manualHourSel" class="select-xl"></select>
+      <p class="muted" style="margin:12px 0 0;font-size:0.85rem;">時間（24 小時制 · 喺格內上下碌，00 再上係 23／59）</p>
+      <div class="row manual-time-row manual-wheel-row">
+        <div class="manual-wheel-col">
+          <div class="manual-wheel-caption">時</div>
+          <div class="manual-wheel-shell">
+            <div class="manual-wheel-viewport" id="manualHourWheelViewport" tabindex="0" role="listbox" aria-label="小時 0–23">
+              <div class="manual-wheel-list" id="manualHourWheelList"></div>
+            </div>
+          </div>
         </div>
-        <div>
-          <label for="manualMinuteSel">分</label>
-          <select id="manualMinuteSel" class="select-xl"></select>
+        <div class="manual-wheel-col">
+          <div class="manual-wheel-caption">分</div>
+          <div class="manual-wheel-shell">
+            <div class="manual-wheel-viewport" id="manualMinuteWheelViewport" tabindex="0" role="listbox" aria-label="分鐘 0–59">
+              <div class="manual-wheel-list" id="manualMinuteWheelList"></div>
+            </div>
+          </div>
         </div>
       </div>
+      <input type="hidden" id="manualHourSel" value="" />
+      <input type="hidden" id="manualMinuteSel" value="" />
       <label for="manualPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="manualPlace" autocomplete="off" />
       <label for="manualCategory" style="margin-top:10px;">Group</label>
@@ -175,6 +185,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=21"></script>
+  <script src="app.js?v=22"></script>
 </body>
 </html>
