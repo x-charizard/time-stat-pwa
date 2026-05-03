@@ -106,9 +106,32 @@
     return [...state.events].sort((a, b) => new Date(a.start) - new Date(b.start));
   }
 
+  /** 時間軸：最近三個曆日（今日、昨日、前日）由當地 0:00 起計 */
+  function timelineThreeDayCutoffMs() {
+    const t = new Date();
+    t.setHours(0, 0, 0, 0);
+    t.setDate(t.getDate() - 2);
+    return t.getTime();
+  }
+
+  /** 時間軸用：窗口內、開始時間升序（計時長用） */
+  function timelineEventsAscending() {
+    const cutoff = timelineThreeDayCutoffMs();
+    return [...state.events]
+      .filter((ev) => new Date(ev.start).getTime() >= cutoff)
+      .sort((a, b) => new Date(a.start) - new Date(b.start));
+  }
+
   function durationMs(ev, nextEv) {
     if (!nextEv) return null;
     return new Date(nextEv.start) - new Date(ev.start);
+  }
+
+  /** 由升序列表建立「每筆 → 時間上下一筆」 */
+  function chronologicalNextById(asc) {
+    const m = new Map();
+    for (let i = 0; i < asc.length - 1; i++) m.set(asc[i].id, asc[i + 1]);
+    return m;
   }
 
   function formatDur(ms) {
@@ -171,7 +194,9 @@
   function renderTimeline() {
     const tbody = document.getElementById("timelineBody");
     const empty = document.getElementById("timelineEmpty");
-    const list = sortedEvents();
+    const asc = timelineEventsAscending();
+    const list = [...asc].reverse();
+    const nextById = chronologicalNextById(sortedEvents());
     tbody.innerHTML = "";
     if (list.length === 0) {
       empty.classList.remove("hidden");
@@ -180,8 +205,8 @@
     empty.classList.add("hidden");
     for (let i = 0; i < list.length; i++) {
       const ev = list[i];
-      const next = list[i + 1];
-      const ms = durationMs(ev, next);
+      const next = nextById.get(ev.id) || null;
+      const ms = next != null ? durationMs(ev, next) : null;
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td class="mono">${escapeHtml(new Date(ev.start).toLocaleString("zh-Hant"))}</td>` +
