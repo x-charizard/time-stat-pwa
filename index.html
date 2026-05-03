@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>記錄</title>
-  <link rel="stylesheet" href="styles.css?v=19" />
+  <link rel="stylesheet" href="styles.css?v=20" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -32,8 +32,7 @@
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
       <label for="quickCategory" style="margin-top:10px;">Group</label>
       <select id="quickCategory" class="select-xl">
-        <option value="">揀 Group</option>
-        <option value="Work">Work</option>
+        <option value="Work" selected>Work</option>
         <option value="Rest">Rest</option>
       </select>
       <label for="quickPeople" style="margin-top:10px;">人物，逗號分隔</label>
@@ -56,8 +55,7 @@
       <input type="text" id="manualPlace" autocomplete="off" />
       <label for="manualCategory" style="margin-top:10px;">Group</label>
       <select id="manualCategory" class="select-xl">
-        <option value="">揀 Group</option>
-        <option value="Work">Work</option>
+        <option value="Work" selected>Work</option>
         <option value="Rest">Rest</option>
       </select>
       <label for="manualPeople" style="margin-top:10px;">人物</label>
@@ -168,6 +166,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=19"></script>
+  <script src="app.js?v=20"></script>
 </body>
 </html>

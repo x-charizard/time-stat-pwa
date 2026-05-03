@@ -279,7 +279,7 @@
     fillMergeSelects();
     renderTimeline();
     renderReport();
-    document.getElementById("quickCategory").value = "";
+    document.getElementById("quickCategory").value = "Work";
     toast("已記錄（而家）");
   });
 
@@ -315,7 +315,7 @@
     renderTimeline();
     renderReport();
     initManualDateTime();
-    document.getElementById("manualCategory").value = "";
+    document.getElementById("manualCategory").value = "Work";
     toast("已加入（後補）");
   });
 
