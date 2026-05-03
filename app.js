@@ -276,7 +276,8 @@
       /** Timetable 只顯示 ≥30 分鐘嘅區間（裁剪後） */
       const MIN_TIMELINE_SEGMENT_MS = 30 * 60 * 1000;
 
-      for (const ev of asc) {
+      for (let evIdx = 0; evIdx < asc.length; evIdx++) {
+        const ev = asc[evIdx];
         const next = nextById.get(ev.id) || null;
         const evStart = new Date(ev.start);
         const startMs = evStart.getTime();
@@ -285,11 +286,12 @@
         let visStartMs;
         let visEndMs;
         if (nextMs != null) {
-          /** 有下一筆：區間可跨日；同本欄曆日取交集（例如訓教 23:00→翌日 07:00） */
+          /** 有下一筆：半個鐘門檻用「成段」總長；跨日兩截同一 evIdx → 同色（data-stripe） */
+          if (nextMs - startMs < MIN_TIMELINE_SEGMENT_MS) continue;
           visStartMs = Math.max(startMs, dayStartMs);
           visEndMs = Math.min(nextMs, dayEndExclusiveMs);
         } else {
-          /** 無下一筆：只喺「開始嗰日」畫到該日結束，避免後續空白日都當成同一 activity */
+          /** 無下一筆：只喺「開始嗰日」畫到該日結束 */
           if (ymdFromLocalDate(evStart) !== c.ymd) continue;
           visStartMs = Math.max(startMs, dayStartMs);
           visEndMs = dayEndExclusiveMs;
@@ -298,7 +300,7 @@
         if (visEndMs <= visStartMs) continue;
 
         const segMs = visEndMs - visStartMs;
-        if (segMs < MIN_TIMELINE_SEGMENT_MS) continue;
+        if (nextMs == null && segMs < MIN_TIMELINE_SEGMENT_MS) continue;
 
         const dayMs = 24 * 60 * 60 * 1000;
         const topPct = (minutesSinceMidnight(visStartMs) / (24 * 60)) * 100;
@@ -307,6 +309,7 @@
 
         const blk = document.createElement("div");
         blk.className = "timeline-cal-block";
+        blk.dataset.stripe = evIdx % 2 === 0 ? "a" : "b";
         blk.style.top = `${topPct}%`;
         blk.style.height = `${hPct}%`;
 
@@ -319,7 +322,8 @@
         meta.className = "timeline-cal-block-meta";
         const visStart = new Date(visStartMs);
         const startStr = visStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
-        const durMin = Math.round(segMs / 60000);
+        const totalDurMs = nextMs != null ? nextMs - startMs : segMs;
+        const durMin = Math.round(totalDurMs / 60000);
         meta.textContent = `${startStr} · ${durMin} mins`;
         blk.appendChild(meta);
 
