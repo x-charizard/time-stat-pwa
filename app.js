@@ -234,11 +234,15 @@
     corner.className = "timeline-cal-corner";
     corner.setAttribute("aria-hidden", "true");
     headRow.appendChild(corner);
-    const wk = ["日", "一", "二", "三", "四", "五", "六"];
+    const wkEn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     for (const c of columns) {
       const h = document.createElement("div");
       h.className = "timeline-cal-day-title";
-      h.textContent = `${c.ymd} · 週${wk[c.date.getDay()]}`;
+      const parts = c.ymd.split("-");
+      const mm = parts[1] || "";
+      const dd = parts[2] || "";
+      const www = wkEn[c.date.getDay()] || "";
+      h.textContent = `${mm} - ${dd} (${www})`;
       headRow.appendChild(h);
     }
     inner.appendChild(headRow);
