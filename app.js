@@ -1,5 +1,7 @@
 (function () {
   const STORAGE_KEY = "time-stat-state-v1";
+  const DAY_MS = 86400000;
+  const MIN_TIMELINE_MS = 30 * 60000;
 
   /** @typedef {{ id: string, name: string, aliases: string[] }} Activity */
   /** @typedef {{ id: string, start: string, activityId: string, remark?: string, people?: string[], place?: string, category?: string }} Event */
@@ -203,7 +205,42 @@
     return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + d.getMilliseconds() / 60000;
   }
 
-  /** 時間軸：日曆格（X＝最近三日曆日左→右；Y＝00–23 時） */
+  function ymdDayBounds(ymd) {
+    const [yy, mo, da] = ymd.split("-").map(Number);
+    const start = new Date(yy, mo - 1, da, 0, 0, 0, 0).getTime();
+    return { start, endEx: start + DAY_MS };
+  }
+
+  function timelinePassesMin(ev, nextById) {
+    const next = nextById.get(ev.id) || null;
+    const t0 = new Date(ev.start).getTime();
+    if (next) return new Date(next.start).getTime() - t0 >= MIN_TIMELINE_MS;
+    const { start, endEx } = ymdDayBounds(ymdFromLocalDate(new Date(ev.start)));
+    return endEx - Math.max(t0, start) >= MIN_TIMELINE_MS;
+  }
+
+  function timelineDayClip(ev, colYmd, nextById) {
+    const next = nextById.get(ev.id) || null;
+    const evStart = new Date(ev.start);
+    const t0 = evStart.getTime();
+    const t1 = next ? new Date(next.start).getTime() : null;
+    const { start: d0, endEx: d1 } = ymdDayBounds(colYmd);
+    let vs, ve;
+    if (t1 != null) {
+      if (t1 - t0 < MIN_TIMELINE_MS) return null;
+      vs = Math.max(t0, d0);
+      ve = Math.min(t1, d1);
+    } else {
+      if (ymdFromLocalDate(evStart) !== colYmd) return null;
+      vs = Math.max(t0, d0);
+      ve = d1;
+    }
+    if (ve <= vs) return null;
+    const seg = ve - vs;
+    if (t1 == null && seg < MIN_TIMELINE_MS) return null;
+    return { vs, ve, t1, t0, seg };
+  }
+
   function renderTimeline() {
     const root = document.getElementById("timelineCalendar");
     const empty = document.getElementById("timelineEmpty");
@@ -211,7 +248,7 @@
     const nextById = chronologicalNextById(sortedEvents());
     if (!root || !empty) return;
     root.innerHTML = "";
-    if (asc.length === 0) {
+    if (!asc.length) {
       empty.classList.remove("hidden");
       return;
     }
@@ -225,6 +262,7 @@
       columns.push({ date: d, ymd: ymdFromLocalDate(d) });
     }
 
+    const wk = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const inner = document.createElement("div");
     inner.className = "timeline-cal-inner";
 
@@ -234,15 +272,11 @@
     corner.className = "timeline-cal-corner";
     corner.setAttribute("aria-hidden", "true");
     headRow.appendChild(corner);
-    const wkEn = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     for (const c of columns) {
       const h = document.createElement("div");
       h.className = "timeline-cal-day-title";
-      const parts = c.ymd.split("-");
-      const mm = parts[1] || "";
-      const dd = parts[2] || "";
-      const www = wkEn[c.date.getDay()] || "";
-      h.textContent = `${mm} - ${dd} (${www})`;
+      const [, mm, dd] = c.ymd.split("-");
+      h.textContent = `${mm} - ${dd} (${wk[c.date.getDay()]})`;
       headRow.appendChild(h);
     }
     inner.appendChild(headRow);
@@ -252,10 +286,10 @@
 
     const yAxis = document.createElement("div");
     yAxis.className = "timeline-cal-y-axis";
-    for (let hour = 0; hour < 24; hour++) {
+    for (let hr = 0; hr < 24; hr++) {
       const lab = document.createElement("div");
       lab.className = "timeline-cal-hour";
-      lab.textContent = String(hour).padStart(2, "0");
+      lab.textContent = String(hr).padStart(2, "0");
       yAxis.appendChild(lab);
     }
     body.appendChild(yAxis);
@@ -263,73 +297,23 @@
     const board = document.createElement("div");
     board.className = "timeline-cal-board";
 
-    /** 時間軸：≥30 分鐘先畫；梅花間竹計「唔畫嘅短段」都要食色位（短段 k+=2） */
-    const MIN_TIMELINE_SEGMENT_MS = 30 * 60 * 1000;
-
-    function passesTimelineMin(ev) {
-      const next = nextById.get(ev.id) || null;
-      const evStart = new Date(ev.start);
-      const startMs = evStart.getTime();
-      const nextMs = next ? new Date(next.start).getTime() : null;
-      if (nextMs != null) return nextMs - startMs >= MIN_TIMELINE_SEGMENT_MS;
-      const ymd = ymdFromLocalDate(evStart);
-      const ps = ymd.split("-").map(Number);
-      const yy = ps[0];
-      const mo = ps[1];
-      const da = ps[2];
-      const d0 = new Date(yy, mo - 1, da, 0, 0, 0, 0).getTime();
-      const d1 = d0 + 24 * 60 * 60 * 1000;
-      const visStartMs = Math.max(startMs, d0);
-      return d1 - visStartMs >= MIN_TIMELINE_SEGMENT_MS;
-    }
-
     const stripeById = new Map();
-    let stripeSlot = 0;
+    let slot = 0;
     for (const ev of asc) {
-      const ok = passesTimelineMin(ev);
-      if (ok) stripeById.set(ev.id, stripeSlot % 2 === 0 ? "a" : "b");
-      stripeSlot += ok ? 1 : 2;
+      const ok = timelinePassesMin(ev, nextById);
+      if (ok) stripeById.set(ev.id, slot % 2 === 0 ? "a" : "b");
+      slot += ok ? 1 : 2;
     }
 
     for (const c of columns) {
       const col = document.createElement("div");
       col.className = "timeline-cal-day";
-
-      const parts = c.ymd.split("-").map(Number);
-      const yy = parts[0];
-      const mo = parts[1];
-      const da = parts[2];
-      const dayStartMs = new Date(yy, mo - 1, da, 0, 0, 0, 0).getTime();
-      const dayEndExclusiveMs = dayStartMs + 24 * 60 * 60 * 1000;
-
       for (const ev of asc) {
-        const next = nextById.get(ev.id) || null;
-        const evStart = new Date(ev.start);
-        const startMs = evStart.getTime();
-        const nextMs = next ? new Date(next.start).getTime() : null;
-
-        let visStartMs;
-        let visEndMs;
-        if (nextMs != null) {
-          /** 有下一筆：半個鐘門檻用「成段」總長；跨日兩截同一 evIdx → 同色（data-stripe） */
-          if (nextMs - startMs < MIN_TIMELINE_SEGMENT_MS) continue;
-          visStartMs = Math.max(startMs, dayStartMs);
-          visEndMs = Math.min(nextMs, dayEndExclusiveMs);
-        } else {
-          /** 無下一筆：只喺「開始嗰日」畫到該日結束 */
-          if (ymdFromLocalDate(evStart) !== c.ymd) continue;
-          visStartMs = Math.max(startMs, dayStartMs);
-          visEndMs = dayEndExclusiveMs;
-        }
-
-        if (visEndMs <= visStartMs) continue;
-
-        const segMs = visEndMs - visStartMs;
-        if (nextMs == null && segMs < MIN_TIMELINE_SEGMENT_MS) continue;
-
-        const dayMs = 24 * 60 * 60 * 1000;
-        const topPct = (minutesSinceMidnight(visStartMs) / (24 * 60)) * 100;
-        let hPct = (segMs / dayMs) * 100;
+        const clip = timelineDayClip(ev, c.ymd, nextById);
+        if (!clip) continue;
+        const { vs, ve, t1, t0, seg } = clip;
+        const topPct = (minutesSinceMidnight(vs) / (24 * 60)) * 100;
+        let hPct = (seg / DAY_MS) * 100;
         if (hPct < 0.35) hPct = 0.35;
 
         const blk = document.createElement("div");
@@ -345,11 +329,9 @@
 
         const meta = document.createElement("div");
         meta.className = "timeline-cal-block-meta";
-        const visStart = new Date(visStartMs);
-        const startStr = visStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
-        const totalDurMs = nextMs != null ? nextMs - startMs : segMs;
-        const durMin = Math.round(totalDurMs / 60000);
-        meta.textContent = `${startStr} · ${durMin} mins`;
+        const tStr = new Date(vs).toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
+        const mins = Math.round((t1 != null ? t1 - t0 : seg) / 60000);
+        meta.textContent = `${tStr} · ${mins} mins`;
         blk.appendChild(meta);
 
         col.appendChild(blk);
@@ -432,17 +414,11 @@
     const root = document.getElementById("activityCards");
     if (!root) return;
     root.innerHTML = "";
-    /** 梅花間竹：實際色水由 styles.css :nth-child 控制（唔怕 SW／inline 失效）；badge 方便肉眼確認 */
-    state.activities.forEach((e, idx) => {
-      const stripe = idx % 2;
+    state.activities.forEach((e) => {
       const card = document.createElement("div");
-      card.className =
-        "card activity-list-row " + (stripe === 0 ? "activity-list-row--a" : "activity-list-row--b");
-      card.dataset.stripe = stripe === 0 ? "light" : "dark";
+      card.className = "card activity-list-row";
       const aliasesStr = (e.aliases || []).join(", ");
-      const badge = stripe === 0 ? "淺行" : "深行";
       card.innerHTML =
-        `<span class="activity-stripe-badge">${badge}</span>` +
         `<label>名稱（改名會把舊名加入 alias）</label>` +
         `<div class="row"><input type="text" data-id="${e.id}" class="activity-name" value="${escapeHtml(e.name)}" />` +
         `<button type="button" class="danger fixed" data-del="${e.id}">刪</button></div>` +

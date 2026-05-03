@@ -116,39 +116,15 @@ button.ghost {
   margin-bottom: 12px;
 }
 
-/* Activity「列表」梅花間竹：用 :nth-child 鎖死（唔靠 JS inline／唔怕 data-stripe 漏） */
-#activityCards > .activity-list-row {
-  position: relative;
-}
-
-.activity-stripe-badge {
-  display: inline-block;
-  margin: 0 0 8px;
-  padding: 4px 12px;
-  border-radius: 999px;
-  font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-}
-
+/* Activity 列表：nth-child 梅花間竹 */
 #activityCards > .activity-list-row:nth-child(odd) {
   background: var(--activity-stripe-a) !important;
   border-left: 16px solid #ffffff !important;
 }
 
-#activityCards > .activity-list-row:nth-child(odd) .activity-stripe-badge {
-  background: #ffffff;
-  color: #0f1115;
-}
-
 #activityCards > .activity-list-row:nth-child(even) {
   background: var(--activity-stripe-b) !important;
   border-left: 16px solid #f59e0b !important;
-}
-
-#activityCards > .activity-list-row:nth-child(even) .activity-stripe-badge {
-  background: #f59e0b;
-  color: #1a0f00;
 }
 
 /* 輸入框：奇偶行唔同實色（大半視覺係 input） */
