@@ -271,30 +271,37 @@
       const yy = parts[0];
       const mo = parts[1];
       const da = parts[2];
-      const dayEndMs = new Date(yy, mo - 1, da, 23, 59, 59, 999).getTime();
-      /** Timetable 只顯示 ≥30 分鐘嘅區間（以當日圖上實際長度為準） */
+      const dayStartMs = new Date(yy, mo - 1, da, 0, 0, 0, 0).getTime();
+      const dayEndExclusiveMs = dayStartMs + 24 * 60 * 60 * 1000;
+      /** Timetable 只顯示 ≥30 分鐘嘅區間（裁剪後） */
       const MIN_TIMELINE_SEGMENT_MS = 30 * 60 * 1000;
 
       for (const ev of asc) {
-        const evStart = new Date(ev.start);
-        if (ymdFromLocalDate(evStart) !== c.ymd) continue;
-
         const next = nextById.get(ev.id) || null;
+        const evStart = new Date(ev.start);
         const startMs = evStart.getTime();
-        let endMs;
-        if (next) {
-          const nMs = new Date(next.start).getTime();
-          endMs = Math.min(nMs, dayEndMs);
-        } else {
-          endMs = dayEndMs;
-        }
-        if (endMs <= startMs) continue;
+        const nextMs = next ? new Date(next.start).getTime() : null;
 
-        const segMs = endMs - startMs;
+        let visStartMs;
+        let visEndMs;
+        if (nextMs != null) {
+          /** 有下一筆：區間可跨日；同本欄曆日取交集（例如訓教 23:00→翌日 07:00） */
+          visStartMs = Math.max(startMs, dayStartMs);
+          visEndMs = Math.min(nextMs, dayEndExclusiveMs);
+        } else {
+          /** 無下一筆：只喺「開始嗰日」畫到該日結束，避免後續空白日都當成同一 activity */
+          if (ymdFromLocalDate(evStart) !== c.ymd) continue;
+          visStartMs = Math.max(startMs, dayStartMs);
+          visEndMs = dayEndExclusiveMs;
+        }
+
+        if (visEndMs <= visStartMs) continue;
+
+        const segMs = visEndMs - visStartMs;
         if (segMs < MIN_TIMELINE_SEGMENT_MS) continue;
 
         const dayMs = 24 * 60 * 60 * 1000;
-        const topPct = (minutesSinceMidnight(startMs) / (24 * 60)) * 100;
+        const topPct = (minutesSinceMidnight(visStartMs) / (24 * 60)) * 100;
         let hPct = (segMs / dayMs) * 100;
         if (hPct < 0.35) hPct = 0.35;
 
@@ -310,7 +317,8 @@
 
         const meta = document.createElement("div");
         meta.className = "timeline-cal-block-meta";
-        const startStr = evStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
+        const visStart = new Date(visStartMs);
+        const startStr = visStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
         const durMin = Math.round(segMs / 60000);
         meta.textContent = `${startStr} · ${durMin} mins`;
         blk.appendChild(meta);
