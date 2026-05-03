@@ -220,13 +220,6 @@
     toast("已更新");
   }
 
-  function setDatetimeLocalNow(el) {
-    if (!el) return;
-    const d = new Date();
-    d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-    el.value = d.toISOString().slice(0, 16);
-  }
-
   document.getElementById("btnLogNow").addEventListener("click", () => {
     const label = document.getElementById("quickActivity").value.trim();
     const act = getOrCreateActivity(label);
@@ -234,19 +227,9 @@
       toast("請輸入 Activity 名稱");
       return;
     }
-    const dt = document.getElementById("quickStart").value;
-    if (!dt) {
-      toast("請填開始時間");
-      return;
-    }
-    const d = new Date(dt);
-    if (Number.isNaN(d.getTime())) {
-      toast("開始時間唔有效");
-      return;
-    }
     state.events.push({
       id: uid(),
-      start: d.toISOString(),
+      start: new Date().toISOString(),
       activityId: act.id,
       remark: document.getElementById("quickRemark").value.trim() || undefined,
       people: splitPeople(document.getElementById("quickPeople").value),
@@ -258,21 +241,21 @@
     fillMergeSelects();
     renderTimeline();
     renderReport();
-    setDatetimeLocalNow(document.getElementById("quickStart"));
-    toast("已記錄");
+    toast("已記錄（而家）");
   });
 
   document.getElementById("btnManual").addEventListener("click", () => {
     const label = document.getElementById("manualActivity").value.trim();
     const act = getOrCreateActivity(label);
-    const dt = document.getElementById("manualStart").value;
-    if (!act || !dt) {
-      toast("輸入 Activity 名稱 + 開始時間");
+    const dateStr = document.getElementById("manualDate").value;
+    const timeStr = document.getElementById("manualTime").value;
+    if (!act || !dateStr || !timeStr) {
+      toast("輸入 Activity + 日期 + 時間");
       return;
     }
-    const d = new Date(dt);
+    const d = new Date(dateStr + "T" + timeStr);
     if (Number.isNaN(d.getTime())) {
-      toast("時間唔有效");
+      toast("日期／時間唔有效");
       return;
     }
     state.events.push({
@@ -289,6 +272,7 @@
     fillMergeSelects();
     renderTimeline();
     renderReport();
+    initManualDateTime();
     toast("已加入（後補）");
   });
 
@@ -671,9 +655,20 @@
     toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
-  function initLogDatetimeInputs() {
-    setDatetimeLocalNow(document.getElementById("quickStart"));
-    setDatetimeLocalNow(document.getElementById("manualStart"));
+  /** 後補：預填今日 + 而家時間（唔會郁快速區） */
+  function initManualDateTime() {
+    const dateEl = document.getElementById("manualDate");
+    const timeEl = document.getElementById("manualTime");
+    if (!dateEl || !timeEl) return;
+    const d = new Date();
+    dateEl.value =
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0");
+    timeEl.value =
+      String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
   }
 
   refreshActivityDatalist();
@@ -682,7 +677,7 @@
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
-  initLogDatetimeInputs();
+  initManualDateTime();
 
   if (window.matchMedia("(display-mode: standalone)").matches) {
     document.getElementById("installHint").classList.remove("visible");

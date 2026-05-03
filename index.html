@@ -28,12 +28,10 @@
 
   <section data-panel="log">
     <div class="card">
-      <h2 style="margin-top:0;">快速：Activity + 開始時間</h2>
+      <h2 style="margin-top:0;">快速：自動用而家時間</h2>
       <label for="quickActivity">Activity（可手打或揀建議）</label>
       <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
       <datalist id="activitySuggest"></datalist>
-      <label for="quickStart" style="margin-top:10px;">開始時間（本地，可自行改）</label>
-      <input type="datetime-local" id="quickStart" />
       <label for="quickPlace" style="margin-top:10px;">地點（可選）</label>
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
       <label for="quickCategory" style="margin-top:10px;">類別（可選，例如 Work / Rest）</label>
@@ -42,14 +40,23 @@
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">備註</label>
       <textarea id="quickRemark" placeholder=""></textarea>
-      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄此段開始</button>
+      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄開始時間（而家）</button>
     </div>
     <div class="card">
-      <h2 style="margin-top:0;">後補：自訂開始時間</h2>
+      <h2 style="margin-top:0;">後補：自己填日期同時間</h2>
+      <p class="muted" style="margin-top:0;">（分開「日期」「時間」較易喺電話輸入）</p>
       <label for="manualActivity">Activity（可手打或揀建議）</label>
       <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
-      <label for="manualStart" style="margin-top:10px;">開始（本地時間）</label>
-      <input type="datetime-local" id="manualStart" />
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label for="manualDate">日期</label>
+          <input type="date" id="manualDate" />
+        </div>
+        <div>
+          <label for="manualTime">時間</label>
+          <input type="time" id="manualTime" step="60" />
+        </div>
+      </div>
       <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
       <input type="text" id="manualPlace" autocomplete="off" />
       <label for="manualCategory" style="margin-top:10px;">類別（可選）</label>
