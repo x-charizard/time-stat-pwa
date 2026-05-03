@@ -11,8 +11,8 @@
   --safe-b: env(safe-area-inset-bottom, 0);
   --font: "PingFang TC", "Noto Sans TC", ui-sans-serif, system-ui, sans-serif;
   /* Activity 列表（同 app.js ACTIVITY_STRIPE_*） */
-  --activity-stripe-a: #697797;
-  --activity-stripe-b: #12161f;
+  --activity-stripe-a: #5c6b8a;
+  --activity-stripe-b: #0a0f18;
 }
 
 * {
@@ -124,12 +124,16 @@ button.ghost {
   background: var(--activity-stripe-b) !important;
 }
 
-/* 輸入框半透明，唔遮晒張卡；深／淺行略有唔同 */
+/* 輸入框：唔好用半透明疊色（兩行會望落成同一灰）；改不透明、成套對比 */
 #activityCards .activity-list-row[data-stripe="light"] .activity-name {
-  background: rgba(8, 10, 16, 0.35);
+  background: #cad4ea !important;
+  color: #12161c !important;
+  border-color: #9aaac9 !important;
 }
 #activityCards .activity-list-row[data-stripe="dark"] .activity-name {
-  background: rgba(8, 10, 16, 0.55);
+  background: #1e2d45 !important;
+  color: var(--text) !important;
+  border-color: #4a6088 !important;
 }
 
 /** Activity 分頁：唔用綠色 primary（避免「彩色」） */

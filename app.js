@@ -388,8 +388,9 @@
     const root = document.getElementById("activityCards");
     root.innerHTML = "";
     /** 梅花間竹：淺／深（inline 避免快取／規則蓋唔著） */
-    const ACTIVITY_STRIPE_BG = ["#697797", "#12161f"];
-    const ACTIVITY_STRIPE_BORDER = ["#aeb8d4", "#2a3445"];
+    /** 卡底色要同輸入框色「成套」，否則大半視覺被 input（全局 --surface）食晒會似同一灰 */
+    const ACTIVITY_STRIPE_BG = ["#5c6b8a", "#0a0f18"];
+    const ACTIVITY_STRIPE_BORDER = ["#e8ecf7", "#f59e0b"];
 
     state.activities.forEach((e, idx) => {
       const stripe = idx % 2;
@@ -397,8 +398,8 @@
       card.className =
         "card activity-list-row " + (stripe === 0 ? "activity-list-row--a" : "activity-list-row--b");
       card.dataset.stripe = stripe === 0 ? "light" : "dark";
-      card.style.backgroundColor = ACTIVITY_STRIPE_BG[stripe];
-      card.style.borderLeft = `10px solid ${ACTIVITY_STRIPE_BORDER[stripe]}`;
+      card.style.setProperty("background", ACTIVITY_STRIPE_BG[stripe], "important");
+      card.style.setProperty("border-left", `14px solid ${ACTIVITY_STRIPE_BORDER[stripe]}`, "important");
       const aliasesStr = (e.aliases || []).join(", ");
       card.innerHTML =
         `<label>名稱（改名會把舊名加入 alias）</label>` +
