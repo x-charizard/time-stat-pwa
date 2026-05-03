@@ -248,12 +248,13 @@
     const label = document.getElementById("manualActivity").value.trim();
     const act = getOrCreateActivity(label);
     const dateStr = document.getElementById("manualDate").value;
-    const timeStr = document.getElementById("manualTime").value;
-    if (!act || !dateStr || !timeStr) {
+    const hourStr = document.getElementById("manualHour").value;
+    const minuteStr = document.getElementById("manualMinute").value;
+    if (!act || !dateStr || hourStr === "" || minuteStr === "") {
       toast("輸入 Activity + 日期 + 時間");
       return;
     }
-    const d = new Date(dateStr + "T" + timeStr);
+    const d = new Date(`${dateStr}T${hourStr}:${minuteStr}:00`);
     if (Number.isNaN(d.getTime())) {
       toast("日期／時間唔有效");
       return;
@@ -655,11 +656,30 @@
     toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
-  /** 後補：預填今日 + 而家時間（唔會郁快速區） */
+  function ensureManualTimeSelects() {
+    const hEl = document.getElementById("manualHour");
+    const mEl = document.getElementById("manualMinute");
+    if (!hEl || !mEl) return;
+    if (hEl.options.length === 0) {
+      for (let i = 0; i < 24; i++) {
+        const v = String(i).padStart(2, "0");
+        hEl.add(new Option(v + " 時", v));
+      }
+    }
+    if (mEl.options.length === 0) {
+      for (let i = 0; i < 60; i++) {
+        const v = String(i).padStart(2, "0");
+        mEl.add(new Option(v + " 分", v));
+      }
+    }
+  }
+
+  /** 後補：預填今日 + 而家時／分 */
   function initManualDateTime() {
     const dateEl = document.getElementById("manualDate");
-    const timeEl = document.getElementById("manualTime");
-    if (!dateEl || !timeEl) return;
+    const hEl = document.getElementById("manualHour");
+    const mEl = document.getElementById("manualMinute");
+    if (!dateEl || !hEl || !mEl) return;
     const d = new Date();
     dateEl.value =
       d.getFullYear() +
@@ -667,8 +687,8 @@
       String(d.getMonth() + 1).padStart(2, "0") +
       "-" +
       String(d.getDate()).padStart(2, "0");
-    timeEl.value =
-      String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+    hEl.value = String(d.getHours()).padStart(2, "0");
+    mEl.value = String(d.getMinutes()).padStart(2, "0");
   }
 
   refreshActivityDatalist();
@@ -677,6 +697,7 @@
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
+  ensureManualTimeSelects();
   initManualDateTime();
 
   if (window.matchMedia("(display-mode: standalone)").matches) {
