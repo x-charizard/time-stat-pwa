@@ -10,6 +10,11 @@
   --radius: 14px;
   --safe-b: env(safe-area-inset-bottom, 0);
   --font: "PingFang TC", "Noto Sans TC", ui-sans-serif, system-ui, sans-serif;
+  /* 梅花間竹：淺灰 / 深灰（相對層次） */
+  --gray-stripe-a: #242933;
+  --gray-stripe-b: #1a1e27;
+  --cal-cell-a: #22262f;
+  --cal-cell-b: #1c2029;
 }
 
 * {
@@ -58,7 +63,7 @@ textarea {
   color: var(--text);
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--gray-stripe-a);
   min-height: 44px;
   padding: 0 12px;
   width: 100%;
@@ -98,6 +103,13 @@ button.ghost {
   min-width: 72px;
   white-space: nowrap;
   opacity: 0.65;
+  background: var(--gray-stripe-b);
+}
+.tabs button:nth-child(odd) {
+  background: var(--gray-stripe-a);
+}
+.tabs button:nth-child(even) {
+  background: var(--gray-stripe-b);
 }
 .tabs button.active {
   opacity: 1;
@@ -106,11 +118,44 @@ button.ghost {
 }
 
 .card {
-  background: var(--surface);
+  background: var(--gray-stripe-a);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px;
   margin-bottom: 12px;
+}
+section[data-panel="log"] > div.card:nth-child(1) {
+  background: var(--gray-stripe-a);
+}
+section[data-panel="log"] > div.card:nth-child(2) {
+  background: var(--gray-stripe-b);
+}
+section[data-panel="activities"] > div.card:nth-child(1) {
+  background: var(--gray-stripe-a);
+}
+section[data-panel="activities"] > div.card:nth-child(3) {
+  background: var(--gray-stripe-b);
+}
+#activityCards > .card:nth-child(odd) {
+  background: var(--gray-stripe-a);
+}
+#activityCards > .card:nth-child(even) {
+  background: var(--gray-stripe-b);
+}
+section[data-panel="report"] > div.card:nth-child(1) {
+  background: var(--gray-stripe-a);
+}
+section[data-panel="report"] > div.card:nth-child(3) {
+  background: var(--gray-stripe-b);
+}
+section[data-panel="import"] > div.card:nth-child(1) {
+  background: var(--gray-stripe-a);
+}
+section[data-panel="backup"] > div.card:nth-child(1) {
+  background: var(--gray-stripe-a);
+}
+section[data-panel="backup"] > div.card:nth-child(2) {
+  background: var(--gray-stripe-b);
 }
 
 .row {
@@ -167,7 +212,7 @@ th {
   bottom: calc(18px + var(--safe-b));
   left: 50%;
   transform: translateX(-50%) translateY(160%);
-  background: var(--surface);
+  background: var(--gray-stripe-a);
   border: 1px solid var(--border);
   padding: 12px 18px;
   border-radius: 12px;
@@ -196,6 +241,7 @@ textarea {
   border: 1px dashed var(--border);
   margin-top: 12px;
   display: none;
+  background: var(--gray-stripe-b);
 }
 .install-hint.visible {
   display: block;
@@ -278,8 +324,11 @@ select.select-xl {
   position: relative;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--gray-stripe-a);
   overflow: hidden;
+}
+.manual-wheel-col:nth-child(2) .manual-wheel-shell {
+  background: var(--gray-stripe-b);
 }
 .manual-wheel-shell::after {
   content: "";
@@ -305,7 +354,7 @@ select.select-xl {
   z-index: 1;
 }
 .manual-wheel-list {
-  background: var(--surface);
+  background: transparent;
 }
 .manual-wheel-item {
   height: 44px;
@@ -334,11 +383,14 @@ button.picker-chip {
   text-align: left;
   border-radius: 12px;
   border: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--gray-stripe-a);
   color: var(--text);
   cursor: pointer;
   touch-action: manipulation;
   -webkit-tap-highlight-color: rgba(94, 234, 212, 0.25);
+}
+.picker-chip-stack button.picker-chip:nth-child(even) {
+  background: var(--gray-stripe-b);
 }
 
 button.picker-chip.is-active {
@@ -352,7 +404,7 @@ details.pick-details {
   margin-top: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  background: var(--surface);
+  background: var(--gray-stripe-b);
   overflow: visible;
 }
 
@@ -392,6 +444,7 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 /* 時間軸：日曆格（X 日期 · Y 時間） */
 .timeline-cal-card {
+  background: var(--gray-stripe-a);
   padding: 10px 12px 12px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -408,6 +461,8 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 }
 .timeline-cal-corner {
   min-height: 1.2em;
+  background: var(--gray-stripe-b);
+  border-radius: 4px 0 0 0;
 }
 .timeline-cal-day-title {
   font-size: 0.8rem;
@@ -415,6 +470,13 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   color: var(--muted);
   padding: 0 2px 4px;
   border-bottom: 1px solid var(--border);
+}
+.timeline-cal-head > .timeline-cal-day-title:nth-child(2),
+.timeline-cal-head > .timeline-cal-day-title:nth-child(4) {
+  background: var(--gray-stripe-a);
+}
+.timeline-cal-head > .timeline-cal-day-title:nth-child(3) {
+  background: var(--gray-stripe-b);
 }
 .timeline-cal-body {
   display: grid;
@@ -444,6 +506,12 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   border-top: none;
   padding-top: 0;
 }
+.timeline-cal-hour:nth-child(odd) {
+  background: var(--gray-stripe-b);
+}
+.timeline-cal-hour:nth-child(even) {
+  background: var(--gray-stripe-a);
+}
 .timeline-cal-board {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -453,15 +521,28 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   overflow: hidden;
   background: var(--bg);
 }
+/* 日欄：直向梅花間竹；中欄與左右錯一格，成格仔盤 */
 .timeline-cal-day {
   position: relative;
   border-right: 1px solid var(--border);
-  background-image: repeating-linear-gradient(
+}
+.timeline-cal-day:nth-child(1),
+.timeline-cal-day:nth-child(3) {
+  background: repeating-linear-gradient(
     to bottom,
-    transparent 0,
-    transparent calc(30px - 1px),
-    rgba(42, 48, 64, 0.45) calc(30px - 1px),
-    rgba(42, 48, 64, 0.45) 30px
+    var(--cal-cell-a) 0,
+    var(--cal-cell-a) 30px,
+    var(--cal-cell-b) 30px,
+    var(--cal-cell-b) 60px
+  );
+}
+.timeline-cal-day:nth-child(2) {
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--cal-cell-b) 0,
+    var(--cal-cell-b) 30px,
+    var(--cal-cell-a) 30px,
+    var(--cal-cell-a) 60px
   );
 }
 .timeline-cal-day:last-child {
@@ -481,6 +562,13 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   overflow: hidden;
   z-index: 1;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  border-left: 2px solid rgba(139, 147, 167, 0.65);
+}
+.timeline-cal-block:nth-child(odd) {
+  background: rgba(58, 64, 78, 0.92);
+}
+.timeline-cal-block:nth-child(even) {
+  background: rgba(72, 78, 94, 0.92);
 }
 .timeline-cal-block-title {
   font-size: 11px;

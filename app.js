@@ -203,13 +203,6 @@
     return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + d.getMilliseconds() / 60000;
   }
 
-  function hueFromActivityId(id) {
-    let h = 0;
-    const s = String(id || "");
-    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-    return h % 360;
-  }
-
   /** 時間軸：日曆格（X＝最近三日曆日左→右；Y＝00–23 時） */
   function renderTimeline() {
     const root = document.getElementById("timelineCalendar");
@@ -300,9 +293,6 @@
         blk.className = "timeline-cal-block";
         blk.style.top = `${topPct}%`;
         blk.style.height = `${hPct}%`;
-        const hue = hueFromActivityId(ev.activityId);
-        blk.style.background = `hsla(${hue}, 46%, 28%, 0.93)`;
-        blk.style.borderLeft = `3px solid hsl(${hue}, 62%, 52%)`;
 
         const title = document.createElement("div");
         title.className = "timeline-cal-block-title";
