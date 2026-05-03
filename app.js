@@ -387,10 +387,18 @@
   function renderActivityList() {
     const root = document.getElementById("activityCards");
     root.innerHTML = "";
+    /** 梅花間竹：淺／深（inline 避免快取／規則蓋唔著） */
+    const ACTIVITY_STRIPE_BG = ["#697797", "#12161f"];
+    const ACTIVITY_STRIPE_BORDER = ["#aeb8d4", "#2a3445"];
+
     state.activities.forEach((e, idx) => {
+      const stripe = idx % 2;
       const card = document.createElement("div");
       card.className =
-        "card activity-list-row " + (idx % 2 === 0 ? "activity-list-row--a" : "activity-list-row--b");
+        "card activity-list-row " + (stripe === 0 ? "activity-list-row--a" : "activity-list-row--b");
+      card.dataset.stripe = stripe === 0 ? "light" : "dark";
+      card.style.backgroundColor = ACTIVITY_STRIPE_BG[stripe];
+      card.style.borderLeft = `10px solid ${ACTIVITY_STRIPE_BORDER[stripe]}`;
       const aliasesStr = (e.aliases || []).join(", ");
       card.innerHTML =
         `<label>名稱（改名會把舊名加入 alias）</label>` +
