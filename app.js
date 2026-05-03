@@ -268,6 +268,8 @@
       const mo = parts[1];
       const da = parts[2];
       const dayEndMs = new Date(yy, mo - 1, da, 23, 59, 59, 999).getTime();
+      /** Timetable 只顯示 ≥30 分鐘嘅區間（以當日圖上實際長度為準） */
+      const MIN_TIMELINE_SEGMENT_MS = 30 * 60 * 1000;
 
       for (const ev of asc) {
         const evStart = new Date(ev.start);
@@ -284,9 +286,12 @@
         }
         if (endMs <= startMs) continue;
 
+        const segMs = endMs - startMs;
+        if (segMs < MIN_TIMELINE_SEGMENT_MS) continue;
+
         const dayMs = 24 * 60 * 60 * 1000;
         const topPct = (minutesSinceMidnight(startMs) / (24 * 60)) * 100;
-        let hPct = ((endMs - startMs) / dayMs) * 100;
+        let hPct = (segMs / dayMs) * 100;
         if (hPct < 0.35) hPct = 0.35;
 
         const blk = document.createElement("div");
@@ -302,8 +307,7 @@
         const meta = document.createElement("div");
         meta.className = "timeline-cal-block-meta";
         const startStr = evStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
-        const durMs = next ? durationMs(ev, next) : null;
-        const durStr = durMs != null ? formatDur(durMs) : "—";
+        const durStr = formatDur(segMs);
         const extra = [ev.place, ev.category].filter(Boolean).join(" · ");
         meta.textContent = extra ? `${startStr} · ${durStr} · ${extra}` : `${startStr} · ${durStr}`;
         blk.appendChild(meta);
