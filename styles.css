@@ -10,9 +10,9 @@
   --radius: 14px;
   --safe-b: env(safe-area-inset-bottom, 0);
   --font: "PingFang TC", "Noto Sans TC", ui-sans-serif, system-ui, sans-serif;
-  /* Activity 列表專用：淺灰 / 深灰梅花間竹 */
-  --activity-stripe-a: #242933;
-  --activity-stripe-b: #1a1e27;
+  /* Activity 列表：淺灰／深灰（對比要夠大先睇到梅花間竹） */
+  --activity-stripe-a: #3a4256;
+  --activity-stripe-b: #151a24;
 }
 
 * {
@@ -116,12 +116,19 @@ button.ghost {
   margin-bottom: 12px;
 }
 
-/* 僅 Activity「列表」：梅花間竹 */
-#activityCards > .card:nth-child(odd) {
+/* Activity「列表」：JS 加 activity-list-row--a/--b，梅花間竹 */
+#activityCards > .activity-list-row--a {
   background: var(--activity-stripe-a);
+  border-color: rgba(120, 132, 160, 0.35);
 }
-#activityCards > .card:nth-child(even) {
+#activityCards > .activity-list-row--b {
   background: var(--activity-stripe-b);
+  border-color: rgba(42, 48, 64, 0.95);
+}
+
+/* 列表內輸入框用略深半透明，唔好遮住成張卡嘅淺／深底 */
+#activityCards .activity-name {
+  background: rgba(10, 12, 18, 0.55);
 }
 
 /** Activity 分頁：唔用綠色 primary（避免「彩色」） */

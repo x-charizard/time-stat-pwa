@@ -387,9 +387,10 @@
   function renderActivityList() {
     const root = document.getElementById("activityCards");
     root.innerHTML = "";
-    state.activities.forEach((e) => {
+    state.activities.forEach((e, idx) => {
       const card = document.createElement("div");
-      card.className = "card";
+      card.className =
+        "card activity-list-row " + (idx % 2 === 0 ? "activity-list-row--a" : "activity-list-row--b");
       const aliasesStr = (e.aliases || []).join(", ");
       card.innerHTML =
         `<label>名稱（改名會把舊名加入 alias）</label>` +
