@@ -191,55 +191,168 @@
     });
   }
 
+  function ymdFromLocalDate(d) {
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${mo}-${day}`;
+  }
+
+  function minutesSinceMidnight(ms) {
+    const d = new Date(ms);
+    return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60 + d.getMilliseconds() / 60000;
+  }
+
+  function hueFromActivityId(id) {
+    let h = 0;
+    const s = String(id || "");
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return h % 360;
+  }
+
+  /** 時間軸：日曆格（X＝最近三日曆日左→右；Y＝00–23 時） */
   function renderTimeline() {
-    const tbody = document.getElementById("timelineBody");
+    const root = document.getElementById("timelineCalendar");
     const empty = document.getElementById("timelineEmpty");
     const asc = timelineEventsAscending();
-    const list = [...asc].reverse();
     const nextById = chronologicalNextById(sortedEvents());
-    tbody.innerHTML = "";
-    if (list.length === 0) {
+    if (!root || !empty) return;
+    root.innerHTML = "";
+    if (asc.length === 0) {
       empty.classList.remove("hidden");
       return;
     }
     empty.classList.add("hidden");
-    for (let i = 0; i < list.length; i++) {
-      const ev = list[i];
-      const next = nextById.get(ev.id) || null;
-      const ms = next != null ? durationMs(ev, next) : null;
-      const tr = document.createElement("tr");
-      tr.innerHTML =
-        `<td class="mono">${escapeHtml(new Date(ev.start).toLocaleString("zh-Hant"))}</td>` +
-        `<td>${escapeHtml(activityDisplayName(ev.activityId))}</td>` +
-        `<td class="mono">${ms != null ? formatDur(ms) : "—"}</td>` +
-        `<td class="muted">${escapeHtml([ev.place, ev.category].filter(Boolean).join(" · ") || "—")}</td>` +
-        `<td class="muted">${escapeHtml((ev.people || []).join(", ") || "—")}</td>` +
-        `<td class="muted">${escapeHtml(ev.remark || "—")}</td>`;
-      const tdAct = document.createElement("td");
-      tdAct.className = "mono";
-      const bEdit = document.createElement("button");
-      bEdit.type = "button";
-      bEdit.className = "ghost";
-      bEdit.textContent = "改時間";
-      bEdit.addEventListener("click", () => openEditDialog(ev));
-      const bDel = document.createElement("button");
-      bDel.type = "button";
-      bDel.className = "danger";
-      bDel.textContent = "刪";
-      bDel.style.marginTop = "6px";
-      bDel.addEventListener("click", () => {
-        if (!confirm("刪除此筆？")) return;
-        state.events = state.events.filter((x) => x.id !== ev.id);
-        save();
-        renderTimeline();
-        renderReport();
-        toast("已刪除");
-      });
-      tdAct.appendChild(bEdit);
-      tdAct.appendChild(bDel);
-      tr.appendChild(tdAct);
-      tbody.appendChild(tr);
+
+    const columns = [];
+    for (let i = 2; i >= 0; i--) {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() - i);
+      columns.push({ date: d, ymd: ymdFromLocalDate(d) });
     }
+
+    const inner = document.createElement("div");
+    inner.className = "timeline-cal-inner";
+
+    const headRow = document.createElement("div");
+    headRow.className = "timeline-cal-head";
+    const corner = document.createElement("div");
+    corner.className = "timeline-cal-corner";
+    corner.setAttribute("aria-hidden", "true");
+    headRow.appendChild(corner);
+    const wk = ["日", "一", "二", "三", "四", "五", "六"];
+    for (const c of columns) {
+      const h = document.createElement("div");
+      h.className = "timeline-cal-day-title";
+      h.textContent = `${c.ymd} · 週${wk[c.date.getDay()]}`;
+      headRow.appendChild(h);
+    }
+    inner.appendChild(headRow);
+
+    const body = document.createElement("div");
+    body.className = "timeline-cal-body";
+
+    const yAxis = document.createElement("div");
+    yAxis.className = "timeline-cal-y-axis";
+    for (let hour = 0; hour < 24; hour++) {
+      const lab = document.createElement("div");
+      lab.className = "timeline-cal-hour";
+      lab.textContent = String(hour).padStart(2, "0");
+      yAxis.appendChild(lab);
+    }
+    body.appendChild(yAxis);
+
+    const board = document.createElement("div");
+    board.className = "timeline-cal-board";
+
+    for (const c of columns) {
+      const col = document.createElement("div");
+      col.className = "timeline-cal-day";
+
+      const parts = c.ymd.split("-").map(Number);
+      const yy = parts[0];
+      const mo = parts[1];
+      const da = parts[2];
+      const dayEndMs = new Date(yy, mo - 1, da, 23, 59, 59, 999).getTime();
+
+      for (const ev of asc) {
+        const evStart = new Date(ev.start);
+        if (ymdFromLocalDate(evStart) !== c.ymd) continue;
+
+        const next = nextById.get(ev.id) || null;
+        const startMs = evStart.getTime();
+        let endMs;
+        if (next) {
+          const nMs = new Date(next.start).getTime();
+          endMs = Math.min(nMs, dayEndMs);
+        } else {
+          endMs = dayEndMs;
+        }
+        if (endMs <= startMs) continue;
+
+        const dayMs = 24 * 60 * 60 * 1000;
+        const topPct = (minutesSinceMidnight(startMs) / (24 * 60)) * 100;
+        let hPct = ((endMs - startMs) / dayMs) * 100;
+        if (hPct < 0.35) hPct = 0.35;
+
+        const blk = document.createElement("div");
+        blk.className = "timeline-cal-block";
+        blk.style.top = `${topPct}%`;
+        blk.style.height = `${hPct}%`;
+        const hue = hueFromActivityId(ev.activityId);
+        blk.style.background = `hsla(${hue}, 46%, 28%, 0.93)`;
+        blk.style.borderLeft = `3px solid hsl(${hue}, 62%, 52%)`;
+
+        const title = document.createElement("div");
+        title.className = "timeline-cal-block-title";
+        title.textContent = activityDisplayName(ev.activityId);
+        blk.appendChild(title);
+
+        const meta = document.createElement("div");
+        meta.className = "timeline-cal-block-meta";
+        const startStr = evStart.toLocaleTimeString("zh-Hant", { hour: "2-digit", minute: "2-digit", hour12: false });
+        const durMs = next ? durationMs(ev, next) : null;
+        const durStr = durMs != null ? formatDur(durMs) : "—";
+        const extra = [ev.place, ev.category].filter(Boolean).join(" · ");
+        meta.textContent = extra ? `${startStr} · ${durStr} · ${extra}` : `${startStr} · ${durStr}`;
+        blk.appendChild(meta);
+
+        const btnRow = document.createElement("div");
+        btnRow.className = "timeline-cal-block-btns";
+        const bEdit = document.createElement("button");
+        bEdit.type = "button";
+        bEdit.className = "ghost timeline-cal-btn";
+        bEdit.textContent = "改";
+        bEdit.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openEditDialog(ev);
+        });
+        const bDel = document.createElement("button");
+        bDel.type = "button";
+        bDel.className = "danger timeline-cal-btn";
+        bDel.textContent = "刪";
+        bDel.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!confirm("刪除此筆？")) return;
+          state.events = state.events.filter((x) => x.id !== ev.id);
+          save();
+          renderTimeline();
+          renderReport();
+          toast("已刪除");
+        });
+        btnRow.appendChild(bEdit);
+        btnRow.appendChild(bDel);
+        blk.appendChild(btnRow);
+
+        col.appendChild(blk);
+      }
+      board.appendChild(col);
+    }
+
+    body.appendChild(board);
+    inner.appendChild(body);
+    root.appendChild(inner);
   }
 
   function openEditDialog(ev) {

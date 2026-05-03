@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>記錄</title>
-  <link rel="stylesheet" href="styles.css?v=23" />
+  <link rel="stylesheet" href="styles.css?v=24" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -89,23 +89,8 @@
   </section>
 
   <section data-panel="timeline" class="hidden">
-    <div class="card" style="padding:0;overflow:hidden;">
-      <div style="overflow-x:auto;">
-        <table>
-          <thead>
-            <tr>
-              <th>開始</th>
-              <th>Activity</th>
-              <th>時長</th>
-              <th>地點·Group</th>
-              <th>人物</th>
-              <th>備註</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="timelineBody"></tbody>
-        </table>
-      </div>
+    <div class="card timeline-cal-card">
+      <div id="timelineCalendar" class="timeline-cal"></div>
       <p id="timelineEmpty" class="muted" style="padding:14px;margin:0;">最近三日尚無紀錄。</p>
     </div>
   </section>
@@ -182,6 +167,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=24"></script>
 </body>
 </html>

@@ -389,3 +389,124 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   opacity: 1;
   height: 44px;
 }
+
+/* 時間軸：日曆格（X 日期 · Y 時間） */
+.timeline-cal-card {
+  padding: 10px 12px 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.timeline-cal-inner {
+  min-width: 280px;
+}
+.timeline-cal-head {
+  display: grid;
+  grid-template-columns: 40px repeat(3, 1fr);
+  gap: 0;
+  margin-bottom: 6px;
+  align-items: end;
+}
+.timeline-cal-corner {
+  min-height: 1.2em;
+}
+.timeline-cal-day-title {
+  font-size: 0.8rem;
+  text-align: center;
+  color: var(--muted);
+  padding: 0 2px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.timeline-cal-body {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  gap: 0;
+  align-items: stretch;
+}
+.timeline-cal-y-axis {
+  display: grid;
+  grid-template-rows: repeat(24, 30px);
+  width: 40px;
+  flex-shrink: 0;
+}
+.timeline-cal-hour {
+  font-size: 10px;
+  line-height: 1;
+  color: var(--muted);
+  text-align: right;
+  padding-right: 4px;
+  display: flex;
+  align-items: start;
+  justify-content: flex-end;
+  border-top: 1px solid rgba(42, 48, 64, 0.5);
+  padding-top: 2px;
+}
+.timeline-cal-hour:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+.timeline-cal-board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  height: 720px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.timeline-cal-day {
+  position: relative;
+  border-right: 1px solid var(--border);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(30px - 1px),
+    rgba(42, 48, 64, 0.45) calc(30px - 1px),
+    rgba(42, 48, 64, 0.45) 30px
+  );
+}
+.timeline-cal-day:last-child {
+  border-right: none;
+}
+.timeline-cal-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  min-height: 4px;
+  border-radius: 6px;
+  box-sizing: border-box;
+  padding: 2px 4px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  z-index: 1;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+.timeline-cal-block-title {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #f0f4f8;
+  word-break: break-word;
+}
+.timeline-cal-block-meta {
+  font-size: 9px;
+  line-height: 1.15;
+  color: rgba(233, 235, 240, 0.75);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+.timeline-cal-block-btns {
+  display: flex;
+  gap: 4px;
+  margin-top: auto;
+  padding-top: 2px;
+}
+button.timeline-cal-btn {
+  min-height: 26px;
+  padding: 0 6px;
+  width: auto;
+  font-size: 11px;
+  flex: 1;
+}
