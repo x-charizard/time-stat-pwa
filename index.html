@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>記錄</title>
-  <link rel="stylesheet" href="styles.css?v=17" />
+  <link rel="stylesheet" href="styles.css?v=18" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -28,10 +28,14 @@
       <label for="quickActivity" style="margin-top:0;">Activity</label>
       <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
       <datalist id="activitySuggest"></datalist>
+      <datalist id="groupSuggest">
+        <option value="Work"></option>
+        <option value="Rest"></option>
+      </datalist>
       <label for="quickPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
-      <label for="quickCategory" style="margin-top:10px;">類別</label>
-      <input type="text" id="quickCategory" autocomplete="off" />
+      <label for="quickCategory" style="margin-top:10px;">Group</label>
+      <input type="text" id="quickCategory" list="groupSuggest" autocomplete="off" placeholder="Work / Rest" />
       <label for="quickPeople" style="margin-top:10px;">人物，逗號分隔</label>
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">備註</label>
@@ -50,8 +54,8 @@
       <input type="time" id="manualTimeInput" step="60" class="input-time-xl" autocomplete="off" />
       <label for="manualPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="manualPlace" autocomplete="off" />
-      <label for="manualCategory" style="margin-top:10px;">類別</label>
-      <input type="text" id="manualCategory" autocomplete="off" />
+      <label for="manualCategory" style="margin-top:10px;">Group</label>
+      <input type="text" id="manualCategory" list="groupSuggest" autocomplete="off" placeholder="Work / Rest" />
       <label for="manualPeople" style="margin-top:10px;">人物</label>
       <input type="text" id="manualPeople" autocomplete="off" />
       <label for="manualRemark" style="margin-top:10px;">備註</label>
@@ -75,7 +79,7 @@
               <th>開始</th>
               <th>Activity</th>
               <th>時長→下一筆</th>
-              <th>地點·類別</th>
+              <th>地點·Group</th>
               <th>人物</th>
               <th>備註</th>
               <th></th>
@@ -160,6 +164,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=17"></script>
+  <script src="app.js?v=18"></script>
 </body>
 </html>
