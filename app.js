@@ -260,13 +260,17 @@
   document.getElementById("btnManual").addEventListener("click", () => {
     const label = document.getElementById("manualActivity").value.trim();
     const act = getOrCreateActivity(label);
-    const dateNorm = document.getElementById("manualDatePick").value;
-    const hourStr = document.getElementById("manualHour").value;
-    const minuteStr = document.getElementById("manualMinute").value;
-    if (!act || !dateNorm || hourStr === "" || minuteStr === "") {
-      toast("請揀：Activity、日期、時、分");
+    const dateNorm = document.getElementById("manualDateSelected").value.trim();
+    let h = parseInt(document.getElementById("manualHourNum").value, 10);
+    let m = parseInt(document.getElementById("manualMinuteNum").value, 10);
+    if (!act || !dateNorm || Number.isNaN(h) || Number.isNaN(m)) {
+      toast("請揀日期；時、分填數字");
       return;
     }
+    h = Math.max(0, Math.min(23, h));
+    m = Math.max(0, Math.min(59, m));
+    const hourStr = String(h).padStart(2, "0");
+    const minuteStr = String(m).padStart(2, "0");
     const d = new Date(`${dateNorm}T${hourStr}:${minuteStr}:00`);
     if (Number.isNaN(d.getTime())) {
       toast("日期／時間唔有效");
@@ -674,13 +678,14 @@
     toEl.value = list[list.length - 1].start.slice(0, 10);
   }
 
-  /** 後補日期：今日起計過去 7 日（含今日） */
-  function fillManualDateLast7() {
-    const sel = document.getElementById("manualDatePick");
-    if (!sel) return;
-    const prev = sel.value;
-    sel.innerHTML = "";
+  /** 後補日期：7 個大掣（唔用 select，避免 iOS 撳唔開） */
+  function renderManualDateChips() {
+    const wrap = document.getElementById("manualDateWrap");
+    const hidden = document.getElementById("manualDateSelected");
+    if (!wrap || !hidden) return;
+    wrap.innerHTML = "";
     const wk = ["日", "一", "二", "三", "四", "五", "六"];
+    let firstVal = "";
     for (let i = 0; i < 7; i++) {
       const d = new Date();
       d.setHours(0, 0, 0, 0);
@@ -689,41 +694,33 @@
       const mo = d.getMonth() + 1;
       const day = d.getDate();
       const value = `${y}-${String(mo).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-      const suffix = i === 0 ? "（今日）" : `（週${wk[d.getDay()]}）`;
-      sel.add(new Option(`${value} ${suffix}`, value));
+      if (i === 0) firstVal = value;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "picker-chip" + (i === 0 ? " is-active" : "");
+      btn.dataset.dateValue = value;
+      if (i === 0) btn.textContent = `${value} · 今日`;
+      else if (i === 1) btn.textContent = `${value} · 昨日`;
+      else btn.textContent = `${value} · 週${wk[d.getDay()]}`;
+      btn.addEventListener("click", () => {
+        wrap.querySelectorAll(".picker-chip").forEach((b) => b.classList.remove("is-active"));
+        btn.classList.add("is-active");
+        hidden.value = value;
+      });
+      wrap.appendChild(btn);
     }
-    if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
-  }
-
-  /** 後補時間：24 時 × 60 分 */
-  function ensureManualHmSelects() {
-    const hEl = document.getElementById("manualHour");
-    const mEl = document.getElementById("manualMinute");
-    if (!hEl || !mEl) return;
-    if (hEl.options.length === 0) {
-      for (let i = 0; i < 24; i++) {
-        const v = String(i).padStart(2, "0");
-        hEl.add(new Option(`${v} 時`, v));
-      }
-    }
-    if (mEl.options.length === 0) {
-      for (let i = 0; i < 60; i++) {
-        const v = String(i).padStart(2, "0");
-        mEl.add(new Option(`${v} 分`, v));
-      }
-    }
+    hidden.value = firstVal;
   }
 
   /** 後補：預設今日 + 而家時／分 */
   function initManualDateTime() {
-    const dPick = document.getElementById("manualDatePick");
-    const hEl = document.getElementById("manualHour");
-    const mEl = document.getElementById("manualMinute");
-    if (!dPick || !hEl || !mEl) return;
-    dPick.selectedIndex = 0;
+    renderManualDateChips();
+    const hIn = document.getElementById("manualHourNum");
+    const mIn = document.getElementById("manualMinuteNum");
+    if (!hIn || !mIn) return;
     const d = new Date();
-    hEl.value = String(d.getHours()).padStart(2, "0");
-    mEl.value = String(d.getMinutes()).padStart(2, "0");
+    hIn.value = String(d.getHours());
+    mIn.value = String(d.getMinutes());
   }
 
   refreshActivityDatalist();
@@ -732,8 +729,6 @@
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
-  fillManualDateLast7();
-  ensureManualHmSelects();
   initManualDateTime();
 
   if (window.matchMedia("(display-mode: standalone)").matches) {

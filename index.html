@@ -45,21 +45,22 @@
     <div class="card">
       <h2 style="margin-top:0;">後補：揀日期同時間</h2>
       <p class="muted" style="margin-top:0;">
-        日期：<strong>過去 7 日</strong>（含今日）。時間：<strong>24 小時</strong> × <strong>60 分鐘</strong>。
+        日期用下面<strong> 7 個掣</strong>揀；時間用<strong>兩格數字</strong>（0–23 時、0–59 分，撳格就用數字鍵盤）。
       </p>
       <label for="manualActivity">Activity（可手打或揀建議）</label>
       <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
-      <label for="manualDatePick" style="margin-top:12px;">日期（過去 7 日）</label>
-      <select id="manualDatePick" class="select-xl" aria-label="日期"></select>
-      <label style="margin-top:12px;">時間</label>
+      <label style="margin-top:12px;">日期（過去 7 日 · 撳掣揀）</label>
+      <input type="hidden" id="manualDateSelected" value="" />
+      <div id="manualDateWrap" class="picker-chip-stack" role="group" aria-label="揀日期"></div>
+      <label style="margin-top:14px;">時間（數字鍵盤）</label>
       <div class="row manual-time-row">
         <div>
-          <label for="manualHour" class="sr-only">時</label>
-          <select id="manualHour" class="select-xl" aria-label="時 0–23"></select>
+          <label for="manualHourNum">時（0–23）</label>
+          <input type="number" id="manualHourNum" class="input-xl" min="0" max="23" step="1" inputmode="numeric" autocomplete="off" placeholder="14" />
         </div>
         <div>
-          <label for="manualMinute" class="sr-only">分</label>
-          <select id="manualMinute" class="select-xl" aria-label="分 0–59"></select>
+          <label for="manualMinuteNum">分（0–59）</label>
+          <input type="number" id="manualMinuteNum" class="input-xl" min="0" max="59" step="1" inputmode="numeric" autocomplete="off" placeholder="30" />
         </div>
       </div>
       <label for="manualPlace" style="margin-top:10px;">地點（可選）</label>
