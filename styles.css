@@ -322,14 +322,6 @@ details.pick-details #manualDateWrap {
   padding: 4px 8px 12px;
 }
 
-/* 後補時間：跟返系統原生 time（唔改 appearance，方便 iOS 彈轉盤） */
-input[type="time"].input-time-xl {
-  min-height: 56px;
-  font-size: 22px;
-  padding: 14px 16px;
-  width: 100%;
-}
-
 input[type="number"].input-xl {
   -moz-appearance: textfield;
 }

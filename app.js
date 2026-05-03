@@ -287,14 +287,12 @@
     const label = document.getElementById("manualActivity").value.trim();
     const act = getOrCreateActivity(label);
     const dateNorm = document.getElementById("manualDateSelected").value.trim();
-    const timeRaw = document.getElementById("manualTimeInput").value.trim();
-    const tm = timeRaw.match(/^(\d{2}):(\d{2})$/);
-    if (!act || !dateNorm || !tm) {
+    const hourStr = document.getElementById("manualHourSel").value;
+    const minuteStr = document.getElementById("manualMinuteSel").value;
+    if (!act || !dateNorm || hourStr === "" || minuteStr === "") {
       toast("請揀好日期同時間");
       return;
     }
-    const hourStr = tm[1];
-    const minuteStr = tm[2];
     const d = new Date(`${dateNorm}T${hourStr}:${minuteStr}:00`);
     if (Number.isNaN(d.getTime())) {
       toast("日期／時間唔有效");
@@ -771,13 +769,34 @@
     updateManualDateSummary();
   }
 
-  /** 後補：預設今日 + 而家時間（原生 time，避免 iOS 喺 details 內 select 彈唔出） */
+  /** 後補：預設今日 + 而家時間（00–23 / 00–59 下拉＝固定 24h 顯示） */
+  function ensureManualTimeSelects() {
+    const hEl = document.getElementById("manualHourSel");
+    const mEl = document.getElementById("manualMinuteSel");
+    if (!hEl || !mEl) return;
+    if (hEl.options.length === 0) {
+      for (let i = 0; i < 24; i++) {
+        const v = String(i).padStart(2, "0");
+        hEl.add(new Option(`${v} 時`, v));
+      }
+    }
+    if (mEl.options.length === 0) {
+      for (let i = 0; i < 60; i++) {
+        const v = String(i).padStart(2, "0");
+        mEl.add(new Option(`${v} 分`, v));
+      }
+    }
+  }
+
   function initManualDateTime() {
     renderManualDateChips();
-    const ti = document.getElementById("manualTimeInput");
-    if (!ti) return;
+    ensureManualTimeSelects();
+    const hEl = document.getElementById("manualHourSel");
+    const mEl = document.getElementById("manualMinuteSel");
+    if (!hEl || !mEl) return;
     const d = new Date();
-    ti.value = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+    hEl.value = String(d.getHours()).padStart(2, "0");
+    mEl.value = String(d.getMinutes()).padStart(2, "0");
   }
 
   refreshActivityDatalist();
