@@ -279,6 +279,7 @@
     fillMergeSelects();
     renderTimeline();
     renderReport();
+    document.getElementById("quickCategory").value = "";
     toast("已記錄（而家）");
   });
 
@@ -314,6 +315,7 @@
     renderTimeline();
     renderReport();
     initManualDateTime();
+    document.getElementById("manualCategory").value = "";
     toast("已加入（後補）");
   });
 

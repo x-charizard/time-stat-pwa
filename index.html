@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>記錄</title>
-  <link rel="stylesheet" href="styles.css?v=18" />
+  <link rel="stylesheet" href="styles.css?v=19" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -28,14 +28,14 @@
       <label for="quickActivity" style="margin-top:0;">Activity</label>
       <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
       <datalist id="activitySuggest"></datalist>
-      <datalist id="groupSuggest">
-        <option value="Work"></option>
-        <option value="Rest"></option>
-      </datalist>
       <label for="quickPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
       <label for="quickCategory" style="margin-top:10px;">Group</label>
-      <input type="text" id="quickCategory" list="groupSuggest" autocomplete="off" placeholder="Work / Rest" />
+      <select id="quickCategory" class="select-xl">
+        <option value="">揀 Group</option>
+        <option value="Work">Work</option>
+        <option value="Rest">Rest</option>
+      </select>
       <label for="quickPeople" style="margin-top:10px;">人物，逗號分隔</label>
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">備註</label>
@@ -55,7 +55,11 @@
       <label for="manualPlace" style="margin-top:10px;">地點</label>
       <input type="text" id="manualPlace" autocomplete="off" />
       <label for="manualCategory" style="margin-top:10px;">Group</label>
-      <input type="text" id="manualCategory" list="groupSuggest" autocomplete="off" placeholder="Work / Rest" />
+      <select id="manualCategory" class="select-xl">
+        <option value="">揀 Group</option>
+        <option value="Work">Work</option>
+        <option value="Rest">Rest</option>
+      </select>
       <label for="manualPeople" style="margin-top:10px;">人物</label>
       <input type="text" id="manualPeople" autocomplete="off" />
       <label for="manualRemark" style="margin-top:10px;">備註</label>
@@ -164,6 +168,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=18"></script>
+  <script src="app.js?v=19"></script>
 </body>
 </html>
