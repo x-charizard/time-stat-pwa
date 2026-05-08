@@ -957,7 +957,11 @@
     document.getElementById("installHint").classList.add("visible");
   }
 
-  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  const devHost =
+    location.hostname === "localhost" ||
+    location.hostname === "127.0.0.1" ||
+    location.hostname === "[::1]";
+  if ("serviceWorker" in navigator && location.protocol !== "file:" && !devHost) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   }
 })();

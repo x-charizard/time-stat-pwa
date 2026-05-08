@@ -1,4 +1,4 @@
-const CACHE = "time-stat-v41";
+const CACHE = "time-stat-v42";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
@@ -11,37 +11,68 @@ self.addEventListener("activate", (e) => {
   self.clients.claim();
 });
 
-/** 導航：線上優先；靜態資源：線上優先再寫入 cache（避免永遠食舊 app.js） */
+function indexHref() {
+  return new URL("index.html", self.registration.scope).href;
+}
+
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   const url = new URL(req.url);
 
   if (req.mode === "navigate") {
-    e.respondWith(fetch(req).catch(() => caches.match("./index.html")));
-    return;
-  }
-
-  const path = url.pathname;
-  const isAsset =
-    path.endsWith(".js") ||
-    path.endsWith(".css") ||
-    path.endsWith(".json") ||
-    path.endsWith(".svg");
-
-  if (isAsset) {
     e.respondWith(
-      fetch(req)
-        .then((res) => {
-          if (res && res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(req, copy));
-          }
-          return res;
-        })
-        .catch(() => caches.match(req, { ignoreSearch: true }))
+      (async () => {
+        try {
+          return await fetch(req);
+        } catch {
+          const c = await caches.match(indexHref());
+          if (c) return c;
+          return await fetch(indexHref());
+        }
+      })().catch(
+        () =>
+          new Response(
+            "<!DOCTYPE html><html lang=zh-Hant><meta charset=utf-8><title>無法載入</title><p>請檢查本機 server 是否仍開住。</p></html>",
+            { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 503 }
+          )
+      )
     );
     return;
   }
 
-  e.respondWith(caches.match(req).then((r) => r || fetch(req)));
+  const isAsset =
+    url.pathname.endsWith(".js") ||
+    url.pathname.endsWith(".css") ||
+    url.pathname.endsWith(".json") ||
+    url.pathname.endsWith(".svg");
+
+  if (isAsset) {
+    e.respondWith(
+      (async () => {
+        try {
+          const res = await fetch(req);
+          if (res && res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((cache) => cache.put(req, copy));
+          }
+          return res;
+        } catch {
+          const cached = await caches.match(req, { ignoreSearch: true });
+          if (cached) return cached;
+          return await fetch(req);
+        }
+      })().catch(
+        () => new Response("/* network error */", { status: 503, headers: { "Content-Type": "text/plain" } })
+      )
+    );
+    return;
+  }
+
+  e.respondWith(
+    caches
+      .match(req)
+      .then((r) => r || fetch(req))
+      .catch(() => fetch(req))
+      .catch(() => new Response("", { status: 503 }))
+  );
 });
