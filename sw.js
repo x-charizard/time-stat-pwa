@@ -1,4 +1,4 @@
-const CACHE = "time-stat-v42";
+const CACHE = "time-stat-v43";
 
 self.addEventListener("install", (e) => {
   self.skipWaiting();
@@ -15,7 +15,21 @@ function indexHref() {
   return new URL("index.html", self.registration.scope).href;
 }
 
+function isLocalDevScope() {
+  try {
+    const u = new URL(self.registration.scope);
+    if (u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]") return true;
+    if (u.port === "8765") return true;
+  } catch (_) {}
+  return false;
+}
+
 self.addEventListener("fetch", (e) => {
+  if (isLocalDevScope()) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
+
   const req = e.request;
   const url = new URL(req.url);
 
@@ -32,7 +46,7 @@ self.addEventListener("fetch", (e) => {
       })().catch(
         () =>
           new Response(
-            "<!DOCTYPE html><html lang=zh-Hant><meta charset=utf-8><title>無法載入</title><p>請檢查本機 server 是否仍開住。</p></html>",
+            "<!DOCTYPE html><html lang=zh-Hant><meta charset=utf-8><title>無法載入</title><p>請檢查網絡或稍後再試。</p></html>",
             { headers: { "Content-Type": "text/html; charset=utf-8" }, status: 503 }
           )
       )
