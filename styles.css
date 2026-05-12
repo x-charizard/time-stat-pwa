@@ -478,6 +478,7 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   border-top: none;
 }
 .timeline-cal-board {
+  touch-action: pan-y;
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   height: 864px;
@@ -501,6 +502,7 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   border-right: none;
 }
 .timeline-cal-block {
+  cursor: pointer;
   position: absolute;
   left: 2px;
   right: 2px;
@@ -1117,4 +1119,21 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 .report-search-field:read-only {
   cursor: pointer;
   opacity: 0.92;
+}
+
+/* Timeline：詳情浮層（游標／手指掠過方格） */
+.timeline-hover-tip {
+  position: fixed;
+  z-index: 9999;
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(18, 20, 28, 0.96);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  color: #e9ebf0;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  pointer-events: none;
 }

@@ -71,6 +71,7 @@
   let state = loadState();
   let reportPresetSuppress = false;
   let timelinePointerTipAbort = null;
+  const timelineBlockDetailMap = new WeakMap();
 
   /**
    * 匯入／庫內去重鍵：同一毫秒開始 + 同一 Activity + 同一 Place + 同一 Remark + 同一 With + 同一 Projects 欄
@@ -185,10 +186,20 @@
     return t.getTime();
   }
 
-  /** 時間軸用：窗口內、開始時間升序（計時長用） */
-  function timelineEventsAscending() {
+  /** 時間軸用：三日欄任何一刻有用到嘅紀錄（包含「開始喺視窗外但段尾跌入視窗」——跨日凌晨）。 */
+  function timelineEventsAscending(fullAscOpt) {
+    const fullAsc = fullAscOpt || sortedEventsUniqueById();
     const cutoff = timelineThreeDayCutoffMs();
-    return sortedEventsUniqueById().filter((ev) => new Date(ev.start).getTime() >= cutoff);
+    return fullAsc.filter((ev) => {
+      const t0 = new Date(ev.start).getTime();
+      if (Number.isNaN(t0)) return false;
+      if (t0 >= cutoff) return true;
+      const idx = fullAsc.indexOf(ev);
+      if (idx < 0) return false;
+      const segMs = segmentDurationMsForReport(fullAsc, idx);
+      const endMs = t0 + segMs;
+      return endMs > cutoff;
+    });
   }
 
   function durationMs(ev, nextEv) {
@@ -288,10 +299,20 @@
     return `${act} (${hmStart} ~ ${hmNow})`;
   }
 
-  function timelineTipText(vs, t1, t0, seg) {
-    const tStr = formatHmLocal(vs);
-    const mins = Math.round((t1 != null ? t1 - t0 : seg) / 60000);
-    return `${tStr} · ${mins} mins`;
+  /** Timeline 浮層：顯示成段 activity（與報表同一 segment 計法），跨日亦係完整一段嘅時間／分鐘。 */
+  function timelineBlockDetailText(ev, fullAsc) {
+    const idx = fullAsc.indexOf(ev);
+    if (idx < 0) return "";
+    const segMs = segmentDurationMsForReport(fullAsc, idx);
+    const t0 = new Date(ev.start).getTime();
+    if (Number.isNaN(t0)) return "";
+    const tEnd = t0 + segMs;
+    const lines = [];
+    lines.push(`${formatHmLocal(ev.start)} ~ ${formatHmLocal(tEnd)}`);
+    lines.push(`${Math.round(segMs / 60000)} mins`);
+    const rm = displayRemarkForRawRecord(ev);
+    if (rm) lines.push(`Remark：${rm}`);
+    return lines.join("\n");
   }
 
   /** Google Sheet style: MM/DD/YYYY HH:mm:ss */
@@ -431,14 +452,9 @@
     const t1Wall = t0 + segAll;
     const isCurrent = idx === fullAsc.length - 1;
     const { start: d0, endEx: d1 } = ymdDayBounds(colYmd);
+    const segmentEnd = isCurrent ? Date.now() : t1Wall;
     const vs = Math.max(t0, d0);
-    let ve;
-    if (isCurrent) {
-      if (ymdFromLocalDate(evStart) !== colYmd) return null;
-      ve = Math.min(Date.now(), d1);
-    } else {
-      ve = Math.min(t1Wall, d1);
-    }
+    const ve = Math.min(segmentEnd, d1);
     if (ve <= vs) return null;
     const seg = ve - vs;
     if (seg < MIN_TIMELINE_MS) return null;
@@ -450,7 +466,7 @@
     const empty = document.getElementById("timelineEmpty");
     const nowStatus = document.getElementById("timelineNowStatus");
     const fullAsc = sortedEventsUniqueById();
-    const asc = dedupeTimelineByStartAndActivity(timelineEventsAscending());
+    const asc = dedupeTimelineByStartAndActivity(timelineEventsAscending(fullAsc));
     if (!root || !empty) return;
     timelineClearRoot(root);
     if (timelinePointerTipAbort) {
@@ -518,11 +534,20 @@
     for (const c of columns) {
       const col = document.createElement("div");
       col.className = "timeline-cal-day";
-      for (const ev of asc) {
-        // 跨午夜嘅同一筆會喺「開始日」同「下一日」各有一段，睇落似重複；只喺 **start 所屬曆日** 嗰欄畫（喺該日 clip 到午夜）。
-        if (ymdFromLocalDate(new Date(ev.start)) !== c.ymd) continue;
+      const clips = [];
+      for (let ei = 0; ei < asc.length; ei++) {
+        const ev = asc[ei];
         const clip = timelineDayClip(ev, c.ymd, fullAsc);
         if (!clip) continue;
+        clips.push({ ev, clip });
+      }
+      clips.sort((a, b) => {
+        const d = a.clip.vs - b.clip.vs;
+        if (d !== 0) return d;
+        return a.clip.seg - b.clip.seg;
+      });
+      for (let ci = 0; ci < clips.length; ci++) {
+        const { ev, clip } = clips[ci];
         const { vs, ve, t1, t0, seg } = clip;
         const topPct = (minutesSinceMidnight(vs) / (24 * 60)) * 100;
         let hPct = (seg / DAY_MS) * 100;
@@ -536,19 +561,14 @@
         blk.dataset.stripe = stripeById.get(ev.id) || "a";
         blk.style.top = `${topPct}%`;
         blk.style.height = `${hPct}%`;
-        blk.style.zIndex = isCurrent ? "9" : "1";
+        blk.style.zIndex = isCurrent ? "12" : String(3 + ci);
 
         const title = document.createElement("div");
         title.className = "timeline-cal-block-title";
         title.textContent = activityDisplayName(ev.activityId);
         blk.appendChild(title);
 
-        const meta = document.createElement("div");
-        meta.className = "timeline-cal-block-meta";
-        const tip = timelineTipText(vs, t1, t0, seg);
-        meta.textContent = tip;
-        blk.appendChild(meta);
-        blk.dataset.tip = tip;
+        timelineBlockDetailMap.set(blk, timelineBlockDetailText(ev, fullAsc));
 
         col.appendChild(blk);
       }
@@ -559,7 +579,7 @@
     inner.appendChild(body);
     timelineMountRoot(root, inner);
     timelinePointerTipAbort = new AbortController();
-    bindTimelinePointerTip(root, timelinePointerTipAbort.signal);
+    bindTimelineHoverTip(root, timelinePointerTipAbort.signal);
   }
 
   function getTimelineTipEl() {
@@ -575,9 +595,20 @@
   function showTimelineTip(text, x, y) {
     const tip = getTimelineTipEl();
     tip.textContent = text;
+    tip.classList.remove("hidden");
     tip.style.left = `${x}px`;
     tip.style.top = `${y}px`;
-    tip.classList.remove("hidden");
+    requestAnimationFrame(() => {
+      const rect = tip.getBoundingClientRect();
+      let nx = x;
+      let ny = y - 8;
+      if (rect.right > window.innerWidth - 10) nx = Math.max(10, window.innerWidth - rect.width - 10);
+      if (rect.left < 10) nx = 10;
+      if (rect.bottom > window.innerHeight - 10) ny = Math.max(10, window.innerHeight - rect.height - 10);
+      if (rect.top < 10) ny = 10;
+      tip.style.left = `${nx}px`;
+      tip.style.top = `${ny}px`;
+    });
   }
 
   function hideTimelineTip() {
@@ -585,53 +616,20 @@
     if (tip) tip.classList.add("hidden");
   }
 
-  function bindTimelinePointerTip(root, signal) {
+  function bindTimelineHoverTip(root, signal) {
     if (!root || !signal) return;
-    root.addEventListener(
-      "mousemove",
-      (e) => {
-        const blk = e.target && e.target.closest ? e.target.closest(".timeline-cal-block") : null;
-        if (!blk || !blk.dataset.tip) {
-          hideTimelineTip();
-          return;
-        }
-        showTimelineTip(blk.dataset.tip, e.clientX, e.clientY - 6);
-      },
-      { signal }
-    );
-    root.addEventListener("mouseleave", hideTimelineTip, { signal });
-    root.addEventListener(
-      "touchstart",
-      (e) => {
-        const t = e.touches && e.touches[0];
-        if (!t) return;
-        const target = document.elementFromPoint(t.clientX, t.clientY);
-        const blk = target && target.closest ? target.closest(".timeline-cal-block") : null;
-        if (!blk || !blk.dataset.tip) {
-          hideTimelineTip();
-          return;
-        }
-        showTimelineTip(blk.dataset.tip, t.clientX, t.clientY - 10);
-      },
-      { passive: true, signal }
-    );
-    root.addEventListener(
-      "touchmove",
-      (e) => {
-        const t = e.touches && e.touches[0];
-        if (!t) return;
-        const target = document.elementFromPoint(t.clientX, t.clientY);
-        const blk = target && target.closest ? target.closest(".timeline-cal-block") : null;
-        if (!blk || !blk.dataset.tip) {
-          hideTimelineTip();
-          return;
-        }
-        showTimelineTip(blk.dataset.tip, t.clientX, t.clientY - 10);
-      },
-      { passive: true, signal }
-    );
-    root.addEventListener("touchend", hideTimelineTip, { passive: true, signal });
-    root.addEventListener("touchcancel", hideTimelineTip, { passive: true, signal });
+    const move = (e) => {
+      const blk = e.target && e.target.closest ? e.target.closest(".timeline-cal-block") : null;
+      if (!blk || !root.contains(blk)) {
+        hideTimelineTip();
+        return;
+      }
+      const detail = timelineBlockDetailMap.get(blk);
+      if (!detail) return;
+      showTimelineTip(detail, e.clientX, e.clientY - 10);
+    };
+    root.addEventListener("pointermove", move, { signal });
+    root.addEventListener("pointerleave", () => hideTimelineTip(), { signal });
   }
 
   function parseProjectsCsvRows(data) {
