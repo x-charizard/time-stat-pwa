@@ -30,6 +30,84 @@ body {
   line-height: 1.45;
   padding: 16px;
   padding-bottom: calc(20px + var(--safe-b));
+  overflow-x: hidden;
+  max-width: 100%;
+}
+
+/* 窄屏：body 左右淨係 safe-area；Report 內卡片貼齊寬度；report 直向拉滿 */
+@media (max-width: 720px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-top: max(8px, env(safe-area-inset-top, 0px));
+    padding-bottom: calc(20px + var(--safe-b));
+  }
+
+  section[data-panel] {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+  }
+
+  /* Report：日期列、filter、results — safe-area 外加少少左右「唞氣位」 */
+  section.report-panel > .card.report-range-toolbar,
+  section.report-panel .report-layout > aside.report-sidebar.card,
+  section.report-panel .report-layout .report-main-stack.card {
+    padding-left: calc(env(safe-area-inset-left, 0px) + 12px);
+    padding-right: calc(env(safe-area-inset-right, 0px) + 12px);
+    padding-top: 12px;
+    padding-bottom: 12px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  section.report-panel .report-layout,
+  section.report-panel .report-main {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  /* Report 日期列：置中（避免手機上視覺偏一邊） */
+  section.report-panel > .card.report-range-toolbar .report-range-row > * {
+    justify-self: center;
+    width: 100%;
+    max-width: min(100%, 22rem);
+  }
+
+  section.report-panel > .card.report-range-toolbar .report-range-dates {
+    justify-content: center;
+    align-items: center;
+  }
+
+  section.report-panel > .card.report-range-toolbar .report-range-sep {
+    width: 100%;
+    text-align: center;
+  }
+
+  .report-layout {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .report-sidebar {
+    flex: none;
+    width: 100%;
+    max-width: none;
+  }
+
+  .report-results {
+    max-height: none;
+  }
 }
 
 h1 {
@@ -95,10 +173,14 @@ button.ghost {
   margin-bottom: 14px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .tabs button {
-  flex: 1;
-  min-width: 72px;
+  flex: 1 1 0;
+  min-width: 0;
   white-space: nowrap;
   opacity: 0.65;
 }
@@ -106,6 +188,36 @@ button.ghost {
   opacity: 1;
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* 時間軸「目前」狀態：長字串唔好撐爆寬度 */
+.timeline-now-status {
+  max-width: 100%;
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* 窄螢幕：頂部 tab 允許換行，避免單字（如 Timeline）被裁切或整列出界 */
+@media (max-width: 560px) {
+  .tabs {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    overflow-x: visible;
+  }
+  .tabs button {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+    white-space: normal;
+    font-size: 0.8rem;
+    line-height: 1.2;
+    padding: 0 8px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
 }
 
 .card {
@@ -579,14 +691,23 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   min-width: 0;
 }
 
+/* Export / 單位掣同 results 共用一張 card，靠同一 padding 對齊 */
+.report-main-stack {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .report-range-toolbar {
   margin-bottom: 12px;
   padding: 12px 14px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .report-range-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.85fr) minmax(200px, 1fr);
+  grid-template-columns: minmax(0, 1.85fr) minmax(0, 1fr);
   align-items: stretch;
   gap: 12px 18px;
   width: 100%;
@@ -630,14 +751,29 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   align-self: stretch;
 }
 
-.report-range-toolbar .report-range-dates input[type="date"].input-xl,
+/* 並排兩個 date：唔好用各自 width:100%，否則 flex 行會撐爆出界 */
+.report-range-toolbar .report-range-dates input[type="date"].input-xl {
+  min-height: 52px;
+  font-size: clamp(14px, 3.6vw, 20px);
+  padding: 12px clamp(6px, 2vw, 14px);
+  line-height: 1.25;
+  box-sizing: border-box;
+  flex: 1 1 0;
+  min-width: 0;
+  width: 0;
+  max-width: 100%;
+  text-align: center;
+}
+
 .report-range-toolbar .report-range-field-preset select.input-xl {
-  min-height: 56px;
-  font-size: 20px;
-  padding: 16px 18px;
+  min-height: 52px;
+  font-size: clamp(14px, 3.6vw, 20px);
+  padding: 14px clamp(8px, 2.2vw, 16px);
   line-height: 1.25;
   box-sizing: border-box;
   width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 #reportPeriodPreset.input-xl,
@@ -660,11 +796,13 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   justify-content: flex-end;
   gap: 12px;
   flex-wrap: nowrap;
-  margin: 0 0 10px;
+  margin: 0 0 8px;
   width: 100%;
   min-width: 0;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 .report-main-header--split {
@@ -690,6 +828,15 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   gap: 20px;
   flex-wrap: nowrap;
   flex: 0 0 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* 單一 toolbar 行：占滿已 padding 嘅寬度，右對齊掣組 */
+.report-main-header--actions-only .report-main-header-actions {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
 }
 
 .report-unit-toggle {
@@ -739,6 +886,9 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
+  width: auto;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .report-export-btn:hover {
@@ -749,6 +899,9 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 .report-results {
   margin-bottom: 0;
+  margin-top: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
   max-height: min(78dvh, 900px);
   overflow: auto;
   -webkit-overflow-scrolling: touch;
@@ -915,8 +1068,9 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 
 .report-records-wrap {
-  overflow-x: visible;
+  overflow-x: auto;
   overflow-y: visible;
+  max-width: 100%;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -952,19 +1106,63 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   text-align: center;
 }
 
-@media (max-width: 720px) {
-  .report-layout {
+
+@media (max-width: 480px) {
+  .report-range-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .report-range-dates {
     flex-direction: column;
+    align-items: center;
+    gap: 8px;
   }
 
-  .report-sidebar {
-    flex: none;
+  .report-range-sep {
+    padding: 2px 0;
+    font-size: 1.1rem;
+  }
+
+  .report-range-toolbar .report-range-dates input[type="date"].input-xl {
     width: 100%;
-    max-width: none;
+    flex: none;
   }
 
-  .report-results {
-    max-height: none;
+  .report-main-header {
+    overflow-x: visible;
+    justify-content: flex-start;
+  }
+
+  .report-main-header--actions-only {
+    justify-content: flex-start;
+  }
+
+  .report-main-header-actions {
+    flex-direction: column;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 10px;
+    width: 100%;
+    max-width: 100%;
+    justify-content: flex-start;
+  }
+
+  .report-export-btn {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .report-unit-toggle {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .report-unit-toggle .report-unit-btn {
+    flex: 1 1 0;
+    min-width: 0;
   }
 }
 

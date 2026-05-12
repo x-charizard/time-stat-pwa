@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=103" />
+  <link rel="stylesheet" href="styles.css?v=119" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -31,7 +31,6 @@
     <button type="button" data-tab="timeline">Timeline</button>
     <button type="button" data-tab="report">Report</button>
     <button type="button" data-tab="import">Import CSV</button>
-    <button type="button" data-tab="backup">Backup</button>
   </div>
 
   <section data-panel="log">
@@ -154,16 +153,18 @@
         <input type="text" id="reportPeopleSearch" class="input-xl" autocomplete="off" aria-label="With" />
       </aside>
       <div class="report-main">
-        <div class="report-main-header report-main-header--actions-only">
-          <div class="report-main-header-actions">
-            <button type="button" class="report-export-btn" id="btnReportExport" aria-label="Export Data CSV">Export</button>
-            <div class="report-unit-toggle" id="reportUnitToggle" role="group" aria-label="Display Units">
-              <button type="button" class="report-unit-btn active" data-unit="hours">Hours</button>
-              <button type="button" class="report-unit-btn" data-unit="pct">%</button>
+        <div class="card report-main-stack">
+          <div class="report-main-header report-main-header--actions-only">
+            <div class="report-main-header-actions">
+              <button type="button" class="report-export-btn" id="btnReportExport" aria-label="Export Data CSV">Export</button>
+              <div class="report-unit-toggle" id="reportUnitToggle" role="group" aria-label="Display Units">
+                <button type="button" class="report-unit-btn active" data-unit="hours">Hours</button>
+                <button type="button" class="report-unit-btn" data-unit="pct">%</button>
+              </div>
             </div>
           </div>
+          <div class="report-results" id="reportSummary"></div>
         </div>
-        <div class="card report-results" id="reportSummary"></div>
       </div>
     </div>
   </section>
@@ -193,19 +194,8 @@
     </div>
   </section>
 
-  <section data-panel="backup" class="hidden">
-    <div class="card">
-      <button type="button" class="primary" id="btnExportJson" style="width:100%;">Export JSON Backup</button>
-      <label for="btnImportJson" style="margin-top:16px;">Restore JSON (overwrite local data)</label>
-      <input type="file" id="btnImportJson" accept="application/json,.json" style="margin-top:8px;" />
-    </div>
-    <div class="card">
-      <button type="button" class="ghost" id="btnExportCsv" style="width:100%;">Export Records CSV</button>
-    </div>
-  </section>
-
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=103"></script>
+  <script src="app.js?v=119"></script>
 </body>
 </html>

@@ -2748,13 +2748,7 @@
         return;
       }
       if (ag[0].segmentsInRange + ag[1].segmentsInRange + ag[2].segmentsInRange === 0) {
-        const n = state.events.length;
-        box.innerHTML =
-          `<p class="muted">No Billable Segments In The Last Three Periods.</p>` +
-          `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
-          `<li>If You Have Not Imported Yet: <strong>Import CSV</strong>.</li>` +
-          `<li>Each Day's <strong>Last Row</strong> Has No Next Row, So Duration Is Zero (Currently ${n} Rows).</li>` +
-          `</ul>`;
+        box.innerHTML = `<p class="muted">No Billable Segments In The Last Three Periods.</p>`;
         return;
       }
       if (ag[0].segmentsKept + ag[1].segmentsKept + ag[2].segmentsKept === 0) {
@@ -2853,14 +2847,7 @@
 
     const agg = aggregateReportForRange(from, to, list, f, showByDay);
     if (agg.segmentsInRange === 0) {
-      const n = state.events.length;
-      box.innerHTML =
-        `<p class="muted">No Billable Segments In This Range.</p>` +
-        `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
-        `<li>If You Imported Older CSV: Widen The <strong>Date Range</strong> To Cover Your Data Dates.</li>` +
-        `<li>If You Have Not Imported Yet: <strong>Import CSV</strong> First.</li>` +
-        `<li>Each Day's <strong>Last Row</strong> Has No Next Row, So Duration Is Zero (Currently ${n} Rows).</li>` +
-        `</ul>`;
+      box.innerHTML = `<p class="muted">No Billable Segments In This Range.</p>`;
       return;
     }
     if (agg.segmentsKept === 0) {
@@ -2985,111 +2972,6 @@
       syncReportUnitToggleButtons();
     }
   }
-
-  document.getElementById("btnExportJson").addEventListener("click", () => {
-    const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "time-stat-backup-" + new Date().toISOString().slice(0, 10) + ".json";
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast("已下載 JSON");
-  });
-
-  document.getElementById("btnImportJson").addEventListener("change", function () {
-    const f = this.files && this.files[0];
-    if (!f) return;
-    const r = new FileReader();
-    r.onload = () => {
-      try {
-        const o = JSON.parse(r.result);
-        const activities = Array.isArray(o.activities)
-          ? o.activities
-          : Array.isArray(o.entities)
-            ? o.entities
-            : null;
-        if (!activities || !Array.isArray(o.events)) throw new Error("格式唔似備份");
-        const events = o.events.map((ev) => {
-          const n = { ...ev };
-          if (n.activityId == null && n.entityId != null) n.activityId = n.entityId;
-          delete n.entityId;
-          if (n.id == null || n.id === "") n.id = uid();
-          return n;
-        });
-        state = {
-          version: o.version || 3,
-          activities,
-          events,
-          structure: [],
-          projectsRegistry: Array.isArray(o.projectsRegistry) ? o.projectsRegistry : [],
-        };
-        bumpEventsMutationGen();
-        dedupeStateEventsByImportKey();
-        save();
-        refreshActivityDatalist();
-        fillMergeSelects();
-        renderActivityList();
-        renderTimeline();
-        syncReportDatesFromEvents();
-        renderReport();
-        toast("已還原備份");
-      } catch (e) {
-        toast("匯入失敗：" + (e.message || ""));
-      }
-      this.value = "";
-    };
-    r.readAsText(f);
-  });
-
-  document.getElementById("btnExportCsv").addEventListener("click", () => {
-    const list = sortedEventsUniqueById();
-    const lines = [
-      "start_iso,activity,place,category,group,layer,cat,subCat,project,project_id,people,remark,objective,activityQuestion,groupFromForm,layersFromForm,projectsFromForm,categoriesFromForm,achievement,improveLast,importantElement,detailsBetter,action,longTermGoals,shortTermGoals,miniGoals,duration_to_next_sec",
-    ];
-    for (let i = 0; i < list.length; i++) {
-      const ev = list[i];
-      const ms = segmentDurationMsForReport(list, i);
-      const sec = Math.round(ms / 1000);
-      lines.push(
-        [
-          ev.start,
-          csv(activityDisplayName(ev.activityId)),
-          csv(ev.place || ""),
-          csv(ev.category || ""),
-          csv(ev.group || ""),
-          csv(ev.layer || ""),
-          csv(ev.cat || ""),
-          csv(ev.subCat || ""),
-          csv(ev.projectsFromForm || ""),
-          csv(ev.projectId || ""),
-          csv((ev.people || []).join(";")),
-          csv(ev.remark || ""),
-          csv(ev.objective || ""),
-          csv(ev.activityQuestion || ""),
-          csv(ev.groupFromForm || ""),
-          csv(ev.layersFromForm || ""),
-          csv(ev.projectsFromForm || ""),
-          csv(ev.categoriesFromForm || ""),
-          csv(ev.achievement || ""),
-          csv(ev.improveLast || ""),
-          csv(ev.importantElement || ""),
-          csv(ev.detailsBetter || ""),
-          csv(ev.action || ""),
-          csv(ev.longTermGoals || ""),
-          csv(ev.shortTermGoals || ""),
-          csv(ev.miniGoals || ""),
-          sec,
-        ].join(",")
-      );
-    }
-    const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "time-stat-export.csv";
-    a.click();
-    URL.revokeObjectURL(a.href);
-    toast("已匯出 CSV");
-  });
 
   function csv(s) {
     const t = String(s).replace(/"/g, '""');
