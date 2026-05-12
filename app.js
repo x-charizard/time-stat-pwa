@@ -72,6 +72,14 @@
   let reportPresetSuppress = false;
   let timelinePointerTipAbort = null;
   const timelineBlockDetailMap = new WeakMap();
+  let _eventsMutationGen = 0;
+  let _sortedUniqueCachedGen = -1;
+  let _sortedUniqueCache = null;
+
+  function bumpEventsMutationGen() {
+    _eventsMutationGen++;
+  }
+
 
   /**
    * 匯入／庫內去重鍵：同一毫秒開始 + 同一 Activity + 同一 Place + 同一 Remark + 同一 With + 同一 Projects 欄
@@ -105,6 +113,7 @@
     }
     out.reverse();
     state.events = out;
+    bumpEventsMutationGen();
   }
 
   (function dedupeLoadedEventsOnce() {
@@ -254,6 +263,9 @@
 
   /** 同一 `id` 出現多次（例如重覆匯入）時只保留時間序最後一筆，避免畫面重覆。 */
   function sortedEventsUniqueById() {
+    if (_sortedUniqueCache !== null && _sortedUniqueCachedGen === _eventsMutationGen) {
+      return _sortedUniqueCache;
+    }
     const asc = sortedEvents();
     const out = [];
     const seen = new Set();
@@ -266,6 +278,8 @@
       out.push(asc[i]);
     }
     out.reverse();
+    _sortedUniqueCache = out;
+    _sortedUniqueCachedGen = _eventsMutationGen;
     return out;
   }
 
@@ -1025,6 +1039,7 @@
 
   function pushEventAndRefresh(ev, msg) {
     state.events.push(ev);
+    bumpEventsMutationGen();
     save();
     refreshActivityDatalist();
     refreshProjectPickers();
@@ -2988,6 +3003,7 @@
           structure: [],
           projectsRegistry: Array.isArray(o.projectsRegistry) ? o.projectsRegistry : [],
         };
+        bumpEventsMutationGen();
         dedupeStateEventsByImportKey();
         save();
         refreshActivityDatalist();
