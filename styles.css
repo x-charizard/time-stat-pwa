@@ -584,60 +584,58 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 .report-range-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  align-items: end;
+  grid-template-columns: minmax(0, 1.85fr) minmax(200px, 1fr);
+  align-items: stretch;
   gap: 12px 18px;
   width: 100%;
 }
 
-.report-range-field--from {
-  justify-self: stretch;
+.report-range-dates {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
   min-width: 0;
 }
 
-.report-range-field--to {
-  justify-self: stretch;
+.report-range-dates .input-xl {
+  flex: 1 1 0;
   min-width: 0;
+  width: auto;
+  box-sizing: border-box;
 }
 
-.report-range-field {
-  flex: 1 1 160px;
-  min-width: 0;
+.report-range-sep {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0 2px;
+  user-select: none;
+  line-height: 1;
 }
 
 .report-range-field-preset {
-  justify-self: center;
-  width: min(100%, 420px);
+  justify-self: stretch;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: stretch;
+  align-self: stretch;
 }
 
-.report-range-field label {
-  display: block;
-  margin: 0 0 4px;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.report-range-field .input-xl {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.report-range-toolbar .report-range-field input[type="date"].input-xl,
-.report-range-toolbar .report-range-field select.input-xl {
+.report-range-toolbar .report-range-dates input[type="date"].input-xl,
+.report-range-toolbar .report-range-field-preset select.input-xl {
   min-height: 56px;
   font-size: 20px;
   padding: 16px 18px;
   line-height: 1.25;
   box-sizing: border-box;
-}
-
-.report-range-toolbar .report-range-field-preset select.input-xl {
-  margin-top: calc(0.78rem * 1.25 + 4px);
+  width: 100%;
 }
 
 #reportPeriodPreset.input-xl,
@@ -645,6 +643,8 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 .report-range-field-preset select.input-xl {
   text-align: center;
   text-align-last: center;
+  flex: 1 1 auto;
+  min-height: 56px;
 }
 
 #reportPeriodPreset.input-xl option,
@@ -665,12 +665,27 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   -webkit-overflow-scrolling: touch;
 }
 
+.report-main-header--split {
+  justify-content: space-between;
+}
+
+.report-main-header--split .report-main-title {
+  margin: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+}
+
+.report-main-header--actions-only {
+  justify-content: flex-end;
+}
+
 .report-main-header-actions {
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
+  gap: 20px;
   flex-wrap: nowrap;
   flex: 0 0 auto;
 }
@@ -898,7 +913,8 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 
 .report-records-wrap {
-  overflow-x: auto;
+  overflow-x: visible;
+  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -962,8 +978,7 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 #reportSummary > table,
 #reportSummary table.report-cmp-table,
-#reportSummary table.report-two-col,
-#reportSummary table.report-records-table {
+#reportSummary table.report-two-col {
   width: 100%;
   max-width: 100%;
   table-layout: fixed;
@@ -972,6 +987,35 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   margin-right: auto;
   margin-bottom: 1rem;
   font-size: 0.86rem;
+}
+
+#reportSummary table.report-records-table {
+  width: max(100%, 720px);
+  max-width: none;
+  min-width: 100%;
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: 1rem;
+  font-size: 0.86rem;
+}
+
+#reportSummary .report-records-table thead {
+  position: relative;
+  z-index: 2;
+}
+
+#reportSummary .report-records-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  box-shadow: 0 2px 0 #181b22;
+  border-bottom: 2px solid #181b22;
+  background-color: #181b22;
+  color: #e9ebf0;
+  -webkit-text-fill-color: #e9ebf0;
 }
 
 #reportSummary table th,
@@ -1008,7 +1052,7 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   width: 60%;
 }
 
-/* Compare (4 cols): label 40% + three slices 20% each */
+/* Report table (4 cols): label 40% + three slices 20% each */
 #reportSummary .report-cmp-table th:nth-child(1),
 #reportSummary .report-cmp-table td:nth-child(1) {
   width: 40%;
@@ -1028,13 +1072,49 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   white-space: nowrap;
 }
 
-/* Raw records (11 cols): equal */
+#reportSummary .report-cmp-table th.report-cmp-col-date {
+  text-align: center;
+}
+
+
+/* Data table：唔用均分 9%，避免 Project／Remark 被壓到似「唔見」 */
 #reportSummary .report-records-table th,
 #reportSummary .report-records-table td {
-  width: 9.090909%;
+  width: auto;
+  min-width: 2.6rem;
   max-width: none;
 }
 
+#reportSummary .report-records-table th:nth-child(8),
+#reportSummary .report-records-table td:nth-child(8) {
+  min-width: 7rem;
+}
+
+#reportSummary .report-records-table th:nth-child(10),
 #reportSummary .report-records-table td.remark-cell {
-  max-width: none;
+  min-width: 2.75rem;
+  max-width: 8.5rem;
+  width: 8.5rem;
+  text-align: center;
+  vertical-align: middle;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+#reportSummary .report-records-table tbody td {
+  position: relative;
+  z-index: 0;
+  background-color: var(--surface);
+  color: var(--text);
+}
+
+#reportSummary .report-records-table td.remark-cell {
+  white-space: normal;
+}
+
+
+/* Report search: readonly shows placeholder until first interaction */
+.report-search-field:read-only {
+  cursor: pointer;
+  opacity: 0.92;
 }

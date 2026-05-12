@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=119" />
+  <link rel="stylesheet" href="styles.css?v=89" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -109,58 +109,58 @@
   <section data-panel="report" class="hidden report-panel">
     <div class="card report-range-toolbar">
       <div class="report-range-row">
-        <div class="report-range-field report-range-field--from">
-          <label for="reportFromStr">From</label>
-          <input type="date" id="reportFromStr" class="input-xl" />
+        <div class="report-range-dates" role="group" aria-label="Date Range">
+          <input type="date" id="reportFromStr" class="input-xl" aria-label="Range Start" />
+          <span class="report-range-sep" aria-hidden="true">～</span>
+          <input type="date" id="reportToStr" class="input-xl" aria-label="Range End" />
         </div>
         <div class="report-range-field-preset">
-          <label for="reportPeriodPreset">Compare</label>
-          <select id="reportPeriodPreset" class="input-xl">
-            <option value="custom">Custom（單一區間）</option>
-            <option value="cmp_years">連續 3 個曆年</option>
-            <option value="cmp_quarters">連續 3 個季度</option>
-            <option value="cmp_months">連續 3 個月</option>
-            <option value="cmp_weeks">連續 3 個星期（一至日）</option>
+          <select id="reportPeriodPreset" class="input-xl" aria-label="Period Preset">
+            <option value="custom">Custom</option>
+            <option value="cmp_years">3 Years</option>
+            <option value="cmp_quarters">3 Quarters</option>
+            <option value="cmp_months">3 Months</option>
+            <option value="cmp_weeks">3 Weeks</option>
           </select>
         </div>
-        <div class="report-range-field report-range-field--to">
-          <label for="reportToStr">To</label>
-          <input type="date" id="reportToStr" class="input-xl" />
-        </div>
       </div>
-      <p class="muted" style="margin:8px 0 0;font-size:0.78rem;">Default：目前曆月。揀 Compare 時會用 <strong>To</strong>（冇就用 <strong>From</strong>）做錨點，自動拉闊三段合併範圍。</p>
     </div>
     <div class="report-layout">
       <aside class="report-sidebar card">
-        <h2 class="report-sidebar-title">Filters</h2>
-        <p class="muted report-sidebar-hint">Group／Layers／Cat／Sub 同 Raw 表一致：Group 有 CSV／表單 Work／Rest 就用入庫值，否則按《Time Stat mapping rules》估（只會 Work 或 Rest）；其餘維度用 rules 推斷。Cat／Sub／Project 支援多選。</p>
-        <label style="margin-top:0;">Group</label>
-        <div id="reportFilterGroupBox" class="report-ms-box" role="group" aria-label="Group filter"></div>
+        <input
+          type="text"
+          id="reportKeywordSearch"
+          class="input-xl report-search-field"
+          placeholder="Search"
+          readonly
+          autocomplete="off"
+          aria-label="Search"
+          inputmode="search"
+          style="margin-top:0;"
+        />
+        <label style="margin-top:14px;">Group</label>
+        <div id="reportFilterGroupBox" class="report-ms-box" role="group" aria-label="Group Filter"></div>
         <label style="margin-top:14px;">Layers</label>
-        <div id="reportFilterLayerBox" class="report-ms-box" role="group" aria-label="Layers filter"></div>
-        <label style="margin-top:14px;">Cat</label>
-        <div id="reportFilterCatBox" class="report-ms-box" role="group" aria-label="Cat filter"></div>
-        <label style="margin-top:14px;">Sub Cat</label>
-        <div id="reportFilterSubBox" class="report-ms-box" role="group" aria-label="Sub Cat filter"></div>
+        <div id="reportFilterLayerBox" class="report-ms-box" role="group" aria-label="Layers Filter"></div>
+        <label style="margin-top:14px;">Category</label>
+        <div id="reportFilterCatBox" class="report-ms-box" role="group" aria-label="Category Filter"></div>
+        <label style="margin-top:14px;">Sub Category</label>
+        <div id="reportFilterSubBox" class="report-ms-box" role="group" aria-label="Sub Category Filter"></div>
         <label style="margin-top:14px;">Project</label>
-        <div id="reportFilterProjectBox" class="report-ms-box" role="group" aria-label="Project filter"></div>
+        <div id="reportFilterProjectBox" class="report-ms-box" role="group" aria-label="Project Filter"></div>
         <label for="reportPeopleSearch" style="margin-top:10px;">With</label>
-        <input type="text" id="reportPeopleSearch" class="input-xl" autocomplete="off" />
-        <label for="reportKeywordSearch" style="margin-top:10px;">Keyword (all fields)</label>
-        <input type="text" id="reportKeywordSearch" class="input-xl" autocomplete="off" />
-        <label for="reportKeywordMode" style="margin-top:10px;">Keyword match</label>
-        <select id="reportKeywordMode">
-          <option value="loose">Loose — substring, ignore case; space/comma = AND</option>
-          <option value="strict">Strict — exact phrase, case-sensitive</option>
-        </select>
-        <label class="report-check">
-          <input type="checkbox" id="reportShowByDay" />
-          <span>Daily subtotal</span>
-        </label>
-        <button type="button" class="primary" id="btnReport" style="margin-top:14px;width:100%;">Update Report</button>
+        <input type="text" id="reportPeopleSearch" class="input-xl" autocomplete="off" aria-label="With" />
       </aside>
       <div class="report-main">
-        <h2 class="report-main-title">Results</h2>
+        <div class="report-main-header report-main-header--actions-only">
+          <div class="report-main-header-actions">
+            <button type="button" class="report-export-btn" id="btnReportExport" aria-label="Export Data CSV">Export</button>
+            <div class="report-unit-toggle" id="reportUnitToggle" role="group" aria-label="Display Units">
+              <button type="button" class="report-unit-btn active" data-unit="hours">Hours</button>
+              <button type="button" class="report-unit-btn" data-unit="pct">%</button>
+            </div>
+          </div>
+        </div>
         <div class="card report-results" id="reportSummary"></div>
       </div>
     </div>
@@ -204,6 +204,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=119"></script>
+  <script src="app.js?v=89"></script>
 </body>
 </html>

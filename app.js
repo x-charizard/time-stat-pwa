@@ -759,8 +759,8 @@
         };
       }
     }
-    const mentalRest = new Set(["resting", "fooding", "familying", "walking", "meditating"]);
-    const physicalRest = new Set(["sleeping", "showering"]);
+    const mentalRest = new Set(["resting", "familying", "walking", "meditating"]);
+    const physicalRest = new Set(["sleeping", "showering", "fooding"]);
     const physicalSet = new Set(["gyming", "running", "yogaing", "exercise", "workouting", "hiking", "camping"]);
     const workSet = new Set(["trading", "trading practice", "trading planning", "programming", "obsidianing", "photoing", "photography", "planning", "reviewing", "reading"]);
     if (physicalSet.has(key)) return { group: "Rest", layer: "Health", cat: "Physical Health" };
@@ -861,7 +861,7 @@
     const pid = String(ev.projectId || "").trim();
     if (form || pid) {
       if (eventProjectLinksProjectsRegistry(ev)) return "Project";
-      return "Needs-Review";
+      return "Projects";
     }
     const sug = suggestProjectsFromText(activityLabel, String(remark || ""));
     if (!sug.length) return "non-project";
@@ -892,8 +892,8 @@
       return { layer: "Freedom", cat: "Time" };
     }
 
-    const physicalRestSet = new Set(["sleeping", "showering"]);
-    const mentalRestSet = new Set(["resting", "fooding", "familying", "walking", "meditating"]);
+    const physicalRestSet = new Set(["sleeping", "showering", "fooding"]);
+    const mentalRestSet = new Set(["resting", "familying", "walking", "meditating"]);
     const physicalSet = new Set(["gyming", "running", "yogaing", "exercise", "workouting", "hiking", "camping"]);
     if (physicalSet.has(key)) return { layer: "Health", cat: "Physical Health" };
     if (physicalRestSet.has(key)) return { layer: "Health", cat: "Physical Health" };
@@ -1773,7 +1773,7 @@
 
   function subsForReport() {
     const list = sortedEventsUniqueById();
-    const a = ["Long Term", "Short Term", "Project", "non-project", "Needs-Review", "Grouped", "Individual"];
+    const a = ["Long Term", "Short Term", "Project", "Projects", "non-project", "Needs-Review", "Grouped", "Individual"];
     const struct = Array.isArray(state.structure) ? state.structure : [];
     for (let i = 0; i < struct.length; i++) {
       const r = struct[i];
@@ -1796,7 +1796,7 @@
 
   function subsForReportCats(catArr) {
     const list = sortedEventsUniqueById();
-    const base = ["Long Term", "Short Term", "Project", "non-project", "Needs-Review", "Grouped", "Individual"];
+    const base = ["Long Term", "Short Term", "Project", "Projects", "non-project", "Needs-Review", "Grouped", "Individual"];
     if (!catArr || !catArr.length) {
       const a = [...base];
       for (let i = 0; i < list.length; i++) {
@@ -2122,33 +2122,24 @@
     return parts.join(" ");
   }
 
-  /**
-   * Keyword: loose = tokens (space/comma), AND, case-insensitive, substring in any field.
-   * strict = full trimmed phrase, case-sensitive, substring in concatenated row text.
-   */
+  /** Search: tokens (spaces / commas), AND, case-insensitive substring match on joined row text. */
   function eventMatchesKeywordSearch(ev, f, list) {
     const q = String(f.keywordQuery || "").trim();
     if (!q) return true;
-    const mode = f.keywordMode === "strict" ? "strict" : "loose";
     const hayJoined = eventKeywordSearchHaystack(ev, list);
-    if (mode === "strict") {
-      const hq = q.replace(/[\u200B-\u200D\uFEFF]/g, "");
-      const ht = hayJoined.replace(/[\u200B-\u200D\uFEFF]/g, "");
-      return ht.includes(hq);
-    }
     const tokens = reportKeywordTokens(f.keywordQuery);
     if (!tokens.length) return true;
     const hay = normalizeForKeywordLoose(hayJoined);
     return tokens.every((tok) => hay.includes(normalizeForKeywordLoose(tok)));
   }
 
-  /** For empty-report hints: non-keyword AND filters currently applied. */
+  /** For empty-report hints: filters other than search (AND). */
   function reportNonKeywordFilterSummaryText(f) {
     const bits = [];
     if (f.groups && f.groups.length) bits.push("Group: " + f.groups.join(", "));
     if (f.layers && f.layers.length) bits.push("Layers: " + f.layers.join(", "));
-    if (f.cats && f.cats.length) bits.push("Cat: " + f.cats.join(", "));
-    if (f.subCats && f.subCats.length) bits.push("Sub: " + f.subCats.join(", "));
+    if (f.cats && f.cats.length) bits.push("Category: " + f.cats.join(", "));
+    if (f.subCats && f.subCats.length) bits.push("Sub Category: " + f.subCats.join(", "));
     if (f.projects && f.projects.length) bits.push("Project: " + f.projects.join(", "));
     const ptoks = reportPeopleTokens(f.peopleQuery);
     if (ptoks.length) bits.push("With: " + ptoks.join(", "));
@@ -2166,7 +2157,6 @@
   function readReportFilters() {
     const gpeo = document.getElementById("reportPeopleSearch");
     const kwEl = document.getElementById("reportKeywordSearch");
-    const kwModeEl = document.getElementById("reportKeywordMode");
     return {
       groups: [...readCheckedValuesFromMsBox("reportFilterGroupBox")],
       layers: [...readCheckedValuesFromMsBox("reportFilterLayerBox")],
@@ -2175,7 +2165,7 @@
       projects: [...readCheckedValuesFromMsBox("reportFilterProjectBox")],
       peopleQuery: (gpeo && gpeo.value) || "",
       keywordQuery: (kwEl && kwEl.value) || "",
-      keywordMode: (kwModeEl && kwModeEl.value) || "loose",
+      keywordMode: "loose",
     };
   }
 
@@ -2226,6 +2216,7 @@
   }
 
   function compareModeAnchorYmd(preset, toYmd, fromYmd) {
+    if (preset === "cmp_weeks") return ymdFromLocalDate(new Date());
     return toYmd || fromYmd || ymdFromLocalDate(new Date());
   }
 
@@ -2297,6 +2288,209 @@
     };
   }
 
+  function csvEscapeReportCell(val) {
+    const s = String(val ?? "");
+    if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
+
+  const REPORT_DATA_CSV_HEADERS = [
+    "Start",
+    "Duration",
+    "Group",
+    "Layers",
+    "Cat",
+    "Sub Cat",
+    "Activity",
+    "Project",
+    "Place",
+    "Remark",
+    "With",
+  ];
+
+  function reportDataCsvRowCells(ev, ms, nextGlobal) {
+    const startStr = ymdHmFromEventStart(ev.start);
+    const durStr = durationMinutesLabel(ms);
+    const nextEv = nextGlobal.get(ev.id) || null;
+    const mapped = inferTimeStatMappingForRaw(ev, nextEv);
+    const g = String(mapped.group || "").trim() || "\u2014";
+    const ly = String(mapped.layer || "").trim() || "\u2014";
+    const cj = normalizeCatDisplayForRaw(String(mapped.cat || "").trim()) || "\u2014";
+    const sj = String(mapped.subCat || "").trim() || "\u2014";
+    const act = activityDisplayName(ev.activityId);
+    const pj = displayProjectForRawRecord(ev).trim() || "\u2014";
+    const place = String(ev.place || "").trim() || "\u2014";
+    const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
+    const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
+    return [startStr, durStr, g, ly, cj, sj, act, pj, place, remark, withStr];
+  }
+
+  function buildReportDataCsvText(list, fromYmd, toYmd, f, showByDay) {
+    const agg = aggregateReportForRange(fromYmd, toYmd, list, f, showByDay);
+    if (!agg || agg.segmentsKept === 0) return null;
+    const sortedRaw = [...agg.rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
+    const nextGlobal = chronologicalNextById(list);
+    const rows = [REPORT_DATA_CSV_HEADERS.map(csvEscapeReportCell).join(",")];
+    for (let ri = 0; ri < sortedRaw.length; ri++) {
+      const ev = sortedRaw[ri].ev;
+      const ms = sortedRaw[ri].ms;
+      rows.push(reportDataCsvRowCells(ev, ms, nextGlobal).map(csvEscapeReportCell).join(","));
+    }
+    return { text: "\ufeff" + rows.join("\r\n") + "\r\n", rowCount: sortedRaw.length };
+  }
+
+  function buildReportCompareResultsCsvText(list, preset, f, reportUnitMode) {
+    const fromEl = document.getElementById("reportFromStr");
+    const toEl = document.getElementById("reportToStr");
+    const toY = parseYMDStrict(toEl && toEl.value);
+    const fromY = parseYMDStrict(fromEl && fromEl.value);
+    const anchorYmd = compareModeAnchorYmd(preset, toY, fromY);
+    const slices = buildReportComparisonSlices(preset, anchorYmd);
+    if (!slices || !slices.ranges || slices.ranges.length !== 3) return null;
+
+    const ag = [
+      aggregateReportForRange(slices.ranges[0].from, slices.ranges[0].to, list, f, false),
+      aggregateReportForRange(slices.ranges[1].from, slices.ranges[1].to, list, f, false),
+      aggregateReportForRange(slices.ranges[2].from, slices.ranges[2].to, list, f, false),
+    ];
+    if (ag[0] === null || ag[1] === null || ag[2] === null) return null;
+    if (ag[0].segmentsInRange + ag[1].segmentsInRange + ag[2].segmentsInRange === 0) return null;
+    if (ag[0].segmentsKept + ag[1].segmentsKept + ag[2].segmentsKept === 0) return null;
+
+    const agDisp = [ag[2], ag[1], ag[0]];
+    const labelsDisp = [slices.labels[2], slices.labels[1], slices.labels[0]];
+    const colTotals = [agDisp[0].totalKept, agDisp[1].totalKept, agDisp[2].totalKept];
+    const fmtCell = (ms, colIdx) =>
+      colTotals[colIdx] ? ((ms / colTotals[colIdx]) * 100).toFixed(1) + "%" : "\u2014";
+    const fmtH = (ms) => (ms / 3600000).toFixed(2);
+    const fmtCmp = (ms, colIdx) => (reportUnitMode === "pct" ? fmtCell(ms, colIdx) : fmtH(ms));
+
+    const out = [];
+    out.push(["Export", "Compare Results"].map(csvEscapeReportCell).join(","));
+    out.push(["Preset", preset].map(csvEscapeReportCell).join(","));
+    out.push(["Display Unit", reportUnitMode === "pct" ? "%" : "Hours"].map(csvEscapeReportCell).join(","));
+
+    const pushSection = (sectionTitle, pick) => {
+      const m0 = pick(agDisp[0]);
+      const m1 = pick(agDisp[1]);
+      const m2 = pick(agDisp[2]);
+      const keys = new Set([...Object.keys(m0), ...Object.keys(m1), ...Object.keys(m2)]);
+      const arr = [...keys].map((k) => {
+        const a = m0[k] || 0;
+        const b = m1[k] || 0;
+        const c = m2[k] || 0;
+        return { k, ms: [a, b, c], sum: a + b + c };
+      });
+      arr.sort((x, y) => y.sum - x.sum);
+      out.push("");
+      out.push(csvEscapeReportCell(sectionTitle));
+      out.push(["Item", ...labelsDisp].map(csvEscapeReportCell).join(","));
+      if (!arr.length) {
+        out.push(["(None)", "\u2014", "\u2014", "\u2014"].map(csvEscapeReportCell).join(","));
+        return 1;
+      }
+      let n = 0;
+      for (let i = 0; i < arr.length; i++) {
+        const row = arr[i];
+        const cells = [row.k, ...row.ms.map((ms, j) => fmtCmp(ms, j))];
+        out.push(cells.map(csvEscapeReportCell).join(","));
+        n++;
+      }
+      return n;
+    };
+
+    let dataRows = 0;
+    dataRows += pushSection("Group", (a) => a.byGroup);
+    dataRows += pushSection("Layers", (a) => a.byLayer);
+    dataRows += pushSection("Category", (a) => a.byCatDim);
+    dataRows += pushSection("Sub Category", (a) => a.bySubDim);
+
+    const actMap = new Map();
+    for (let j = 0; j < 3; j++) {
+      Object.entries(agDisp[j].byEnt).forEach(([eid, ms]) => {
+        if (!actMap.has(eid)) actMap.set(eid, [0, 0, 0]);
+        actMap.get(eid)[j] = ms;
+      });
+    }
+    const actRows = [...actMap.entries()]
+      .map(([eid, msco]) => ({ eid, msco, sum: msco[0] + msco[1] + msco[2] }))
+      .sort((a, b) => b.sum - a.sum);
+    out.push("");
+    out.push(csvEscapeReportCell("Activity"));
+    out.push(["Item", ...labelsDisp].map(csvEscapeReportCell).join(","));
+    if (!actRows.length) {
+      out.push(["(None)", "\u2014", "\u2014", "\u2014"].map(csvEscapeReportCell).join(","));
+      dataRows += 1;
+    } else {
+      for (let i = 0; i < actRows.length; i++) {
+        const row = actRows[i];
+        const name = activityDisplayName(row.eid);
+        const cells = [name, ...row.msco.map((ms, j) => fmtCmp(ms, j))];
+        out.push(cells.map(csvEscapeReportCell).join(","));
+        dataRows++;
+      }
+    }
+
+    dataRows += pushSection("Project", (a) => a.byProject);
+    dataRows += pushSection("People", (a) => a.byPerson);
+
+    return {
+      text: "\ufeff" + out.join("\r\n") + "\r\n",
+      rowCount: dataRows,
+      fileStem: `${slices.ranges[2].from}_${slices.ranges[0].to}`,
+    };
+  }
+
+  function runReportDataExport() {
+    const presetEl = document.getElementById("reportPeriodPreset");
+    const preset = (presetEl && presetEl.value) || "custom";
+    const f = readReportFilters();
+    const list = sortedEventsUniqueById();
+    const showByDayEl = document.getElementById("reportShowByDay");
+    const showByDay = !!(showByDayEl && showByDayEl.checked);
+    let pack = null;
+    let downloadName = "";
+    if (reportComparePresetActive(preset)) {
+      const reportUnitMode = readReportUnitMode();
+      pack = buildReportCompareResultsCsvText(list, preset, f, reportUnitMode);
+      if (!pack) {
+        toast("No Compare Results To Export For These Windows And Filters.");
+        return;
+      }
+      downloadName = `time-stat-compare-results-${preset}-${pack.fileStem}.csv`;
+    } else {
+      const from = parseYMDStrict(document.getElementById("reportFromStr").value);
+      const to = parseYMDStrict(document.getElementById("reportToStr").value);
+      if (!from || !to) {
+        toast("Set The Date Range First.");
+        return;
+      }
+      const t0 = new Date(from + "T00:00:00").getTime();
+      const t1 = new Date(to + "T23:59:59.999").getTime();
+      if (Number.isNaN(t0) || Number.isNaN(t1) || t0 > t1) {
+        toast("Start Date Must Be On Or Before End Date.");
+        return;
+      }
+      pack = buildReportDataCsvText(list, from, to, f, showByDay);
+      if (!pack) {
+        toast("No Data Rows To Export For This Range And Filters.");
+        return;
+      }
+      downloadName = `time-stat-data-${from}_to_${to}.csv`;
+    }
+    const blob = new Blob([pack.text], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = downloadName;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    toast(
+      reportComparePresetActive(preset)
+        ? `Downloaded Compare Results (${pack.rowCount} Rows)`
+        : `Downloaded ${pack.rowCount} Rows`,
+    );
+  }
+
   function buildReportComparisonSlices(preset, anchorYmd) {
     const m = String(anchorYmd || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
     if (!m) return null;
@@ -2312,11 +2506,11 @@
       const y2 = y - 1;
       const y1 = y - 2;
       return {
-        labels: [String(y1), String(y2), String(y3)],
+        labels: [String(y3), String(y2), String(y1)],
         ranges: [
-          { from: `${y1}-01-01`, to: `${y1}-12-31` },
-          { from: `${y2}-01-01`, to: `${y2}-12-31` },
           { from: `${y3}-01-01`, to: `${y3}-12-31` },
+          { from: `${y2}-01-01`, to: `${y2}-12-31` },
+          { from: `${y1}-01-01`, to: `${y1}-12-31` },
         ],
       };
     }
@@ -2336,7 +2530,7 @@
       const r2 = bounds(b2);
       const r3 = bounds(b3);
       const lab = (bb) => `${bb.yy}-${pad(bb.m0 + 1)}`;
-      return { labels: [lab(b1), lab(b2), lab(b3)], ranges: [r1, r2, r3] };
+      return { labels: [lab(b3), lab(b2), lab(b1)], ranges: [r3, r2, r1] };
     }
     if (preset === "cmp_quarters") {
       const qOf = (m0) => Math.floor(m0 / 3);
@@ -2357,7 +2551,7 @@
       const r2 = qb(b2.yy, b2.q);
       const r3 = qb(b3.yy, b3.q);
       const lab = (bb) => `${bb.yy} Q${bb.q + 1}`;
-      return { labels: [lab(b1), lab(b2), lab(b3)], ranges: [r1, r2, r3] };
+      return { labels: [lab(b3), lab(b2), lab(b1)], ranges: [r3, r2, r1] };
     }
     if (preset === "cmp_weeks") {
       const dow = new Date(y, mo, d).getDay();
@@ -2377,8 +2571,8 @@
       const p3 = pack(mon3);
       const fmtShort = (fr, to) => `${fr.slice(5)} \u2192 ${to.slice(5)}`;
       return {
-        labels: [fmtShort(p1.from, p1.to), fmtShort(p2.from, p2.to), fmtShort(p3.from, p3.to)],
-        ranges: [p1, p2, p3],
+        labels: [fmtShort(p3.from, p3.to), fmtShort(p2.from, p2.to), fmtShort(p1.from, p1.to)],
+        ranges: [p3, p2, p1],
       };
     }
     return null;
@@ -2396,18 +2590,46 @@
     const preset = presetEl.value || "custom";
     if (preset === "custom") return;
     if (!reportComparePresetActive(preset)) return;
-    const anchorYmd = parseYMDStrict(toEl.value) || parseYMDStrict(fromEl.value) || ymdFromLocalDate(new Date());
+    const anchorYmd = compareModeAnchorYmd(
+      preset,
+      parseYMDStrict(toEl.value),
+      parseYMDStrict(fromEl.value),
+    );
     const slices = buildReportComparisonSlices(preset, anchorYmd);
     if (!slices || !slices.ranges || slices.ranges.length !== 3) return;
     reportPresetSuppress = true;
     try {
-      fromEl.value = slices.ranges[0].from;
-      toEl.value = slices.ranges[2].to;
+      fromEl.value = slices.ranges[2].from;
+      toEl.value = slices.ranges[0].to;
     } finally {
       queueMicrotask(() => {
         reportPresetSuppress = false;
       });
     }
+  }
+
+  function readReportUnitMode() {
+    try {
+      const v = localStorage.getItem("timeStatReportUnit");
+      if (v === "pct" || v === "hours") return v;
+    } catch (e) {}
+    return "hours";
+  }
+
+  function setReportUnitMode(mode) {
+    try {
+      if (mode === "pct" || mode === "hours") localStorage.setItem("timeStatReportUnit", mode);
+    } catch (e) {}
+    syncReportUnitToggleButtons();
+  }
+
+  function syncReportUnitToggleButtons() {
+    const wrap = document.getElementById("reportUnitToggle");
+    if (!wrap) return;
+    const mode = readReportUnitMode();
+    wrap.querySelectorAll(".report-unit-btn").forEach((b) => {
+      b.classList.toggle("active", b.getAttribute("data-unit") === mode);
+    });
   }
 
   function renderReport() {
@@ -2422,34 +2644,36 @@
     const showByDayEl = document.getElementById("reportShowByDay");
     const showByDay = !!(showByDayEl && showByDayEl.checked);
     if (!box) return;
+    try {
     if (!from || !to) {
-      box.innerHTML = `<p class="muted">\u8acb\u7528<strong>\u9802\u90e8</strong>\u63b1\u597d <strong>\u7531\uff0f\u81f3</strong> \u65e5\u671f\u3002</p>`;
+      box.innerHTML = `<p class="muted">Please Set The <strong>Date Range</strong> (Start ～ End).</p>`;
       return;
     }
     const t0 = new Date(from + "T00:00:00").getTime();
     const t1 = new Date(to + "T23:59:59.999").getTime();
     if (t0 > t1) {
-      box.innerHTML = `<p class="muted">\u300c\u7531\u300d\u8981\u65e9\u904e\u6216\u7b49\u65bc\u300c\u81f3\u300d</p>`;
+      box.innerHTML = `<p class="muted">Start Date Must Be On Or Before End Date.</p>`;
       return;
     }
     const f = readReportFilters();
     const list = sortedEventsUniqueById();
+    const reportUnitMode = readReportUnitMode();
 
     const renderFilterMismatch = () => {
       const kw = String(f.keywordQuery || "").trim();
       const nf = reportNonKeywordFilterSummaryText(f);
       const kwHint =
-        kw.length > 0 ? `<p class="muted" style="margin-top:10px;">${escapeHtml(kw)}</p>` : "";
+        kw.length > 0 ? `<p class="muted" style="margin-top:10px;">Search: ${escapeHtml(kw)}</p>` : "";
       const other =
         nf.length > 0
           ? `<p class="muted" style="margin-top:8px;">Other active filters (AND with search): ${escapeHtml(nf)}</p>`
           : "";
       const tail =
         nf.length > 0
-          ? `<p class="muted" style="margin-top:10px;">\u53ef\u8a66\u62c9\u95ca\u65e5\u671f\u7bc4\u570d\u6216\u653e\u5bec\u7be9\u9078\u3002</p>`
+          ? `<p class="muted" style="margin-top:10px;">Try Widening The Date Range Or Relaxing Filters.</p>`
           : "";
       return (
-        '<p class="muted">\u7bc4\u570d\u5167\u6709\u7d00\u9304\uff0c\u4f46<strong>\u7121\u4e00\u7b46\u7b26\u5408\u800c\u5bb6\u7be9\u9078</strong>\u3002</p>' +
+        '<p class="muted">There Are Records In Range, But <strong>None Match Your Filters</strong>.</p>' +
         kwHint +
         other +
         tail
@@ -2460,13 +2684,13 @@
       const anchorYmd = compareModeAnchorYmd(preset, to, from);
       const slices = buildReportComparisonSlices(preset, anchorYmd);
       if (!slices) {
-        box.innerHTML = `<p class="muted">\u7121\u6cd5\u5efa\u7acb\u6bd4\u8f03\u8996\u7a97\u3002</p>`;
+        box.innerHTML = `<p class="muted">Could Not Build This Multi-Window View.</p>`;
         return;
       }
       reportPresetSuppress = true;
       try {
-        document.getElementById("reportFromStr").value = slices.ranges[0].from;
-        document.getElementById("reportToStr").value = slices.ranges[2].to;
+        document.getElementById("reportFromStr").value = slices.ranges[2].from;
+        document.getElementById("reportToStr").value = slices.ranges[0].to;
       } finally {
         queueMicrotask(() => {
           reportPresetSuppress = false;
@@ -2478,16 +2702,16 @@
         aggregateReportForRange(slices.ranges[2].from, slices.ranges[2].to, list, f, false),
       ];
       if (ag[0] === null || ag[1] === null || ag[2] === null) {
-        box.innerHTML = `<p class="muted">\u6bd4\u8f03\u5340\u9593\u7121\u6548\u3002</p>`;
+        box.innerHTML = `<p class="muted">Invalid Time Windows.</p>`;
         return;
       }
       if (ag[0].segmentsInRange + ag[1].segmentsInRange + ag[2].segmentsInRange === 0) {
         const n = state.events.length;
         box.innerHTML =
-          `<p class="muted">\u6700\u8fd1\u4e09\u500b\u6bd4\u8f03\u8996\u7a97\u5167\u6c92\u6709\u53ef\u8a08\u6642\u9577\u7684\u7d00\u9304\u3002</p>` +
+          `<p class="muted">No Billable Segments In The Last Three Periods.</p>` +
           `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
-          `<li>\u82e5\u5c1a\u672a\u532f\u5165\uff1a<strong>\u532f\u5165 CSV</strong>\u3002</li>` +
-          `<li>\u6bcf\u4e00\u65e5<strong>\u6700\u5f8c\u4e00\u689d</strong>\u7d00\u9304\u518a\u300c\u4e0b\u4e00\u7b46\u300d\uff0c\u5514\u8a08\u6642\u9577\uff08\u76ee\u524d\u5171 ${n} \u689d\uff09\u3002</li>` +
+          `<li>If You Have Not Imported Yet: <strong>Import CSV</strong>.</li>` +
+          `<li>Each Day's <strong>Last Row</strong> Has No Next Row, So Duration Is Zero (Currently ${n} Rows).</li>` +
           `</ul>`;
         return;
       }
@@ -2496,16 +2720,21 @@
         return;
       }
 
-      const colTotals = [ag[0].totalKept, ag[1].totalKept, ag[2].totalKept];
+      const agDisp = [ag[2], ag[1], ag[0]];
+      const labelsDisp = [slices.labels[2], slices.labels[1], slices.labels[0]];
+      const colTotals = [agDisp[0].totalKept, agDisp[1].totalKept, agDisp[2].totalKept];
       const fmtCell = (ms, colIdx) =>
         colTotals[colIdx] ? ((ms / colTotals[colIdx]) * 100).toFixed(1) + "%" : "\u2014";
       const fmtH = (ms) => (ms / 3600000).toFixed(2);
-      const thCols = slices.labels.map((lb) => `<th class="mono report-cmp-col">${escapeHtml(lb)}</th>`).join("");
+      const fmtCmp = (ms, colIdx) => (reportUnitMode === "pct" ? fmtCell(ms, colIdx) : fmtH(ms));
+      const thCols = labelsDisp
+        .map((lb) => `<th class="mono report-cmp-col report-cmp-col-date">${escapeHtml(lb)}</th>`)
+        .join("");
 
       const tblCmp = (title, pick) => {
-        const m0 = pick(ag[0]);
-        const m1 = pick(ag[1]);
-        const m2 = pick(ag[2]);
+        const m0 = pick(agDisp[0]);
+        const m1 = pick(agDisp[1]);
+        const m2 = pick(agDisp[2]);
         const keys = new Set([...Object.keys(m0), ...Object.keys(m1), ...Object.keys(m2)]);
         const arr = [...keys].map((k) => {
           const a = m0[k] || 0;
@@ -2514,14 +2743,14 @@
           return { k, ms: [a, b, c], sum: a + b + c };
         });
         arr.sort((x, y) => y.sum - x.sum);
-        if (!arr.length) return `<h2 class="report-h">${escapeHtml(title)}</h2><p class="muted">\uff08\u7121\uff09</p>`;
+        if (!arr.length) return `<h2 class="report-h">${escapeHtml(title)}</h2><p class="muted">(None)</p>`;
         let h =
-          `<h2 class="report-h">${escapeHtml(title)}</h2><table class="report-cmp-table"><thead><tr><th>\u9805\u76ee</th>${thCols}</tr></thead><tbody>`;
+          `<h2 class="report-h">${escapeHtml(title)}</h2><table class="report-cmp-table"><thead><tr><th>Item</th>${thCols}</tr></thead><tbody>`;
         for (let i = 0; i < arr.length; i++) {
           const row = arr[i];
           h += `<tr><td>${escapeHtml(row.k)}</td>`;
           for (let j = 0; j < 3; j++) {
-            h += `<td class="mono">${fmtH(row.ms[j])}<span class="muted" style="font-size:0.78em;"> (${fmtCell(row.ms[j], j)})</span></td>`;
+            h += `<td class="mono">${fmtCmp(row.ms[j], j)}</td>`;
           }
           h += `</tr>`;
         }
@@ -2532,32 +2761,29 @@
       let html = "";
       if (reportHasAnyFilter(f)) {
         const bits = [];
-        if (f.groups && f.groups.length) bits.push("Group\u2208\u300c" + f.groups.join("\uff0f") + "\u300d");
-        if (f.layers && f.layers.length) bits.push("Layers\u2208\u300c" + f.layers.join("\uff0f") + "\u300d");
-        if (f.cats && f.cats.length) bits.push("Cat\u2208\u300c" + f.cats.join("\uff0f") + "\u300d");
-        if (f.subCats && f.subCats.length) bits.push("Sub\u2208\u300c" + f.subCats.join("\uff0f") + "\u300d");
-        if (f.projects && f.projects.length) bits.push("Project\u2208\u300c" + f.projects.join("\uff0f") + "\u300d");
+        if (f.groups && f.groups.length) bits.push("Group: " + f.groups.join(" / "));
+        if (f.layers && f.layers.length) bits.push("Layers: " + f.layers.join(" / "));
+        if (f.cats && f.cats.length) bits.push("Category: " + f.cats.join(" / "));
+        if (f.subCats && f.subCats.length) bits.push("Sub Category: " + f.subCats.join(" / "));
+        if (f.projects && f.projects.length) bits.push("Project: " + f.projects.join(" / "));
         const ptoks = reportPeopleTokens(f.peopleQuery);
-        if (ptoks.length) bits.push("\u4eba\u7269\u220b\u300c" + ptoks.join("\uff0f") + "\u300d");
+        if (ptoks.length) bits.push("People: " + ptoks.join(" / "));
         const kwTrim = String(f.keywordQuery || "").trim();
         if (kwTrim) {
-          if (f.keywordMode === "strict") {
-            bits.push("Keyword\uff08strict\uff09:\u300c" + kwTrim + "\u300d");
-          } else {
-            const kwtoks = reportKeywordTokens(f.keywordQuery);
-            if (kwtoks.length) bits.push("Keyword\uff08loose, AND\uff09\u220b\u300c" + kwtoks.join("\uff0f") + "\u300d");
-          }
+          const kwtoks = reportKeywordTokens(f.keywordQuery);
+          if (kwtoks.length) bits.push("Search: " + kwtoks.join(" And "));
+          else bits.push("Search: " + kwTrim);
         }
-        html += `<p class="muted" style="margin:0 0 12px;">\u5df2\u5957\u7528\u7be9\u9078\uff08AND\uff09\uff1a${escapeHtml(bits.join(" \u00b7 "))}</p>`;
+        html += `<p class="muted" style="margin:0 0 12px;">Applied Filters (And): ${escapeHtml(bits.join(" · "))}</p>`;
       }
-      html += tblCmp("\u6309 Group", (a) => a.byGroup);
-      html += tblCmp("\u6309 Layers", (a) => a.byLayer);
-      html += tblCmp("\u6309 Cat", (a) => a.byCatDim);
-      html += tblCmp("\u6309 Sub Cat", (a) => a.bySubDim);
+      html += tblCmp("Group", (a) => a.byGroup);
+      html += tblCmp("Layers", (a) => a.byLayer);
+      html += tblCmp("Category", (a) => a.byCatDim);
+      html += tblCmp("Sub Category", (a) => a.bySubDim);
 
       const actMap = new Map();
       for (let j = 0; j < 3; j++) {
-        Object.entries(ag[j].byEnt).forEach(([eid, ms]) => {
+        Object.entries(agDisp[j].byEnt).forEach(([eid, ms]) => {
           if (!actMap.has(eid)) actMap.set(eid, [0, 0, 0]);
           actMap.get(eid)[j] = ms;
         });
@@ -2565,18 +2791,18 @@
       const actRows = [...actMap.entries()]
         .map(([eid, msco]) => ({ eid, msco, sum: msco[0] + msco[1] + msco[2] }))
         .sort((a, b) => b.sum - a.sum);
-      html += `<h2 class="report-h">\u6309 Activity</h2><table class="report-cmp-table"><thead><tr><th>Activity</th>${thCols}</tr></thead><tbody>`;
+      html += `<h2 class="report-h">Activity</h2><table class="report-cmp-table"><thead><tr><th>Activity</th>${thCols}</tr></thead><tbody>`;
       for (let i = 0; i < actRows.length; i++) {
         const row = actRows[i];
         html += `<tr><td>${escapeHtml(activityDisplayName(row.eid))}</td>`;
         for (let j = 0; j < 3; j++) {
-          html += `<td class="mono">${fmtH(row.msco[j])}<span class="muted" style="font-size:0.78em;"> (${fmtCell(row.msco[j], j)})</span></td>`;
+          html += `<td class="mono">${fmtCmp(row.msco[j], j)}</td>`;
         }
         html += `</tr>`;
       }
       html += `</tbody></table>`;
-      html += tblCmp("\u6309 Project", (a) => a.byProject);
-      html += tblCmp("\u6309\u4eba\u7269\uff08\u6709\u586b\u300c\u540c\u908a\u500b\u4e00\u9f4a\u300d\uff09", (a) => a.byPerson);
+      html += tblCmp("Project", (a) => a.byProject);
+      html += tblCmp("People", (a) => a.byPerson);
 
       box.innerHTML = html;
       return;
@@ -2586,11 +2812,11 @@
     if (agg.segmentsInRange === 0) {
       const n = state.events.length;
       box.innerHTML =
-        `<p class="muted">\u5462\u500b\u7bc4\u570d\u5167\u6c92\u6709\u53ef\u8a08\u6642\u9577\u7684\u7d00\u9304\u3002</p>` +
+        `<p class="muted">No Billable Segments In This Range.</p>` +
         `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
-        `<li>\u82e5\u679c\u555f\u555f\u532f\u5165\u820a CSV\uff1a\u8acb\u5c07<strong>\u300c\u7531\uff0f\u81f3\u300d</strong>\u62c9\u5230\u5305\u4f4f\u6240\u8b02\u8cc7\u6599\u7684\u65e5\u671f\uff08\u9810\u8a2d\u6703\u8ddf\u4f4f\u4f60\u7d00\u9304\u7684\u6700\u65e9\uff0f\u6700\u5c3e\u4e00\u65e5\uff09\u3002</li>` +
-        `<li>\u672c\u6a5a\u5c1a\u672a\u532f\u5165\uff1a<strong>\u532f\u5165 CSV</strong>\u5f8c\u5148\u6703\u6709\u561b\u3002</li>` +
-        `<li>\u6bcf\u4e00\u65e5<strong>\u6700\u5f8c\u4e00\u689d</strong>\u7d00\u9304\u518a\u300c\u4e0b\u4e00\u7b46\u300d\uff0c\u5514\u6703\u8a08\u5165\u6642\u9577\uff08\u76ee\u524d\u5171 ${n} \u689d\u7d00\u9304\uff09\u3002</li>` +
+        `<li>If You Imported Older CSV: Widen The <strong>Date Range</strong> To Cover Your Data Dates.</li>` +
+        `<li>If You Have Not Imported Yet: <strong>Import CSV</strong> First.</li>` +
+        `<li>Each Day's <strong>Last Row</strong> Has No Next Row, So Duration Is Zero (Currently ${n} Rows).</li>` +
         `</ul>`;
       return;
     }
@@ -2599,22 +2825,20 @@
       const nf = reportNonKeywordFilterSummaryText(f);
       const kwHint =
         kw.length > 0
-          ? `<p class="muted" style="margin-top:10px;">Keyword: ${escapeHtml(kw)}${
-              f.keywordMode === "strict" ? " (strict phrase, case-sensitive)" : " (loose tokens, AND, ignore case)"
-            }</p>`
+          ? `<p class="muted" style="margin-top:10px;">Search: ${escapeHtml(kw)}</p>`
           : "";
       const other =
         nf.length > 0
-          ? `<p class="muted" style="margin-top:8px;">Other active filters (AND with keyword): ${escapeHtml(nf)}</p>`
-          : `<p class="muted" style="margin-top:8px;">\u76ee\u524d<strong>\u7121</strong>\u5257\u9078 Group\uff0fLayers\uff0fCat\uff0fSub\uff0fProject\uff0fWith \u2014\u2014 \u5373\u4fc2\u6de8\u4fc2 keyword \u55ae\u6536\u7a84\u7d50\u679c\u3002</p>`;
+          ? `<p class="muted" style="margin-top:8px;">Other Active Filters (And With Search): ${escapeHtml(nf)}</p>`
+          : `<p class="muted" style="margin-top:8px;">No Group, Layers, Category, Sub Category, Project, Or People Filters Are Set — Only Search Narrows Results.</p>`;
       const tailKw =
         kw.length > 0 && !nf.length
           ? `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
-            `<li>\u672c\u6a5a\u7d00\u9304\u5165\u9762\u53ef\u80fd<strong>\u518a\u4efb\u4f55\u6b04\u4f4d</strong>\u5305\u542b\u4f60\u6253\u7684\u5b57\uff08\u4f8b\u5982 project \u672a\u5beb\u5165\u3001\u62fc\u6cd5\u5514\u540c\uff09\u3002</li>` +
-            `<li>\u8acb\u78ba\u8a8d\u5df2\u7528 <strong>Import CSV</strong> \u63b1\u597d <strong>Projects</strong>\uff0f<strong>What is the project</strong> \u6b04\u5c0d\u61c9\uff0c\u540c\u57cb\u5df2\u532f\u5165 <strong>Time stat V2 - Projects.csv</strong>\u3002</li>` +
-            `<li>\u82e5\u4f60\u5257\u5de6\u908a <strong>Project</strong> \u5257\u9078\u6846\uff0c\u8981\u540c Raw \u8868\u300cProject\u300d\u6b04<strong>\u5b8c\u5168\u4e00\u81f4</strong>\uff08\u6216\u62c6\u6bb5\u4e4b\u4e00\uff09\u5148\u6703\u8a08\u5165\u3002</li>` +
+            `<li>Any Field On The Row May Contain Your Search Tokens (Spelling, Project Text, Etc.).</li>` +
+            `<li>Confirm <strong>Import CSV</strong> Column Mapping For <strong>Projects</strong> / <strong>What Is The Project</strong>, And That <strong>Time Stat V2 - Projects.csv</strong> Is Loaded.</li>` +
+            `<li>If You Use The <strong>Project</strong> Filter, It Must Match The Raw <strong>Project</strong> Column Exactly (Or One Of Its Segments).</li>` +
             `</ul>`
-          : `<p class="muted" style="margin-top:10px;">\u53ef\u8a66\u62c9\u95ca\u65e5\u671f\u7bc4\u570d\uff0c\u6216\u653e\u5bec\u5de6\u908a\u7be9\u9078\u3002</p>`;
+          : `<p class="muted" style="margin-top:10px;">Try Widening The Date Range Or Relaxing Filters.</p>`;
       box.innerHTML =
         `<p class="muted">\u7bc4\u570d\u5167\u6709\u8a08\u5230\u6642\u9577\u7684\u7d00\u9304\uff0c\u4f46<strong>\u5514\u7b26\u5408\u800c\u5bb6\u7be9\u9078</strong>\u3002</p>` + kwHint + other + tailKw;
       return;
@@ -2624,14 +2848,22 @@
     const rows = Object.entries(byEnt).sort((a, b) => b[1] - a[1]);
     let total = 0;
     for (let ri = 0; ri < rows.length; ri++) total += rows[ri][1];
+    const aggTotalMs = agg.totalKept || 0;
+    const fmtAggCell = (ms) => {
+      if (reportUnitMode === "pct") {
+        return aggTotalMs ? ((ms / aggTotalMs) * 100).toFixed(1) + "%" : "\u2014";
+      }
+      return (ms / 3600000).toFixed(2);
+    };
+    const unitTh = reportUnitMode === "pct" ? "%" : "Hours";
     const tbl = (title, map) => {
       const r = Object.entries(map).sort((a, b) => b[1] - a[1]);
-      if (!r.length) return `<h2 class="report-h">${title}</h2><p class="muted">\uff08\u7121\uff09</p>`;
-      let h = `<h2 class="report-h">${title}</h2><table><thead><tr><th>\u9805\u76ee</th><th>\u5c0f\u6642</th></tr></thead><tbody>`;
+      if (!r.length) return `<h2 class="report-h">${title}</h2><p class="muted">(None)</p>`;
+      let h = `<h2 class="report-h">${title}</h2><table><thead><tr><th>Item</th><th>${unitTh}</th></tr></thead><tbody>`;
       for (let i = 0; i < r.length; i++) {
         const k = r[i][0];
         const ms = r[i][1];
-        h += `<tr><td>${escapeHtml(k)}</td><td class="mono">${(ms / 3600000).toFixed(2)}</td></tr>`;
+        h += `<tr><td>${escapeHtml(k)}</td><td class="mono">${fmtAggCell(ms)}</td></tr>`;
       }
       h += `</tbody></table>`;
       return h;
@@ -2639,55 +2871,53 @@
     let html = "";
     if (reportHasAnyFilter(f)) {
       const bits = [];
-      if (f.groups && f.groups.length) bits.push("Group\u2208\u300c" + f.groups.join("\uff0f") + "\u300d");
-      if (f.layers && f.layers.length) bits.push("Layers\u2208\u300c" + f.layers.join("\uff0f") + "\u300d");
-      if (f.cats && f.cats.length) bits.push("Cat\u2208\u300c" + f.cats.join("\uff0f") + "\u300d");
-      if (f.subCats && f.subCats.length) bits.push("Sub\u2208\u300c" + f.subCats.join("\uff0f") + "\u300d");
-      if (f.projects && f.projects.length) bits.push("Project\u2208\u300c" + f.projects.join("\uff0f") + "\u300d");
+      if (f.groups && f.groups.length) bits.push("Group: " + f.groups.join(" / "));
+      if (f.layers && f.layers.length) bits.push("Layers: " + f.layers.join(" / "));
+      if (f.cats && f.cats.length) bits.push("Category: " + f.cats.join(" / "));
+      if (f.subCats && f.subCats.length) bits.push("Sub Category: " + f.subCats.join(" / "));
+      if (f.projects && f.projects.length) bits.push("Project: " + f.projects.join(" / "));
       const ptoks = reportPeopleTokens(f.peopleQuery);
-      if (ptoks.length) bits.push("\u4eba\u7269\u220b\u300c" + ptoks.join("\uff0f") + "\u300d");
+      if (ptoks.length) bits.push("People: " + ptoks.join(" / "));
       const kwTrim = String(f.keywordQuery || "").trim();
       if (kwTrim) {
-        if (f.keywordMode === "strict") {
-          bits.push("Keyword\uff08strict phrase, case-sensitive\uff09:\u300c" + kwTrim + "\u300d");
-        } else {
-          const kwtoks = reportKeywordTokens(f.keywordQuery);
-          if (kwtoks.length) bits.push("Keyword\uff08loose, AND\uff09\u220b\u300c" + kwtoks.join("\uff0f") + "\u300d");
-        }
+        const kwtoks = reportKeywordTokens(f.keywordQuery);
+        if (kwtoks.length) bits.push("Search: " + kwtoks.join(" And "));
+        else bits.push("Search: " + kwTrim);
       }
-      html += `<p class="muted" style="margin:0 0 12px;">\u5df2\u5957\u7528\u7be9\u9078\uff08AND\uff09\uff1a${escapeHtml(bits.join(" \u00b7 "))}</p>`;
+      html += `<p class="muted" style="margin:0 0 12px;">Applied Filters (And): ${escapeHtml(bits.join(" · "))}</p>`;
     }
-    html += tbl("\u6309 Group", byGroup);
-    html += tbl("\u6309 Layers", byLayer);
-    html += tbl("\u6309 Cat", byCatDim);
-    html += tbl("\u6309 Sub Cat", bySubDim);
-    html += `<h2 class="report-h">\u6309 Activity</h2><table><thead><tr><th>Activity</th><th>\u5c0f\u6642</th></tr></thead><tbody>`;
+    html += tbl("Group", byGroup);
+    html += tbl("Layers", byLayer);
+    html += tbl("Category", byCatDim);
+    html += tbl("Sub Category", bySubDim);
+    html += `<h2 class="report-h">Activity</h2><table><thead><tr><th>Activity</th><th>${unitTh}</th></tr></thead><tbody>`;
     for (let i = 0; i < rows.length; i++) {
       const eid = rows[i][0];
       const ms = rows[i][1];
-      html += `<tr><td>${escapeHtml(activityDisplayName(eid))}</td><td class="mono">${(ms / 3600000).toFixed(2)}</td></tr>`;
+      html += `<tr><td>${escapeHtml(activityDisplayName(eid))}</td><td class="mono">${fmtAggCell(ms)}</td></tr>`;
     }
     html += `</tbody></table>`;
-    html += tbl("\u6309 Project", byProject);
+    html += tbl("Project", byProject);
     if (showByDay) {
       const dayKeys = Object.keys(byDay).sort();
       if (dayKeys.length) {
-        html += `<h2 class="report-h">\u6bcf\u65e5\u5c0f\u8a08</h2><table><thead><tr><th>\u65e5\u671f</th><th>\u5c0f\u6642</th></tr></thead><tbody>`;
+        html += `<h2 class="report-h">Daily Subtotal</h2><table><thead><tr><th>Date</th><th>${unitTh}</th></tr></thead><tbody>`;
         for (let di = 0; di < dayKeys.length; di++) {
           const d = dayKeys[di];
           const ms = byDay[d];
-          html += `<tr><td class="mono">${escapeHtml(d)}</td><td class="mono">${(ms / 3600000).toFixed(2)}</td></tr>`;
+          html += `<tr><td class="mono">${escapeHtml(d)}</td><td class="mono">${fmtAggCell(ms)}</td></tr>`;
         }
         html += `</tbody></table>`;
       }
     }
-    html += tbl("\u6309\u4eba\u7269\uff08\u6709\u586b\u300c\u540c\u908a\u500b\u4e00\u9f4a\u300d\uff09", byPerson);
+    html += tbl("People", byPerson);
 
     const cap = REPORT_RAW_RECORD_CAP;
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
     const sliceRaw = sortedRaw.slice(0, cap);
     const nextGlobal = chronologicalNextById(list);
-    html += `<h2 class="report-h">Raw records\uff08\u542b Remark\uff09</h2><p class="muted" style="margin:0 0 8px;">\u8207\u4e0a\u9762\u540c\u4e00\u7be9\u9078\u540c\u65e5\u671f\u7bc4\u570d\uff1b\u6bcf\u884c\u4e00\u6bb5\u8a08\u6642\u3002<strong>Group</strong>\uff1aCSV\uff0f\u8868\u55ae\u6709 Work\uff0fRest \u5c31\u7528\u5165\u5eab\u503c\uff1b\u7121\u5247\u6309\u300aTime Stat mapping rules\u300b\u4f30\uff08\u53ea\u6703\u4fc2 Work \u6216 Rest\uff09\u3002<strong>Layers\uff0fCat\uff0fSub</strong>\uff1a\u6309\u540c\u4e00\u5957 rules \u63a8\u65b7\uff1bFreedom \u4e0b Cat \u756b\u9762\u986f\u793a <strong>Time Management</strong>\u3002<strong>Project</strong>\uff1a<strong>\u53ea</strong>\u986f\u793a CSV\uff0f\u8868\u55ae\u300cWhat is the project\u2026\u300d\u7b49\u532f\u5165\u7684 <code>projectsFromForm</code>\uff08\u540c\u4f60\u63b1\u7684 Projects \u6b04\u6703\u5408\u4f75\u5165\u5462\u500b\u6b04\u4f4d\uff09\uff0c<strong>\u5514\u7528</strong> Structure\u3001\u4ea6<strong>\u5514\u7528</strong> <code>ev.project</code>\u3002<strong>Remark</strong>\uff1a\u5408\u4f75 Remark\u3001Notes\u3001Description \u7b49\u3002\u5217\u8868<strong>\u9806\u6642\u5e8f</strong>\uff08\u65e9\u2192\u9072\uff09\u3002<strong>\u540c\u4e00\u79d2\u958b\u59cb\u7684\u591a\u7b46</strong>\u6703\u5c07\u4e2d\u9593\u6642\u9577<strong>\u5e73\u5747\u6524\u5206</strong>\uff1b<strong>\u540c\u4e00 id \u91cd\u8986\u5165\u5eab</strong>\u6642\u53ea\u4fdd\u7559\u6642\u9593\u5e8f<strong>\u6700\u5f8c\u4e00\u7b46</strong>\u8a08\u5165\u5831\u8868\uff0f\u532f\u51fa\uff0f\u6642\u9593\u8ef8\u3002</p>`;
+    html += `<h2 class="report-h">Data</h2>`;
+
     html += `<div class="report-records-wrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
     for (let ri = 0; ri < sliceRaw.length; ri++) {
       const row = sliceRaw[ri];
@@ -2713,14 +2943,15 @@
     }
     html += `</tbody></table></div>`;
     if (sortedRaw.length > cap) {
-      html += `<p class="muted" style="margin-top:6px;">\u53ea\u986f\u793a\u524d ${cap} \u6bb5\uff08\u5171 ${sortedRaw.length} \u6bb5\uff1b\u9806\u6642\u5e8f\uff09\u3002</p>`;
+      html += `<p class="muted" style="margin-top:6px;">Showing First ${cap} Rows (${sortedRaw.length} Total; Chronological).</p>`;
     }
 
-    html += `<p class="muted" style="margin-top:10px;">\u5408\u8a08\uff1a<strong style="color:var(--text);">${(total / 3600000).toFixed(2)}</strong> \u5c0f\u6642\uff08\u50c5\u8a08\u6709\u300c\u4e0b\u4e00\u7b46\u300d\u7684\u5340\u9593\uff1b\u5df2\u5957\u7528\u4e0a\u9762\u7be9\u9078\uff09</p>`;
+    html += `<p class="muted" style="margin-top:10px;">Total: <strong style="color:var(--text);">${(total / 3600000).toFixed(2)}</strong> Hours (Segments With A Next Row; Filters Applied).</p>`;
     box.innerHTML = html;
+    } finally {
+      syncReportUnitToggleButtons();
+    }
   }
-
-  document.getElementById("btnReport").addEventListener("click", () => renderReport());
 
   document.getElementById("btnExportJson").addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: "application/json" });
@@ -3050,7 +3281,7 @@
     });
   });
 
-  /** 無紀錄時：最近 7 日；有紀錄時：覆蓋資料最早～最尾一日（避免舊 CSV 跌出預設範圍） */
+  /** Report 預設日期：曆月頭～曆月尾（`syncReportDatesFromEvents` 用）。 */
   function monthBoundsYMD(d) {
     const dt = d instanceof Date ? d : new Date();
     const y = dt.getFullYear();
@@ -3070,6 +3301,23 @@
     const b = monthBoundsYMD(new Date());
     fromEl.value = b.from;
     toEl.value = b.to;
+  }
+
+  /** When leaving multi-window presets for Custom: reset range to current calendar month. */
+  function setReportRangeToCurrentCalendarMonth() {
+    const fromEl = document.getElementById("reportFromStr");
+    const toEl = document.getElementById("reportToStr");
+    if (!fromEl || !toEl) return;
+    const b = monthBoundsYMD(new Date());
+    reportPresetSuppress = true;
+    try {
+      fromEl.value = b.from;
+      toEl.value = b.to;
+    } finally {
+      queueMicrotask(() => {
+        reportPresetSuppress = false;
+      });
+    }
   }
 
   const MANUAL_DATE_CHIP_DAYS = 3;
@@ -3236,6 +3484,29 @@
   const cancelBtn = document.getElementById("btnMappingCancel");
   if (cancelBtn) cancelBtn.addEventListener("click", clearApprovalPanel);
 
+
+  (function initReportSearchField() {
+    const el = document.getElementById("reportKeywordSearch");
+    if (!el || el.dataset.searchUnlock) return;
+    el.dataset.searchUnlock = "1";
+    const refreshRo = () => {
+      if (!String(el.value || "").trim()) {
+        el.readOnly = true;
+        el.placeholder = "Search";
+      }
+    };
+    el.addEventListener("pointerdown", () => {
+      el.readOnly = false;
+    });
+    el.addEventListener("focus", () => {
+      el.readOnly = false;
+    });
+    el.addEventListener("blur", () => {
+      refreshRo();
+    });
+    refreshRo();
+  })();
+
   (function bindReportFilters() {
     const msBoxes = [
       "reportFilterGroupBox",
@@ -3262,14 +3533,16 @@
         reportKeywordSearchTimer = setTimeout(() => renderReport(), 280);
       });
     }
-    const kwMode = document.getElementById("reportKeywordMode");
-    if (kwMode) kwMode.addEventListener("change", () => renderReport());
-    const cb = document.getElementById("reportShowByDay");
-    if (cb) cb.addEventListener("change", () => renderReport());
-
     const presetEl = document.getElementById("reportPeriodPreset");
     if (presetEl) {
+      presetEl.dataset.prevPreset = presetEl.value || "custom";
       presetEl.addEventListener("change", () => {
+        const prev = presetEl.dataset.prevPreset || "custom";
+        const next = presetEl.value || "custom";
+        presetEl.dataset.prevPreset = next;
+        if (next === "custom" && reportComparePresetActive(prev)) {
+          setReportRangeToCurrentCalendarMonth();
+        }
         applyReportPeriodPreset();
         renderReport();
       });
@@ -3284,6 +3557,26 @@
         renderReport();
       });
     });
+  })();
+
+  (function bindReportUnitToggle() {
+    const wrap = document.getElementById("reportUnitToggle");
+    if (!wrap) return;
+    wrap.addEventListener("click", (e) => {
+      const btn = e.target.closest(".report-unit-btn");
+      if (!btn || !wrap.contains(btn)) return;
+      const u = btn.getAttribute("data-unit");
+      if (u !== "pct" && u !== "hours") return;
+      setReportUnitMode(u);
+      renderReport();
+    });
+    syncReportUnitToggleButtons();
+  })();
+
+  (function bindReportDataExport() {
+    const btn = document.getElementById("btnReportExport");
+    if (!btn) return;
+    btn.addEventListener("click", () => runReportDataExport());
   })();
 
   // Structure CSV 已移除；舊版 preview 元素唔再綁定。
