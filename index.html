@@ -18,8 +18,8 @@
   <meta name="theme-color" content="#0f1115" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>記錄</title>
-  <link rel="stylesheet" href="styles.css?v=43" />
+  <title>Time Log</title>
+  <link rel="stylesheet" href="styles.css?v=119" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -27,158 +27,183 @@
 </head>
 <body>
   <div class="tabs" role="tablist">
-    <button type="button" class="active" data-tab="log">記錄</button>
-    <button type="button" data-tab="timeline">時間軸</button>
-    <button type="button" data-tab="activities">Activity</button>
-    <button type="button" data-tab="report">報表</button>
-    <button type="button" data-tab="import">匯入 CSV</button>
-    <button type="button" data-tab="backup">備份</button>
+    <button type="button" class="active" data-tab="log">Log</button>
+    <button type="button" data-tab="timeline">Timeline</button>
+    <button type="button" data-tab="report">Report</button>
+    <button type="button" data-tab="import">Import CSV</button>
+    <button type="button" data-tab="backup">Backup</button>
   </div>
 
   <section data-panel="log">
     <div class="card">
-      <label for="quickActivity" style="margin-top:0;">Activity</label>
-      <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" placeholder="例如 Musicing、Trading Practice" />
+      <label for="quickPlace" style="margin-top:0;">Place</label>
+      <input type="text" id="quickPlace" autocomplete="off" />
+      <label for="quickActivity" style="margin-top:10px;">Activity</label>
+      <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" />
       <datalist id="activitySuggest"></datalist>
-      <label for="quickPlace" style="margin-top:10px;">地點</label>
-      <input type="text" id="quickPlace" placeholder="Home / Tuen Mun …" autocomplete="off" />
-      <label for="quickCategory" style="margin-top:10px;">Group</label>
-      <select id="quickCategory" class="select-xl">
-        <option value="Work" selected>Work</option>
-        <option value="Rest">Rest</option>
-      </select>
-      <label for="quickPeople" style="margin-top:10px;">人物，逗號分隔</label>
+      <label for="quickPeople" style="margin-top:10px;">With</label>
       <input type="text" id="quickPeople" autocomplete="off" />
-      <label for="quickRemark" style="margin-top:10px;">備註</label>
-      <textarea id="quickRemark" placeholder=""></textarea>
-      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">記錄開始時間（而家）</button>
+      <label for="quickRemark" style="margin-top:10px;">Remark</label>
+      <textarea id="quickRemark"></textarea>
+      <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">Log Now</button>
     </div>
     <div class="card">
-      <label for="manualActivity" style="margin-top:0;">Activity</label>
-      <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" placeholder="同上" />
+      <label for="manualPlace" style="margin-top:0;">Place</label>
+      <input type="text" id="manualPlace" autocomplete="off" />
+      <label for="manualActivity" style="margin-top:10px;">Activity</label>
+      <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" />
       <details class="pick-details" id="manualDateDetails">
         <summary class="pick-summary" id="manualDateSummary"></summary>
         <input type="hidden" id="manualDateSelected" value="" />
-        <div id="manualDateWrap" class="picker-chip-stack" role="group" aria-label="揀日期"></div>
+        <div id="manualDateWrap" class="picker-chip-stack" role="group" aria-label="Pick date"></div>
       </details>
-      <p class="muted" style="margin:12px 0 0;font-size:0.85rem;">時間（24 小時制 · 喺格內上下碌，00 再上係 23／59）</p>
-      <div class="row manual-time-row manual-wheel-row">
-        <div class="manual-wheel-col">
-          <div class="manual-wheel-caption">時</div>
-          <div class="manual-wheel-shell">
-            <div class="manual-wheel-viewport" id="manualHourWheelViewport" tabindex="0" role="listbox" aria-label="小時 0–23">
-              <div class="manual-wheel-list" id="manualHourWheelList"></div>
+      <details class="pick-details" id="manualTimeDetails" style="margin-top:10px;">
+        <summary class="pick-summary" id="manualTimeSummary"></summary>
+        <div class="row manual-time-row manual-wheel-row">
+          <div class="manual-wheel-col">
+            <div class="manual-wheel-caption">Hour</div>
+            <div class="manual-wheel-shell">
+              <div class="manual-wheel-viewport" id="manualHourWheelViewport" tabindex="0" role="listbox" aria-label="Hour 0-23">
+                <div class="manual-wheel-list" id="manualHourWheelList"></div>
+              </div>
+            </div>
+          </div>
+          <div class="manual-wheel-col">
+            <div class="manual-wheel-caption">Minute</div>
+            <div class="manual-wheel-shell">
+              <div class="manual-wheel-viewport" id="manualMinuteWheelViewport" tabindex="0" role="listbox" aria-label="Minute 0-59">
+                <div class="manual-wheel-list" id="manualMinuteWheelList"></div>
+              </div>
             </div>
           </div>
         </div>
-        <div class="manual-wheel-col">
-          <div class="manual-wheel-caption">分</div>
-          <div class="manual-wheel-shell">
-            <div class="manual-wheel-viewport" id="manualMinuteWheelViewport" tabindex="0" role="listbox" aria-label="分鐘 0–59">
-              <div class="manual-wheel-list" id="manualMinuteWheelList"></div>
-            </div>
-          </div>
-        </div>
-      </div>
+      </details>
       <input type="hidden" id="manualHourSel" value="" />
       <input type="hidden" id="manualMinuteSel" value="" />
-      <label for="manualPlace" style="margin-top:10px;">地點</label>
-      <input type="text" id="manualPlace" autocomplete="off" />
-      <label for="manualCategory" style="margin-top:10px;">Group</label>
-      <select id="manualCategory" class="select-xl">
-        <option value="Work" selected>Work</option>
-        <option value="Rest">Rest</option>
-      </select>
-      <label for="manualPeople" style="margin-top:10px;">人物</label>
+      <label for="manualPeople" style="margin-top:10px;">With</label>
       <input type="text" id="manualPeople" autocomplete="off" />
-      <label for="manualRemark" style="margin-top:10px;">備註</label>
+      <label for="manualRemark" style="margin-top:10px;">Remark</label>
       <textarea id="manualRemark"></textarea>
-      <button type="button" class="primary" id="btnManual" style="margin-top:12px;width:100%;">加入紀錄</button>
+      <button type="button" class="primary" id="btnManual" style="margin-top:12px;width:100%;">Add Record</button>
     </div>
-    <div id="installHint" class="install-hint">
-      <strong>iPhone</strong>：Safari 開此頁（需 https 或本機 server）→ 分享 → <strong>加入主畫面</strong>。
+    <div class="card hidden" id="mappingApprovalCard">
+      <h3 style="margin:0 0 8px;">Classification</h3>
+      <p class="muted" id="mappingApprovalMeta" style="margin:0 0 10px;"></p>
+      <div id="mappingApprovalList"></div>
+      <div class="row" style="margin-top:10px;">
+        <button type="button" class="ghost" id="btnMappingCancel">Cancel</button>
+      </div>
     </div>
+    <p class="muted" id="lastSavedHint" style="display:none;"></p>
   </section>
 
   <section data-panel="timeline" class="hidden">
     <div class="card timeline-cal-card">
+      <p id="timelineNowStatus" class="timeline-now-status muted"></p>
       <div id="timelineCalendar" class="timeline-cal"></div>
-      <p id="timelineEmpty" class="muted" style="padding:14px;margin:0;">最近三日尚無紀錄。</p>
+      <p id="timelineEmpty" class="muted" style="padding:14px;margin:0;">No records in the last 3 days.</p>
     </div>
   </section>
 
-  <section data-panel="activities" class="hidden">
-    <div class="card">
-      <label for="newActivityName">新 Activity 名稱</label>
-      <div class="row">
-        <input type="text" id="newActivityName" placeholder="例如 Trading Practice" autocomplete="off" />
-        <button type="button" class="primary fixed" id="btnAddActivity" style="min-width:100px;">新增</button>
-      </div>
-      <p class="muted" style="margin-top:10px;">改名會將舊名放入 <strong>aliases</strong>，方便對返舊 CSV / Notion 字眼。</p>
-    </div>
-    <h2>合併 Activity</h2>
-    <div class="card">
-      <div class="row">
-        <div>
-          <label for="mergeFrom">由</label>
-          <select id="mergeFrom"></select>
-        </div>
-        <div>
-          <label for="mergeTo">合併到</label>
-          <select id="mergeTo"></select>
-        </div>
-      </div>
-      <button type="button" class="ghost" id="btnMerge" style="margin-top:12px;width:100%;">合併</button>
-    </div>
-    <h2>列表</h2>
-    <div id="activityCards"></div>
-  </section>
 
-  <section data-panel="report" class="hidden">
-    <div class="card">
-      <label for="reportFromStr">由（YYYY-MM-DD）</label>
-      <input type="text" id="reportFromStr" class="input-xl" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="2024-12-21" />
-      <label for="reportToStr" style="margin-top:12px;">至（YYYY-MM-DD）</label>
-      <input type="text" id="reportToStr" class="input-xl" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="2026-05-03" />
-      <button type="button" class="primary" id="btnReport" style="margin-top:12px;width:100%;">更新報表</button>
-      <p class="muted" style="margin-top:10px;">只計「開始時間」落喺範圍內、且有下一筆嘅區間。「由／至」請手打 YYYY-MM-DD；有資料時會自動填最早／最尾一日。</p>
+  <section data-panel="report" class="hidden report-panel">
+    <div class="card report-range-toolbar">
+      <div class="report-range-row">
+        <div class="report-range-field report-range-field--from">
+          <label for="reportFromStr">From</label>
+          <input type="date" id="reportFromStr" class="input-xl" />
+        </div>
+        <div class="report-range-field-preset">
+          <label for="reportPeriodPreset">Compare</label>
+          <select id="reportPeriodPreset" class="input-xl">
+            <option value="custom">Custom（單一區間）</option>
+            <option value="cmp_years">連續 3 個曆年</option>
+            <option value="cmp_quarters">連續 3 個季度</option>
+            <option value="cmp_months">連續 3 個月</option>
+            <option value="cmp_weeks">連續 3 個星期（一至日）</option>
+          </select>
+        </div>
+        <div class="report-range-field report-range-field--to">
+          <label for="reportToStr">To</label>
+          <input type="date" id="reportToStr" class="input-xl" />
+        </div>
+      </div>
+      <p class="muted" style="margin:8px 0 0;font-size:0.78rem;">Default：目前曆月。揀 Compare 時會用 <strong>To</strong>（冇就用 <strong>From</strong>）做錨點，自動拉闊三段合併範圍。</p>
     </div>
-    <h2>按 Activity（小時）</h2>
-    <div class="card" id="reportSummary"></div>
+    <div class="report-layout">
+      <aside class="report-sidebar card">
+        <h2 class="report-sidebar-title">Filters</h2>
+        <p class="muted report-sidebar-hint">Group／Layers／Cat／Sub 同 Raw 表一致：Group 有 CSV／表單 Work／Rest 就用入庫值，否則按《Time Stat mapping rules》估（只會 Work 或 Rest）；其餘維度用 rules 推斷。Cat／Sub／Project 支援多選。</p>
+        <label style="margin-top:0;">Group</label>
+        <div id="reportFilterGroupBox" class="report-ms-box" role="group" aria-label="Group filter"></div>
+        <label style="margin-top:14px;">Layers</label>
+        <div id="reportFilterLayerBox" class="report-ms-box" role="group" aria-label="Layers filter"></div>
+        <label style="margin-top:14px;">Cat</label>
+        <div id="reportFilterCatBox" class="report-ms-box" role="group" aria-label="Cat filter"></div>
+        <label style="margin-top:14px;">Sub Cat</label>
+        <div id="reportFilterSubBox" class="report-ms-box" role="group" aria-label="Sub Cat filter"></div>
+        <label style="margin-top:14px;">Project</label>
+        <div id="reportFilterProjectBox" class="report-ms-box" role="group" aria-label="Project filter"></div>
+        <label for="reportPeopleSearch" style="margin-top:10px;">With</label>
+        <input type="text" id="reportPeopleSearch" class="input-xl" autocomplete="off" />
+        <label for="reportKeywordSearch" style="margin-top:10px;">Keyword (all fields)</label>
+        <input type="text" id="reportKeywordSearch" class="input-xl" autocomplete="off" />
+        <label for="reportKeywordMode" style="margin-top:10px;">Keyword match</label>
+        <select id="reportKeywordMode">
+          <option value="loose">Loose — substring, ignore case; space/comma = AND</option>
+          <option value="strict">Strict — exact phrase, case-sensitive</option>
+        </select>
+        <label class="report-check">
+          <input type="checkbox" id="reportShowByDay" />
+          <span>Daily subtotal</span>
+        </label>
+        <button type="button" class="primary" id="btnReport" style="margin-top:14px;width:100%;">Update Report</button>
+      </aside>
+      <div class="report-main">
+        <h2 class="report-main-title">Results</h2>
+        <div class="card report-results" id="reportSummary"></div>
+      </div>
+    </div>
   </section>
 
   <section data-panel="import" class="hidden">
     <div class="card">
-      <p class="muted" style="margin-top:0;">Google Sheet export：建議用此頁揀欄。重複欄位名會自動變成 <code>Place__2</code> 等。</p>
-      <label for="csvFile">揀 CSV 檔</label>
+      <p class="muted" style="margin-top:0;">Google Sheet export：重複欄位名會自動變成 <code>Place__2</code>、<code>Category__2</code> 等。</p>
+      <label for="projectsCsvFile" style="margin-top:0;">Projects CSV (Project ID, Projects)</label>
+      <input type="file" id="projectsCsvFile" accept=".csv,text/csv" />
+      <p id="projectsImportPreview" class="muted" style="margin-top:10px;"></p>
+      <hr style="border:0;border-top:1px solid var(--border);margin:18px 0;" />
+      <label for="csvFile">Record / Form CSV</label>
       <input type="file" id="csvFile" accept=".csv,text/csv" />
       <p id="importPreview" class="muted" style="margin-top:10px;"></p>
-      <label for="mapTimestamp">Timestamp 欄</label>
+      <label for="mapTimestamp">Timestamp column</label>
       <select id="mapTimestamp"></select>
-      <label for="mapActivity" style="margin-top:10px;">Activity 欄（你表入面叫 Activities）</label>
+      <label for="mapActivity" style="margin-top:10px;">Activity column</label>
       <select id="mapActivity"></select>
-      <label for="mapPlace" style="margin-top:10px;">地點（可選；通常係第二個 Place）</label>
+      <label for="mapPlace" style="margin-top:10px;">Place column</label>
       <select id="mapPlace"></select>
-      <label for="mapCategory" style="margin-top:10px;">Work/Rest 類（可選；通常係第一個 Category）</label>
+      <label for="mapCategory" style="margin-top:10px;">Work/Rest column</label>
       <select id="mapCategory"></select>
-      <button type="button" class="primary" id="btnImportCsv" style="margin-top:14px;width:100%;">匯入到本機資料</button>
-      <p class="muted" style="margin-top:10px;">未出現過嘅字會自動 <strong>新建 Activity</strong>。可重複匯入（會加筆）；請自行避免重複檔。</p>
+      <label for="mapProjects" style="margin-top:10px;">Projects／What is the project 欄（可選）</label>
+      <select id="mapProjects"></select>
+      <button type="button" class="primary" id="btnImportCsv" style="margin-top:14px;width:100%;">Import to Local Data</button>
+      <p class="muted" style="margin-top:10px;">Optional long-form fields, remark and with will be imported together.</p>
     </div>
   </section>
 
   <section data-panel="backup" class="hidden">
     <div class="card">
-      <button type="button" class="primary" id="btnExportJson" style="width:100%;">匯出 JSON 備份</button>
-      <label for="btnImportJson" style="margin-top:16px;">還原 JSON（會覆蓋本機現有資料）</label>
+      <button type="button" class="primary" id="btnExportJson" style="width:100%;">Export JSON Backup</button>
+      <label for="btnImportJson" style="margin-top:16px;">Restore JSON (overwrite local data)</label>
       <input type="file" id="btnImportJson" accept="application/json,.json" style="margin-top:8px;" />
     </div>
     <div class="card">
-      <button type="button" class="ghost" id="btnExportCsv" style="width:100%;">匯出紀錄 CSV（含 duration 秒）</button>
+      <button type="button" class="ghost" id="btnExportCsv" style="width:100%;">Export Records CSV</button>
     </div>
   </section>
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=43"></script>
+  <script src="app.js?v=119"></script>
 </body>
 </html>
