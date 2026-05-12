@@ -3,6 +3,8 @@
   const REQUIRED_PROJECTS_CSV_NAME = "Time stat V2 - Projects.csv";
   const DAY_MS = 86400000;
   const MIN_TIMELINE_MS = 30 * 60000;
+  /** Report Activity filter：選項來自最近 N 個曆日（含今日）有出現過嘅紀錄。 */
+  const REPORT_ACTIVITY_FILTER_ROLLING_DAYS = 31;
   const MSG_NO_RECORDS = "No records";
   const MSG_PLEASE_INPUT_DATA = "Please Input Data";
   const MSG_ACTIVITY_REQUIRED = "請輸入 Activity 名稱";
@@ -873,7 +875,7 @@
     const pid = String(ev.projectId || "").trim();
     if (form || pid) {
       if (eventProjectLinksProjectsRegistry(ev)) return "Project";
-      return "Projects";
+      return "Project";
     }
     const sug = suggestProjectsFromText(activityLabel, String(remark || ""));
     if (!sug.length) return "non-project";
@@ -1718,6 +1720,7 @@
     const low = t.toLowerCase();
     if (low === "group" || low === "grouped") return "Grouped";
     if (low === "individual") return "Individual";
+    if (low === "projects") return "Project";
     return t;
   }
 
@@ -1786,7 +1789,7 @@
 
   function subsForReport() {
     const list = sortedEventsUniqueById();
-    const a = ["Long Term", "Short Term", "Project", "Projects", "non-project", "Needs-Review", "Grouped", "Individual"];
+    const a = ["Long Term", "Short Term", "Project", "non-project", "Needs-Review", "Grouped", "Individual"];
     const struct = Array.isArray(state.structure) ? state.structure : [];
     for (let i = 0; i < struct.length; i++) {
       const r = struct[i];
@@ -1809,7 +1812,7 @@
 
   function subsForReportCats(catArr) {
     const list = sortedEventsUniqueById();
-    const base = ["Long Term", "Short Term", "Project", "Projects", "non-project", "Needs-Review", "Grouped", "Individual"];
+    const base = ["Long Term", "Short Term", "Project", "non-project", "Needs-Review", "Grouped", "Individual"];
     if (!catArr || !catArr.length) {
       const a = [...base];
       for (let i = 0; i < list.length; i++) {
@@ -1984,6 +1987,30 @@
     return reportUniqueSorted(a);
   }
 
+  /** Report 側欄 Activity 多選：最近 <code>REPORT_ACTIVITY_FILTER_ROLLING_DAYS</code> 日內有 <code>start</code> 嘅事件所涉及嘅名稱。 */
+  function activitiesForReportFilterRollingDays() {
+    const to = new Date();
+    to.setHours(0, 0, 0, 0);
+    const from = new Date(to);
+    from.setDate(from.getDate() - (REPORT_ACTIVITY_FILTER_ROLLING_DAYS - 1));
+    const fromYmd = ymdFromLocalDate(from);
+    const toYmd = ymdFromLocalDate(to);
+    const t0 = new Date(fromYmd + "T00:00:00").getTime();
+    const t1 = new Date(toYmd + "T23:59:59.999").getTime();
+    if (Number.isNaN(t0) || Number.isNaN(t1)) return [];
+    const list = sortedEventsUniqueById();
+    const acc = [];
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const st = new Date(ev.start).getTime();
+      if (Number.isNaN(st)) continue;
+      if (st < t0 || st > t1) continue;
+      const nm = reportNormLabel(activityDisplayName(ev.activityId));
+      if (nm && nm !== "（已刪 Activity）") acc.push(nm);
+    }
+    return reportUniqueSorted(acc);
+  }
+
   function refreshReportFilterSelects() {
     renderReportMultiPick("reportFilterGroupBox", groupsForReport());
     renderReportMultiPick("reportFilterLayerBox", layersForReport());
@@ -1995,6 +2022,7 @@
     const subNow = readMultiSet("reportFilterSubBox", "reportFilterSubExtra");
 
     renderReportMultiPick("reportFilterProjectBox", projectsForReportCatsSubs(catNow, subNow));
+    renderReportMultiPick("reportFilterActivityBox", activitiesForReportFilterRollingDays());
   }
 
   function reportPeopleTokens(query) {
@@ -2154,6 +2182,7 @@
     if (f.cats && f.cats.length) bits.push("Category: " + f.cats.join(", "));
     if (f.subCats && f.subCats.length) bits.push("Sub Category: " + f.subCats.join(", "));
     if (f.projects && f.projects.length) bits.push("Project: " + f.projects.join(", "));
+    if (f.activities && f.activities.length) bits.push("Activity: " + f.activities.join(", "));
     const ptoks = reportPeopleTokens(f.peopleQuery);
     if (ptoks.length) bits.push("With: " + ptoks.join(", "));
     return bits.join(" · ");
@@ -2176,6 +2205,7 @@
       cats: [...readCheckedValuesFromMsBox("reportFilterCatBox")],
       subCats: [...readCheckedValuesFromMsBox("reportFilterSubBox")],
       projects: [...readCheckedValuesFromMsBox("reportFilterProjectBox")],
+      activities: [...readCheckedValuesFromMsBox("reportFilterActivityBox")],
       peopleQuery: (gpeo && gpeo.value) || "",
       keywordQuery: (kwEl && kwEl.value) || "",
       keywordMode: "loose",
@@ -2211,6 +2241,11 @@
     if (f.projects && f.projects.length) {
       if (!eventMatchesProjectReportFilter(ev, f.projects)) return false;
     }
+    if (f.activities && f.activities.length) {
+      const actName = reportNormLabel(activityDisplayName(ev.activityId));
+      const ok = f.activities.some((s) => reportNormLabel(s) === actName);
+      if (!ok) return false;
+    }
     if (!eventMatchesPeopleSearch(ev, f.peopleQuery)) return false;
     if (!eventMatchesKeywordSearch(ev, f, list)) return false;
     return true;
@@ -2223,6 +2258,7 @@
       (f.cats && f.cats.length) ||
       (f.subCats && f.subCats.length) ||
       (f.projects && f.projects.length) ||
+      (f.activities && f.activities.length) ||
       reportPeopleTokens(f.peopleQuery).length ||
       reportKeywordActive(f)
     );
@@ -2678,18 +2714,11 @@
       const kwHint =
         kw.length > 0 ? `<p class="muted" style="margin-top:10px;">Search: ${escapeHtml(kw)}</p>` : "";
       const other =
-        nf.length > 0
-          ? `<p class="muted" style="margin-top:8px;">Other active filters (AND with search): ${escapeHtml(nf)}</p>`
-          : "";
-      const tail =
-        nf.length > 0
-          ? `<p class="muted" style="margin-top:10px;">Try Widening The Date Range Or Relaxing Filters.</p>`
-          : "";
+        nf.length > 0 ? `<p class="muted" style="margin-top:8px;">${escapeHtml(nf)}</p>` : "";
       return (
         '<p class="muted">There Are Records In Range, But <strong>None Match Your Filters</strong>.</p>' +
         kwHint +
-        other +
-        tail
+        other
       );
     };
 
@@ -2779,6 +2808,7 @@
         if (f.cats && f.cats.length) bits.push("Category: " + f.cats.join(" / "));
         if (f.subCats && f.subCats.length) bits.push("Sub Category: " + f.subCats.join(" / "));
         if (f.projects && f.projects.length) bits.push("Project: " + f.projects.join(" / "));
+        if (f.activities && f.activities.length) bits.push("Activity: " + f.activities.join(" / "));
         const ptoks = reportPeopleTokens(f.peopleQuery);
         if (ptoks.length) bits.push("People: " + ptoks.join(" / "));
         const kwTrim = String(f.keywordQuery || "").trim();
@@ -2787,7 +2817,7 @@
           if (kwtoks.length) bits.push("Search: " + kwtoks.join(" And "));
           else bits.push("Search: " + kwTrim);
         }
-        html += `<p class="muted" style="margin:0 0 12px;">Applied Filters (And): ${escapeHtml(bits.join(" · "))}</p>`;
+        html += `<p class="muted" style="margin:0 0 12px;">${escapeHtml(bits.join(" · "))}</p>`;
       }
       html += tblCmp("Group", (a) => a.byGroup);
       html += tblCmp("Layers", (a) => a.byLayer);
@@ -2842,25 +2872,15 @@
           : "";
       const other =
         nf.length > 0
-          ? `<p class="muted" style="margin-top:8px;">Other Active Filters (And With Search): ${escapeHtml(nf)}</p>`
-          : `<p class="muted" style="margin-top:8px;">No Group, Layers, Category, Sub Category, Project, Or People Filters Are Set — Only Search Narrows Results.</p>`;
-      const tailKw =
-        kw.length > 0 && !nf.length
-          ? `<ul class="muted" style="margin:10px 0 0;padding-left:1.2em;">` +
-            `<li>Any Field On The Row May Contain Your Search Tokens (Spelling, Project Text, Etc.).</li>` +
-            `<li>Confirm <strong>Import CSV</strong> Column Mapping For <strong>Projects</strong> / <strong>What Is The Project</strong>, And That <strong>Time Stat V2 - Projects.csv</strong> Is Loaded.</li>` +
-            `<li>If You Use The <strong>Project</strong> Filter, It Must Match The Raw <strong>Project</strong> Column Exactly (Or One Of Its Segments).</li>` +
-            `</ul>`
-          : `<p class="muted" style="margin-top:10px;">Try Widening The Date Range Or Relaxing Filters.</p>`;
+          ? `<p class="muted" style="margin-top:8px;">${escapeHtml(nf)}</p>`
+          : `<p class="muted" style="margin-top:8px;">No Group, Layers, Category, Sub Category, Project, Activity, Or People Filters Are Set — Only Search Narrows Results.</p>`;
       box.innerHTML =
-        `<p class="muted">\u7bc4\u570d\u5167\u6709\u8a08\u5230\u6642\u9577\u7684\u7d00\u9304\uff0c\u4f46<strong>\u5514\u7b26\u5408\u800c\u5bb6\u7be9\u9078</strong>\u3002</p>` + kwHint + other + tailKw;
+        `<p class="muted">There Are Records With Duration In This Range, But <strong>None Match Your Filters</strong>.</p>` + kwHint + other;
       return;
     }
 
     const { byEnt, byGroup, byLayer, byProject, byCatDim, bySubDim, byDay, byPerson, rawSegmentRows } = agg;
     const rows = Object.entries(byEnt).sort((a, b) => b[1] - a[1]);
-    let total = 0;
-    for (let ri = 0; ri < rows.length; ri++) total += rows[ri][1];
     const aggTotalMs = agg.totalKept || 0;
     const fmtAggCell = (ms) => {
       if (reportUnitMode === "pct") {
@@ -2889,6 +2909,7 @@
       if (f.cats && f.cats.length) bits.push("Category: " + f.cats.join(" / "));
       if (f.subCats && f.subCats.length) bits.push("Sub Category: " + f.subCats.join(" / "));
       if (f.projects && f.projects.length) bits.push("Project: " + f.projects.join(" / "));
+      if (f.activities && f.activities.length) bits.push("Activity: " + f.activities.join(" / "));
       const ptoks = reportPeopleTokens(f.peopleQuery);
       if (ptoks.length) bits.push("People: " + ptoks.join(" / "));
       const kwTrim = String(f.keywordQuery || "").trim();
@@ -2897,7 +2918,7 @@
         if (kwtoks.length) bits.push("Search: " + kwtoks.join(" And "));
         else bits.push("Search: " + kwTrim);
       }
-      html += `<p class="muted" style="margin:0 0 12px;">Applied Filters (And): ${escapeHtml(bits.join(" · "))}</p>`;
+      html += `<p class="muted" style="margin:0 0 12px;">${escapeHtml(bits.join(" · "))}</p>`;
     }
     html += tbl("Group", byGroup);
     html += tbl("Layers", byLayer);
@@ -2959,7 +2980,6 @@
       html += `<p class="muted" style="margin-top:6px;">Showing First ${cap} Rows (${sortedRaw.length} Total; Chronological).</p>`;
     }
 
-    html += `<p class="muted" style="margin-top:10px;">Total: <strong style="color:var(--text);">${(total / 3600000).toFixed(2)}</strong> Hours (Segments With A Next Row; Filters Applied).</p>`;
     box.innerHTML = html;
     } finally {
       syncReportUnitToggleButtons();
@@ -3528,6 +3548,7 @@
       "reportFilterCatBox",
       "reportFilterSubBox",
       "reportFilterProjectBox",
+      "reportFilterActivityBox",
     ];
     msBoxes.forEach((id) => {
       const el = document.getElementById(id);
