@@ -41,8 +41,8 @@
    * （token 會出現喺前端；只適合個人用；外洩請去 Apps Script 改 API_TOKEN。）
    * 留空則只靠 localStorage／下面 config.remote.json／Import 頁。
    */
-  const REMOTE_SYNC_BASE_DEFAULT = "";
-  const REMOTE_SYNC_TOKEN_DEFAULT = "";
+  const REMOTE_SYNC_BASE_DEFAULT = "https://script.google.com/macros/s/AKfycbxoMoig6kFTBXWw0mdnKKjM6ELqzjXb4F1xBtYnw5kLHpeHo8C2-dgIxQIBddtV73SCmQ/exec";
+  const REMOTE_SYNC_TOKEN_DEFAULT = "Xa57317748!";
 
   function getRemoteSyncBase() {
     const baked = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
