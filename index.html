@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=119" />
+  <link rel="stylesheet" href="styles.css?v=126" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -190,12 +190,34 @@
       <label for="mapProjects" style="margin-top:10px;">Projects／What is the project 欄（可選）</label>
       <select id="mapProjects"></select>
       <button type="button" class="primary" id="btnImportCsv" style="margin-top:14px;width:100%;">Import to Local Data</button>
+      <hr style="border:0;border-top:1px solid var(--border);margin:18px 0;" />
+      <h3 style="margin:0 0 8px;">Google Sheet（TimeStatDB）</h3>
+      <p class="muted" style="margin-top:0;">
+        <strong>推薦</strong>：喺 <code>app.js</code> 填 <code>REMOTE_SYNC_BASE_DEFAULT</code>／<code>REMOTE_SYNC_TOKEN_DEFAULT</code> 後部署——開網<strong>自動</strong>拉 <code>TimeStatDB</code>，<strong>唔使</strong>喺此手填。若要改用表單／本機覆寫，請將 app.js 兩個常數留空。
+        亦可喺 Apps Script 執行 <code>migrateFormRowsToTimeStatDb</code> 或按「Form→DB」。
+      </p>
+      <p id="remoteSyncBakedHint" class="muted hidden" style="margin-top:8px;">
+        已偵測 app.js 內建 exec／token：此處輸入框已隱藏；開頁會自動向 Google 拉取。
+      </p>
+      <div id="remoteSyncManualWrap">
+      <label for="remoteSyncBase">Apps Script exec 網址（可選，無內建時用）</label>
+      <input type="url" id="remoteSyncBase" class="input-xl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" />
+      <label for="remoteSyncToken" style="margin-top:10px;">API_TOKEN（可選）</label>
+      <input type="password" id="remoteSyncToken" class="input-xl" autocomplete="off" />
+      </div>
+      <p id="remoteSyncBootStatus" class="muted" style="margin-top:12px;white-space:pre-wrap;font-size:13px;line-height:1.45;"></p>
+      <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:12px;">
+        <button type="button" class="primary" id="btnRemotePull">拉取（load）</button>
+        <button type="button" class="ghost" id="btnRemoteMigrate">Form→DB（migrate）</button>
+        <button type="button" class="ghost" id="btnRemotePush">上傳本機→DB</button>
+      </div>
+
       <p class="muted" style="margin-top:10px;">Optional long-form fields, remark and with will be imported together.</p>
     </div>
   </section>
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=119"></script>
+  <script src="app.js?v=126"></script>
 </body>
 </html>

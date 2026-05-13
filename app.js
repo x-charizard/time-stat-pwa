@@ -33,17 +33,89 @@
   }
 
   /** 兼容舊版 entities / entityId 備份 */
-  function loadState() {
+  const REMOTE_LS_BASE_KEY = "timeStatRemoteSyncBase";
+  const REMOTE_LS_TOKEN_KEY = "timeStatRemoteSyncToken";
+
+  /**
+   * 部署用：填晒之後**每台機開網都會自動連 Google**，唔使再喺 Import 頁手動輸入。
+   * （token 會出現喺前端；只適合個人用；外洩請去 Apps Script 改 API_TOKEN。）
+   * 留空則只靠 localStorage／下面 config.remote.json／Import 頁。
+   */
+  const REMOTE_SYNC_BASE_DEFAULT = "";
+  const REMOTE_SYNC_TOKEN_DEFAULT = "";
+
+  function getRemoteSyncBase() {
+    const baked = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
+    if (baked) return baked;
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return defaultState();
-      const o = JSON.parse(raw);
+      const u = localStorage.getItem(REMOTE_LS_BASE_KEY);
+      if (u && String(u).trim()) return String(u).trim();
+    } catch (e) {}
+    try {
+      if (typeof window !== "undefined" && window.__TIME_STAT_REMOTE_BASE__) {
+        const w = String(window.__TIME_STAT_REMOTE_BASE__).trim();
+        if (w) return w;
+      }
+    } catch (e2) {}
+    return "";
+  }
+
+  function getRemoteSyncToken() {
+    const bakedT = String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim();
+    if (bakedT) return bakedT;
+    try {
+      const t = localStorage.getItem(REMOTE_LS_TOKEN_KEY);
+      if (t && String(t).trim()) return String(t).trim();
+    } catch (e) {}
+    try {
+      if (typeof window !== "undefined" && window.__TIME_STAT_REMOTE_TOKEN__) {
+        const w = String(window.__TIME_STAT_REMOTE_TOKEN__).trim();
+        if (w) return w;
+      }
+    } catch (e2) {}
+    return "";
+  }
+
+  function useRemoteSync() {
+    return Boolean(getRemoteSyncBase() && getRemoteSyncToken());
+  }
+
+  try {
+    if (typeof window !== "undefined") {
+      window.__TIME_STAT_SYNC_STATUS__ = function () {
+        return {
+          useRemote: useRemoteSync(),
+          baseLen: getRemoteSyncBase().length,
+          hasToken: Boolean(getRemoteSyncToken()),
+          bakedBaseLen: String(REMOTE_SYNC_BASE_DEFAULT || "").trim().length,
+          bakedHasToken: Boolean(String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim()),
+        };
+      };
+    }
+  } catch (e) {}
+
+  function getRemotePostUrl() {
+    const b = getRemoteSyncBase();
+    if (!b) return "";
+    try {
+      const u = new URL(b);
+      u.search = "";
+      return u.toString();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  /** 與 loadState／遠端 hydrate 共用：將任意 object 正規化成 app state。 */
+  function normalizeStateFromParsed(o) {
+    try {
+      if (!o || typeof o !== "object") return null;
       const activities = Array.isArray(o.activities)
         ? o.activities
         : Array.isArray(o.entities)
           ? o.entities
           : null;
-      if (!activities || !Array.isArray(o.events)) return defaultState();
+      if (!activities || !Array.isArray(o.events)) return null;
       let anyIdFixed = false;
       const events = o.events.map((ev) => {
         const n = { ...ev };
@@ -57,15 +129,28 @@
       });
       const projectsRegistry = Array.isArray(o.projectsRegistry) ? o.projectsRegistry : [];
       const out = { version: o.version || 3, activities, events, structure: [], projectsRegistry };
+      return { out, anyIdFixed };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function loadState() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return defaultState();
+      const parsed = normalizeStateFromParsed(JSON.parse(raw));
+      if (!parsed) return defaultState();
+      const { out, anyIdFixed } = parsed;
       if (anyIdFixed) {
         try {
           localStorage.setItem(STORAGE_KEY, JSON.stringify(out));
-        } catch {
+        } catch (e) {
           /* ignore quota */
         }
       }
       return out;
-    } catch {
+    } catch (e) {
       return defaultState();
     }
   }
@@ -124,9 +209,28 @@
     if (state.events.length < b) save();
   })();
 
+  async function pushRemoteStateQuiet() {
+    if (!useRemoteSync()) return;
+    const url = getRemotePostUrl();
+    const token = getRemoteSyncToken();
+    if (!url || !token) return;
+    try {
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify({ token: token, state: state }),
+        mode: "cors",
+        cache: "no-store",
+      });
+    } catch (e) {
+      /* ignore network */
+    }
+  }
+
   function save() {
     state.structure = [];
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    void pushRemoteStateQuiet();
   }
 
   function toast(msg) {
@@ -3384,6 +3488,229 @@
     setWheelToValue(mVp, mHid, 60, d.getMinutes());
     updateManualTimeSummary();
   }
+
+
+  async function runRemoteHydrate() {
+    if (!useRemoteSync()) return;
+    const r = await fetch(getRemotePostUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify({ token: getRemoteSyncToken(), action: "load" }),
+      cache: "no-store",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (j && j._formImportDebug) {
+      try {
+        console.info("[TimeStat] form import debug", j._formImportDebug);
+      } catch (e) {}
+    }
+    if (!j || !j.ok) throw new Error((j && j.error) || "load_failed");
+    if (!Object.prototype.hasOwnProperty.call(j, "state")) {
+      toast("Google 端未回傳 state（請確認 Apps Script 已部署 doPost + action=load）。");
+      return;
+    }
+    if (j.state === null) {
+      if (state.events.length > 0) await pushRemoteStateQuiet();
+      return;
+    }
+    const parsed = normalizeStateFromParsed(j.state);
+    if (!parsed) {
+      toast("遠端資料格式錯誤，已保留本機版本。");
+      return;
+    }
+    const prevEvCount = state.events.length;
+    const nextEvCount = (parsed.out.events || []).length;
+    if (nextEvCount === 0 && prevEvCount > 0) {
+      toast("遠端 0 筆紀錄，已保留本機 " + prevEvCount + " 筆。");
+      return;
+    }
+    state = parsed.out;
+    bumpEventsMutationGen();
+    dedupeStateEventsByImportKey();
+    state.structure = [];
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {}
+    refreshActivityDatalist();
+    refreshProjectPickers();
+    fillMergeSelects();
+    renderActivityList();
+    renderTimeline();
+    syncReportDatesFromEvents();
+    renderReport();
+    initManualDateTime();
+    refreshManualAutoSuggestions();
+    updateLastSavedHint();
+  }
+
+
+  function setRemoteSyncBootStatus_(msg) {
+    try {
+      const el = document.getElementById("remoteSyncBootStatus");
+      if (el) el.textContent = String(msg || "");
+    } catch (e) {}
+  }
+
+  function syncRemoteSyncInputsFromGetters_() {
+    const baseEl = document.getElementById("remoteSyncBase");
+    const tokEl = document.getElementById("remoteSyncToken");
+    try {
+      if (baseEl) baseEl.value = getRemoteSyncBase();
+      if (tokEl) tokEl.value = getRemoteSyncToken();
+    } catch (e) {}
+  }
+
+  async function loadRemoteSyncDefaultsFromJson_() {
+    if (typeof fetch === "undefined") return;
+    var dB0 = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
+    var dT0 = String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim();
+    if (dB0 && dT0) return;
+    try {
+      const r = await fetch("config.remote.json", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = await r.json().catch(() => null);
+      if (!j || typeof j !== "object") return;
+      const bu = j.execUrl != null ? String(j.execUrl).trim() : "";
+      const tk = j.token != null ? String(j.token).trim() : "";
+      if (bu && typeof window !== "undefined") window.__TIME_STAT_REMOTE_BASE__ = bu;
+      if (tk && typeof window !== "undefined") window.__TIME_STAT_REMOTE_TOKEN__ = tk;
+    } catch (e) {
+      /* 無檔案／離線：無視 */
+    }
+  }
+
+  (function hydrateRemoteStateAsync() {
+    void (async () => {
+      try {
+        await loadRemoteSyncDefaultsFromJson_();
+        syncRemoteSyncInputsFromGetters_();
+      } catch (e) {}
+      if (!useRemoteSync()) {
+        var _bl = String(REMOTE_SYNC_BASE_DEFAULT || "").trim().length;
+        var _tk = Boolean(String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim());
+        setRemoteSyncBootStatus_(
+          "【同步狀態】未連線（目前讀唔到 exec／token）。\n" +
+            "→ **唔使手填表**：喺**要上架嗰份** app.js 填好 REMOTE_SYNC_BASE_DEFAULT（…/exec）同 REMOTE_SYNC_TOKEN_DEFAULT，再重新部署；內建值會**優先**於本機。\n" +
+            "→ 若你已填仍見此訊息：線上可能仲係舊檔——請硬刷新／清快取；Console 打 window.__TIME_STAT_SYNC_STATUS__() 睇 bakedBaseLen／bakedHasToken（線上檔案係咪真係有字）。\n" +
+            "→ 今次線上檢測：bakedBaseLen=" +
+            _bl +
+            "，bakedHasToken=" +
+            _tk +
+            "。",
+        );
+        return;
+      }
+      setRemoteSyncBootStatus_("【同步狀態】連線中，向 Google 拉取…");
+      try {
+        await runRemoteHydrate();
+        try {
+          window.__TIME_STAT_LAST_HYDRATE__ = {
+            ok: true,
+            at: new Date().toISOString(),
+            events: state.events.length,
+          };
+        } catch (e2) {}
+        setRemoteSyncBootStatus_(
+          "【同步狀態】已拉取。目前 events = " +
+            state.events.length +
+            "。\n若仍係 0：請喺試算表睇 TimeStatDB 有冇 JSON；或喺 Apps Script 跑 migrateFormRowsToTimeStatDb／按「Form→DB」。",
+        );
+      } catch (e) {
+        toast("拉取 Google 失敗：" + (e.message || String(e)));
+        try {
+          window.__TIME_STAT_LAST_HYDRATE__ = { ok: false, error: String(e.message || e) };
+        } catch (e3) {}
+        setRemoteSyncBootStatus_("【同步狀態】拉取失敗：" + (e.message || String(e)));
+      }
+    })();
+  })();
+
+  (function bindGoogleSheetRemoteControls() {
+    const baseEl = document.getElementById("remoteSyncBase");
+    const tokEl = document.getElementById("remoteSyncToken");
+    const btnPull = document.getElementById("btnRemotePull");
+    const btnMigrate = document.getElementById("btnRemoteMigrate");
+    const btnPush = document.getElementById("btnRemotePush");
+    if (!baseEl || !tokEl) return;
+    const bakedReady =
+      Boolean(String(REMOTE_SYNC_BASE_DEFAULT || "").trim()) &&
+      Boolean(String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim());
+    const manualWrap = document.getElementById("remoteSyncManualWrap");
+    const bakedHint = document.getElementById("remoteSyncBakedHint");
+    if (bakedReady) {
+      if (manualWrap) manualWrap.classList.add("hidden");
+      if (bakedHint) bakedHint.classList.remove("hidden");
+    }
+    try {
+      baseEl.value = getRemoteSyncBase();
+      tokEl.value = getRemoteSyncToken();
+    } catch (e) {}
+    function persist() {
+      try {
+        localStorage.setItem(REMOTE_LS_BASE_KEY, String(baseEl.value || "").trim());
+        localStorage.setItem(REMOTE_LS_TOKEN_KEY, String(tokEl.value || "").trim());
+      } catch (e) {}
+    }
+    baseEl.addEventListener("change", persist);
+    tokEl.addEventListener("change", persist);
+    if (btnPull) {
+      btnPull.addEventListener("click", () => {
+        void (async () => {
+          try {
+            if (!useRemoteSync()) {
+              toast("請先填 Apps Script exec 網址（唔好帶 query）同 API_TOKEN。");
+              return;
+            }
+            await runRemoteHydrate();
+            toast("已從 TimeStatDB 拉取並更新畫面。");
+          } catch (e) {
+            toast("拉取失敗：" + (e.message || String(e)));
+          }
+        })();
+      });
+    }
+    if (btnMigrate) {
+      btnMigrate.addEventListener("click", () => {
+        void (async () => {
+          try {
+            if (!useRemoteSync()) {
+              toast("請先填 exec 網址同 token。");
+              return;
+            }
+            const r = await fetch(getRemotePostUrl(), {
+              method: "POST",
+              headers: { "Content-Type": "text/plain;charset=utf-8" },
+              body: JSON.stringify({ token: getRemoteSyncToken(), action: "migrateFormToDb" }),
+              cache: "no-store",
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!j.ok) throw new Error((j && j.error) || "migrate_failed");
+            toast("Form 已合併寫入 TimeStatDB（events≈" + (j.wroteEvents != null ? j.wroteEvents : "?") + "）。");
+            await runRemoteHydrate();
+          } catch (e) {
+            toast("遷移失敗：" + (e.message || String(e)));
+          }
+        })();
+      });
+    }
+    if (btnPush) {
+      btnPush.addEventListener("click", () => {
+        void (async () => {
+          try {
+            if (!useRemoteSync()) {
+              toast("請先填 exec 網址同 token。");
+              return;
+            }
+            await pushRemoteStateQuiet();
+            toast("已嘗試上傳本機 state 到 TimeStatDB。");
+          } catch (e) {
+            toast("上傳失敗：" + (e.message || String(e)));
+          }
+        })();
+      });
+    }
+  })();
+
 
   refreshActivityDatalist();
   refreshProjectPickers();

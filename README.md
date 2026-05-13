@@ -42,3 +42,19 @@ git status
 ```
 
 （若 Terminal 打唔開條路徑，用 Python `os.listdir` 複製正確資料夾名。）
+
+
+## Google Sheet 當 database（TimeStatDB）
+
+1. 喺綁定試算表嘅 Apps Script 專案貼上 google-apps-script/TimeStatSync.gs，喺 Project settings → Script properties 新增 API_TOKEN，再部署「網頁應用程式」（exec 網址唔好帶 query）。
+2. PWA → Import CSV 分頁最底：填 exec 網址同 token（會存本機 localStorage：timeStatRemoteSyncBase / timeStatRemoteSyncToken）。
+3. 一次搬 Form → TimeStatDB：喺 Apps Script 執行 migrateFormRowsToTimeStatDb，或喺 PWA 按「Form→DB（migrate）」。
+4. 按「拉取（load）」將 TimeStatDB JSON 同步落本機；之後喺 app 內改動會喺 save 時自動 POST state 上雲。
+5. 表單欄名唔標準：設 FORM_SOURCE_SHEET、TIMESTAMP_COLUMN_HEADER、ACTIVITY_COLUMN_HEADER、FORM_HEADER_ROW；除錯設 TIME_STAT_DEBUG=1。
+
+
+## 自動連 Google（唔使每台機再填 Import）
+
+優先序：Import 頁／localStorage → 同目錄 **config.remote.json**（專案已帶空嘅 config.remote.json，可改填 execUrl／token 再部署；勿將真 token commit 上公開 repo，或用净 app.js 兩個 DEFAULT）→ app.js 內 **REMOTE_SYNC_BASE_DEFAULT**／**REMOTE_SYNC_TOKEN_DEFAULT**（只自己 build 嘅副本可先填呢兩個常數）。
+
+開網會自動 fetch config.remote.json，再向 Apps Script 拉取 TimeStatDB；電腦同電話用**同一個公開 HTTPS 網址**就唔使逐台再撳 Import。
