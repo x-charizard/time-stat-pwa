@@ -19,18 +19,16 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=126" />
+  <link rel="stylesheet" href="styles.css?v=127" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 <body>
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="log">Log</button>
     <button type="button" data-tab="timeline">Timeline</button>
     <button type="button" data-tab="report">Report</button>
-    <button type="button" data-tab="import">Import CSV</button>
   </div>
 
   <section data-panel="log">
@@ -93,10 +91,16 @@
         <button type="button" class="ghost" id="btnMappingCancel">Cancel</button>
       </div>
     </div>
-    <p class="muted" id="lastSavedHint" style="display:none;"></p>
   </section>
 
   <section data-panel="timeline" class="hidden">
+    <div class="card timeline-toolbar-card">
+      <div class="timeline-toolbar">
+        <label for="timelinePickDate">日期</label>
+        <input type="date" id="timelinePickDate" class="input-xl" aria-label="Timeline center date" />
+        <button type="button" class="ghost timeline-recent-btn" id="btnTimelineRecent">最近三日</button>
+      </div>
+    </div>
     <div class="card timeline-cal-card">
       <p id="timelineNowStatus" class="timeline-now-status muted"></p>
       <div id="timelineCalendar" class="timeline-cal"></div>
@@ -156,6 +160,15 @@
         <div class="card report-main-stack">
           <div class="report-main-header report-main-header--actions-only">
             <div class="report-main-header-actions">
+              <label class="report-data-limit-label" for="reportDataLimit">Rows</label>
+              <select id="reportDataLimit" class="report-data-limit-select" aria-label="Data rows to show">
+                <option value="50">50</option>
+                <option value="100">100</option>
+                <option value="200">200</option>
+                <option value="400">400</option>
+                <option value="1000">1000</option>
+                <option value="all" selected>All</option>
+              </select>
               <button type="button" class="report-export-btn" id="btnReportExport" aria-label="Export Data CSV">Export</button>
               <div class="report-unit-toggle" id="reportUnitToggle" role="group" aria-label="Display Units">
                 <button type="button" class="report-unit-btn active" data-unit="hours">Hours</button>
@@ -169,55 +182,8 @@
     </div>
   </section>
 
-  <section data-panel="import" class="hidden">
-    <div class="card">
-      <p class="muted" style="margin-top:0;">Google Sheet export：重複欄位名會自動變成 <code>Place__2</code>、<code>Category__2</code> 等。</p>
-      <label for="projectsCsvFile" style="margin-top:0;">Projects CSV (Project ID, Projects)</label>
-      <input type="file" id="projectsCsvFile" accept=".csv,text/csv" />
-      <p id="projectsImportPreview" class="muted" style="margin-top:10px;"></p>
-      <hr style="border:0;border-top:1px solid var(--border);margin:18px 0;" />
-      <label for="csvFile">Record / Form CSV</label>
-      <input type="file" id="csvFile" accept=".csv,text/csv" />
-      <p id="importPreview" class="muted" style="margin-top:10px;"></p>
-      <label for="mapTimestamp">Timestamp column</label>
-      <select id="mapTimestamp"></select>
-      <label for="mapActivity" style="margin-top:10px;">Activity column</label>
-      <select id="mapActivity"></select>
-      <label for="mapPlace" style="margin-top:10px;">Place column</label>
-      <select id="mapPlace"></select>
-      <label for="mapCategory" style="margin-top:10px;">Work/Rest column</label>
-      <select id="mapCategory"></select>
-      <label for="mapProjects" style="margin-top:10px;">Projects／What is the project 欄（可選）</label>
-      <select id="mapProjects"></select>
-      <button type="button" class="primary" id="btnImportCsv" style="margin-top:14px;width:100%;">Import to Local Data</button>
-      <hr style="border:0;border-top:1px solid var(--border);margin:18px 0;" />
-      <h3 style="margin:0 0 8px;">Google Sheet（TimeStatDB）</h3>
-      <p class="muted" style="margin-top:0;">
-        <strong>推薦</strong>：喺 <code>app.js</code> 填 <code>REMOTE_SYNC_BASE_DEFAULT</code>／<code>REMOTE_SYNC_TOKEN_DEFAULT</code> 後部署——開網<strong>自動</strong>拉 <code>TimeStatDB</code>，<strong>唔使</strong>喺此手填。若要改用表單／本機覆寫，請將 app.js 兩個常數留空。
-        亦可喺 Apps Script 執行 <code>migrateFormRowsToTimeStatDb</code> 或按「Form→DB」。
-      </p>
-      <p id="remoteSyncBakedHint" class="muted hidden" style="margin-top:8px;">
-        已偵測 app.js 內建 exec／token：此處輸入框已隱藏；開頁會自動向 Google 拉取。
-      </p>
-      <div id="remoteSyncManualWrap">
-      <label for="remoteSyncBase">Apps Script exec 網址（可選，無內建時用）</label>
-      <input type="url" id="remoteSyncBase" class="input-xl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" />
-      <label for="remoteSyncToken" style="margin-top:10px;">API_TOKEN（可選）</label>
-      <input type="password" id="remoteSyncToken" class="input-xl" autocomplete="off" />
-      </div>
-      <p id="remoteSyncBootStatus" class="muted" style="margin-top:12px;white-space:pre-wrap;font-size:13px;line-height:1.45;"></p>
-      <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:12px;">
-        <button type="button" class="primary" id="btnRemotePull">拉取（load）</button>
-        <button type="button" class="ghost" id="btnRemoteMigrate">Form→DB（migrate）</button>
-        <button type="button" class="ghost" id="btnRemotePush">上傳本機→DB</button>
-      </div>
-
-      <p class="muted" style="margin-top:10px;">Optional long-form fields, remark and with will be imported together.</p>
-    </div>
-  </section>
-
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=126"></script>
+  <script src="app.js?v=127"></script>
 </body>
 </html>

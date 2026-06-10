@@ -1,6 +1,5 @@
 (function () {
   const STORAGE_KEY = "time-stat-state-v1";
-  const REQUIRED_PROJECTS_CSV_NAME = "Time stat V2 - Projects.csv";
   const DAY_MS = 86400000;
   const MIN_TIMELINE_MS = 30 * 60000;
   /** Report Activity filter：選項來自最近 N 個曆日（含今日）有出現過嘅紀錄。 */
@@ -158,6 +157,8 @@
   let state = loadState();
   let reportPresetSuppress = false;
   let timelinePointerTipAbort = null;
+  /** @type {string|null} null = 預設最近三日；有值 = 以該日為中心顯示前一日／當日／後一日 */
+  let timelineCenterYmd = null;
   const timelineBlockDetailMap = new WeakMap();
   let _eventsMutationGen = 0;
   let _sortedUniqueCachedGen = -1;
@@ -293,18 +294,44 @@
     return [...state.events].sort((a, b) => new Date(a.start) - new Date(b.start));
   }
 
-  /** 時間軸：最近三個曆日（今日、昨日、前日）由當地 0:00 起計 */
-  function timelineThreeDayCutoffMs() {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    t.setDate(t.getDate() - 2);
-    return t.getTime();
+  function getTimelineDisplayDays() {
+    if (!timelineCenterYmd) {
+      const out = [];
+      for (let i = 2; i >= 0; i--) {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - i);
+        out.push({ date: d, ymd: ymdFromLocalDate(d) });
+      }
+      return out;
+    }
+    const anchor = parseYMDStrict(timelineCenterYmd);
+    if (!anchor) {
+      timelineCenterYmd = null;
+      return getTimelineDisplayDays();
+    }
+    const [yy, mo, da] = anchor.split("-").map(Number);
+    const out = [];
+    for (let off = -1; off <= 1; off++) {
+      const d = new Date(yy, mo - 1, da);
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() + off);
+      out.push({ date: d, ymd: ymdFromLocalDate(d) });
+    }
+    return out;
+  }
+
+  /** 時間軸可視三日欄最早一日 0:00（用於篩選跨日段） */
+  function timelineViewCutoffMs() {
+    const cols = getTimelineDisplayDays();
+    if (!cols.length) return Date.now();
+    return ymdDayBounds(cols[0].ymd).start;
   }
 
   /** 時間軸用：三日欄任何一刻有用到嘅紀錄（包含「開始喺視窗外但段尾跌入視窗」——跨日凌晨）。 */
   function timelineEventsAscending(fullAscOpt) {
     const fullAsc = fullAscOpt || sortedEventsUniqueById();
-    const cutoff = timelineThreeDayCutoffMs();
+    const cutoff = timelineViewCutoffMs();
     return fullAsc.filter((ev) => {
       const t0 = new Date(ev.start).getTime();
       if (Number.isNaN(t0)) return false;
@@ -596,17 +623,14 @@
     if (nowStatus) nowStatus.textContent = timelineNowStatusText();
     if (!asc.length) {
       empty.classList.remove("hidden");
+      empty.textContent = timelineCenterYmd
+        ? "No records for the selected 3-day window."
+        : "No records in the last 3 days.";
       return;
     }
     empty.classList.add("hidden");
 
-    const columns = [];
-    for (let i = 2; i >= 0; i--) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - i);
-      columns.push({ date: d, ymd: ymdFromLocalDate(d) });
-    }
+    const columns = getTimelineDisplayDays();
 
     const wk = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const inner = document.createElement("div");
@@ -768,27 +792,101 @@
     return hit ? hit.projectId : "";
   }
 
-  function suggestProjectsFromText(activityLabel, remark) {
-    const text = reportNormLabel(activityLabel + " " + (remark || "")).toLowerCase();
-    if (!text) return [];
+  function allKnownProjectSources() {
+    const seen = new Set();
+    const out = [];
+    const add = (project, projectId) => {
+      const p = reportNormLabel(project);
+      if (!p) return;
+      const key = p.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ project: p, projectId: reportNormLabel(projectId) || projectIdByName(p) });
+    };
     const reg = Array.isArray(state.projectsRegistry) ? state.projectsRegistry : [];
-    const hits = [];
-    for (let i = 0; i < reg.length; i++) {
-      const p = reportNormLabel(reg[i].project);
-      const pid = reportNormLabel(reg[i].projectId);
-      if (!p) continue;
-      const pl = p.toLowerCase();
-      if (text.includes(pl) || pl.includes(text)) {
-        hits.push({ project: p, projectId: pid });
-      }
-    }
-    return hits.slice(0, 2);
+    for (let i = 0; i < reg.length; i++) add(reg[i].project, reg[i].projectId);
+    for (const p of uniqueProjectsSorted()) add(p, projectIdByName(p));
+    return out;
   }
 
-  function buildMappingCandidates(activityLabel, remark) {
+  function suggestProjectsFromText(activityLabel, remark) {
+    const remarkLow = reportNormLabel(remark).toLowerCase();
+    const actLow = reportNormLabel(activityLabel).toLowerCase();
+    const combined = (actLow + " " + remarkLow).trim();
+    if (!remarkLow && !actLow) return [];
+    const sources = allKnownProjectSources();
+    const hits = [];
+    const seen = new Set();
+    const remarkWords = remarkLow.split(/[\s,，、·]+/).filter((w) => w.length >= 3);
+    for (let i = 0; i < sources.length; i++) {
+      const p = sources[i].project;
+      const pl = p.toLowerCase();
+      if (!pl || seen.has(pl)) continue;
+      let matched = false;
+      if (remarkLow && (remarkLow.includes(pl) || pl.includes(remarkLow))) matched = true;
+      if (!matched && combined && combined.includes(pl)) matched = true;
+      if (!matched && remarkWords.some((w) => pl.includes(w) || w.includes(pl))) matched = true;
+      if (!matched && remarkLow.length >= 3) {
+        const firstTok = pl.split(/[\s,，、·]+/)[0];
+        if (firstTok && (remarkLow === firstTok || remarkLow.startsWith(firstTok) || firstTok.startsWith(remarkLow))) {
+          matched = true;
+        }
+      }
+      if (matched) {
+        seen.add(pl);
+        hits.push(sources[i]);
+      }
+    }
+    if (!hits.length && remarkLow.length >= 3) {
+      const looksNamed =
+        /(namaste|indonesia|dantian|順流道|time stat|15m|project|deadline|milestone)/i.test(remarkLow) ||
+        remarkWords.some((w) => w.length >= 4);
+      if (looksNamed) {
+        const titled = remark.trim();
+        hits.push({ project: titled, projectId: projectIdByName(titled) });
+      }
+    }
+    return hits.slice(0, 3);
+  }
+
+  /** Transporting：按 vault 規則用「下一筆非 Transporting activity」推斷層／類（記錄當下後驗）。 */
+  function inferTransportingLayerCatFromNext(evStartIso) {
+    const asc = sortedEventsUniqueById();
+    const t0 = new Date(evStartIso).getTime();
+    if (Number.isNaN(t0)) return { layer: "Freedom", cat: "Time" };
+    const nextMap = chronologicalNextById(asc);
+    let follow = null;
+    for (let i = 0; i < asc.length; i++) {
+      if (new Date(asc[i].start).getTime() > t0) {
+        follow = asc[i];
+        break;
+      }
+    }
+    let hops = 0;
+    while (follow && hops < 8) {
+      const fk = normalizeActivityKey(activityDisplayName(follow.activityId));
+      if (fk !== "transporting") break;
+      follow = nextMap.get(follow.id) || null;
+      hops++;
+    }
+    if (!follow) return { layer: "Freedom", cat: "Time" };
+    const nb = inferRulesLayerCatExcludeTransporting(follow);
+    const nl = (nb.layer || "").trim().toLowerCase();
+    if (nl === "health") return { layer: "Health", cat: nb.cat || "Mental Health" };
+    const nbLayerLow = (nb.layer || "").toLowerCase();
+    const cat = nb.cat && nb.cat !== "Needs-Review" && nbLayerLow !== "needs-review" ? nb.cat : "Time";
+    return { layer: "Freedom", cat: cat };
+  }
+
+  function buildMappingCandidates(activityLabel, remark, evStartIso) {
     const out = [];
     const suggested = suggestProjectsFromText(activityLabel, remark);
-    const inferred = inferByHistoryOrHeuristic(activityLabel);
+    let inferred = inferByHistoryOrHeuristic(activityLabel);
+    const actKey = normalizeActivityKey(activityLabel);
+    if (actKey === "transporting" && evStartIso) {
+      const tr = inferTransportingLayerCatFromNext(evStartIso);
+      inferred = { group: inferred.group, layer: tr.layer, cat: tr.cat };
+    }
     const text = (String(activityLabel || "") + " " + String(remark || "")).toLowerCase();
     const looksProject = /(project|deadline|milestone|namaste|indonesia|15m|time stat|dantian|順流道)/.test(text);
     const inferSubByRules = (layer, hasProjectSignal) => {
@@ -1143,7 +1241,32 @@
     if (card) card.classList.add("hidden");
   }
 
-  function pushEventAndRefresh(ev, msg) {
+  function clearQuickLogForm() {
+    ["quickPlace", "quickActivity", "quickPeople", "quickRemark"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = "";
+      el.dataset.userEdited = "0";
+      delete el.dataset.autoSuggestedValue;
+    });
+    refreshQuickAutoSuggestions();
+  }
+
+  function clearManualLogForm() {
+    ["manualPlace", "manualActivity", "manualPeople", "manualRemark"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = "";
+      el.dataset.userEdited = "0";
+      delete el.dataset.autoSuggestedValue;
+    });
+    initManualDateTime();
+    refreshManualAutoSuggestions();
+  }
+
+  function pushEventAndRefresh(ev, msg, opts) {
+    const silent = opts && opts.silent;
+    const formSource = opts && opts.formSource;
     state.events.push(ev);
     bumpEventsMutationGen();
     save();
@@ -1152,10 +1275,15 @@
     fillMergeSelects();
     renderTimeline();
     renderReport();
-    refreshQuickAutoSuggestions();
-    refreshManualAutoSuggestions();
-    updateLastSavedHint(ev);
-    toast(`${msg} · 總筆數 ${state.events.length}`);
+    if (silent) {
+      if (formSource === "manual") clearManualLogForm();
+      else if (formSource === "quick") clearQuickLogForm();
+    } else {
+      refreshQuickAutoSuggestions();
+      refreshManualAutoSuggestions();
+      updateLastSavedHint(ev);
+      toast(`${msg} · 總筆數 ${state.events.length}`);
+    }
   }
 
   function updateLastSavedHint(ev) {
@@ -1218,7 +1346,7 @@
         "Project",
         "non-project",
       ]);
-      const projectOpts = uniqueProjectsSorted();
+      const projectOpts = reportUniqueSorted([...uniqueProjectsSorted(), c.project, c.projectId].filter(Boolean));
       const mkSel = (id, options, selected, withEmpty) => {
         let h = `<select id="${id}" class="mapping-edit-select">`;
         if (withEmpty) h += `<option value="">blank</option>`;
@@ -1231,6 +1359,7 @@
         return h;
       };
       row.innerHTML =
+        `<h4 class="mapping-suggestion-title">${escapeHtml(c.label || "Suggestion")}</h4>` +
         `<div class="mapping-grid">` +
         `<div>Group</div><div>${mkSel(`map-g-${editableId}`, groupOpts, c.group || "", true)}</div>` +
         `<div>Layers</div><div>${mkSel(`map-l-${editableId}`, layerOpts, c.layer || "", true)}</div>` +
@@ -1271,8 +1400,9 @@
           delete ev.project;
           if (ev.group === "Work" || ev.group === "Rest") ev.category = ev.group;
           const msg = pendingApproval.doneMsg;
+          const formSource = pendingApproval.formSource;
           clearApprovalPanel();
-          pushEventAndRefresh(ev, msg);
+          pushEventAndRefresh(ev, msg, { silent: true, formSource: formSource });
         } catch (err) {
           toast("入庫失敗：" + (err && err.message ? err.message : "未知錯誤"));
         }
@@ -1327,6 +1457,7 @@
       activityLabel: label,
       remark: remark,
       doneMsg: MSG_LOG_NOW_DONE,
+      formSource: "quick",
     });
   });
 
@@ -1374,9 +1505,7 @@
       activityLabel: label,
       remark: remark,
       doneMsg: MSG_MANUAL_DONE,
-      onDirectSave: function () {
-        initManualDateTime();
-      },
+      formSource: "manual",
     });
   });
 
@@ -1396,11 +1525,10 @@
     const activityLabel = params.activityLabel;
     const remark = params.remark;
     const doneMsg = params.doneMsg;
-    const onDirectSave = params.onDirectSave;
-    const candidates = buildMappingCandidates(activityLabel, remark);
+    const formSource = params.formSource || "quick";
+    const candidates = buildMappingCandidates(activityLabel, remark, ev.start);
     if (!candidates.length) {
-      pushEventAndRefresh(ev, doneMsg);
-      if (typeof onDirectSave === "function") onDirectSave();
+      pushEventAndRefresh(ev, doneMsg, { silent: true, formSource: formSource });
       return;
     }
     showApprovalPanel({
@@ -1408,6 +1536,7 @@
       activityLabel: activityLabel,
       candidates: candidates,
       doneMsg: doneMsg,
+      formSource: formSource,
     });
   }
 
@@ -1790,7 +1919,15 @@
 
   let reportPeopleSearchTimer = null;
   let reportKeywordSearchTimer = null;
-  const REPORT_RAW_RECORD_CAP = 400;
+  function getReportRawRecordCap(totalRows) {
+    const el = document.getElementById("reportDataLimit");
+    if (!el) return totalRows;
+    const v = String(el.value || "all").trim().toLowerCase();
+    if (v === "all" || v === "") return totalRows;
+    const n = parseInt(v, 10);
+    if (!Number.isFinite(n) || n <= 0) return totalRows;
+    return n;
+  }
 
   function reportNormLabel(s) {
     return String(s || "").trim();
@@ -3037,8 +3174,8 @@
     }
     html += tbl("People", byPerson);
 
-    const cap = REPORT_RAW_RECORD_CAP;
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
+    const cap = getReportRawRecordCap(sortedRaw.length);
     const sliceRaw = sortedRaw.slice(0, cap);
     const nextGlobal = chronologicalNextById(list);
     html += `<h2 class="report-h">Data</h2>`;
@@ -3068,7 +3205,7 @@
     }
     html += `</tbody></table></div>`;
     if (sortedRaw.length > cap) {
-      html += `<p class="muted" style="margin-top:6px;">Showing First ${cap} Rows (${sortedRaw.length} Total; Chronological).</p>`;
+      html += `<p class="muted" style="margin-top:6px;">Showing first ${cap} of ${sortedRaw.length} rows (chronological).</p>`;
     }
 
     box.innerHTML = html;
@@ -3083,211 +3220,6 @@
     return t;
   }
 
-  /** ---------- CSV import (Papa) ---------- */
-  let lastParsed = null;
-
-  document.getElementById("csvFile").addEventListener("change", function () {
-    const f = this.files && this.files[0];
-    if (!f || typeof Papa === "undefined") {
-      if (typeof Papa === "undefined") toast("Papa Parse 未載入");
-      return;
-    }
-    const seenH = {};
-    function transformHeader(h) {
-      const base = h == null || h === "" ? "Column" : String(h);
-      seenH[base] = (seenH[base] || 0) + 1;
-      if (seenH[base] === 1) return base;
-      return base + "__" + seenH[base];
-    }
-    Papa.parse(f, {
-      header: true,
-      transformHeader,
-      skipEmptyLines: false,
-      complete: (res) => {
-        lastParsed = res;
-        const headers = res.meta.fields || [];
-        const selTs = document.getElementById("mapTimestamp");
-        const selAct = document.getElementById("mapActivity");
-        const selPlace = document.getElementById("mapPlace");
-        const selCat = document.getElementById("mapCategory");
-        const selProj = document.getElementById("mapProjects");
-        [selTs, selAct, selPlace, selCat, selProj].forEach((sel) => {
-          if (!sel) return;
-          sel.innerHTML = '<option value="">—</option>';
-          headers.forEach((h) => {
-            const o = document.createElement("option");
-            o.value = h;
-            o.textContent = h;
-            sel.appendChild(o);
-          });
-        });
-        function pick(pred) {
-          for (let i = 0; i < headers.length; i++) {
-            if (pred(headers[i])) return headers[i];
-          }
-          return "";
-        }
-        selTs.value = pick((h) => h === "Timestamp") || pick((h) => /timestamp/i.test(h)) || "";
-        selAct.value =
-          pick((h) => h === "Category__2") ||
-          pick((h) => h === "Activities") ||
-          pick((h) => /^activity$/i.test(h)) ||
-          "";
-        selPlace.value =
-          pick((h) => /^Place__\d+$/.test(h)) ||
-          pick((h) => h.startsWith("Place__")) ||
-          pick((h) => h === "Place") ||
-          "";
-        selCat.value = pick((h) => h === "Category") || "";
-        if (selProj) {
-          selProj.value =
-            pick((h) => /^what\s+is\s+the\s+project/i.test(String(h).replace(/\u3000/g, " "))) ||
-            pick((h) => h === "Projects") ||
-            pick((h) => h === "What is the Projects?") ||
-            pick((h) => /^What is the Projects\?__\d+$/i.test(h)) ||
-            pick((h) => /^Projects__\d+$/i.test(h)) ||
-            "";
-        }
-
-        document.getElementById("importPreview").textContent =
-          `讀取 ${res.data.length} 行；請確認欄位對應再按「匯入」。`;
-        toast("CSV 已解析");
-      },
-      error: (err) => toast("CSV 錯：" + err.message),
-    });
-    this.value = "";
-  });
-
-  (function () {
-    const projectsInp = document.getElementById("projectsCsvFile");
-    if (!projectsInp) return;
-    projectsInp.addEventListener("change", function () {
-      const f = this.files && this.files[0];
-      if (!f || typeof Papa === "undefined") {
-        if (typeof Papa === "undefined") toast("Papa Parse 未載入");
-        return;
-      }
-      if (f.name !== REQUIRED_PROJECTS_CSV_NAME) {
-        toast(`Projects 只接受：${REQUIRED_PROJECTS_CSV_NAME}`);
-        this.value = "";
-        return;
-      }
-      Papa.parse(f, {
-        header: true,
-        skipEmptyLines: "greedy",
-        complete: (res) => {
-          const rows = parseProjectsCsvRows(res.data || []);
-          state.projectsRegistry = rows;
-          save();
-          refreshProjectPickers();
-          const prev = document.getElementById("projectsImportPreview");
-          if (prev) prev.textContent = `Projects：${rows.length} 行（已寫入本機）`;
-          toast("已匯入 Projects");
-        },
-        error: (err) => toast("Projects CSV 錯：" + err.message),
-      });
-      this.value = "";
-    });
-  })();
-
-  document.getElementById("btnImportCsv").addEventListener("click", () => {
-    if (!lastParsed || !lastParsed.data) {
-      toast("請先揀 CSV 檔");
-      return;
-    }
-    const tsCol = document.getElementById("mapTimestamp").value;
-    const actCol = document.getElementById("mapActivity").value;
-    if (!tsCol || !actCol) {
-      toast("揀 Timestamp 同 Activity 欄");
-      return;
-    }
-    const placeCol = document.getElementById("mapPlace").value;
-    const catCol = document.getElementById("mapCategory").value;
-    const projCol = (document.getElementById("mapProjects") && document.getElementById("mapProjects").value) || "";
-    let n = 0;
-    let skip = 0;
-    let dupSkip = 0;
-    const rows = lastParsed.data;
-    const importKeySeen = new Set();
-    for (let ei = 0; ei < state.events.length; ei++) {
-      const k0 = eventImportDedupeKey(state.events[ei]);
-      if (k0 && !String(k0).startsWith("__badtime:")) importKeySeen.add(k0);
-    }
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rawTs = row[tsCol];
-      const iso = parseSheetsTimestamp(rawTs);
-      if (!iso) {
-        skip++;
-        continue;
-      }
-      const actLabel = String(row[actCol] || "").trim();
-      if (!actLabel) {
-        skip++;
-        continue;
-      }
-      let ent = getOrCreateActivity(actLabel);
-      if (!ent) continue;
-      const ev = {
-        id: uid(),
-        start: iso,
-        activityId: ent.id,
-      };
-      if (placeCol && row[placeCol]) ev.place = String(row[placeCol]).trim();
-      if (catCol && row[catCol]) ev.category = String(row[catCol]).trim();
-      assignOptionalFormFields(ev, row);
-      mergeImportCsvLooseFields(ev, row, [tsCol, actCol, placeCol, catCol, projCol]);
-      const w2 = row["With__2"];
-      const w0 = row["With"];
-      if (w2 && String(w2).trim()) ev.people = splitPeople(w2);
-      else if (w0 && String(w0).trim()) ev.people = splitPeople(w0);
-      if (projCol && row[projCol] != null) {
-        const pv = String(row[projCol]).trim();
-        if (pv) {
-          if (ev.projectsFromForm) {
-            if (!ev.projectsFromForm.toLowerCase().includes(pv.toLowerCase())) {
-              ev.projectsFromForm = ev.projectsFromForm + " · " + pv;
-            }
-          } else {
-            ev.projectsFromForm = pv;
-          }
-          const toks = String(ev.projectsFromForm || "")
-            .split(/\s*[·,，、]\s*/)
-            .map((x) => x.trim())
-            .filter(Boolean);
-          const firstTok = toks[0];
-          if (firstTok) {
-            const pid = projectIdByName(firstTok);
-            if (pid) ev.projectId = pid;
-            else delete ev.projectId;
-          }
-        }
-      }
-      const dk = eventImportDedupeKey(ev);
-      if (dk && !String(dk).startsWith("__badtime:") && importKeySeen.has(dk)) {
-        dupSkip++;
-        continue;
-      }
-      if (dk && !String(dk).startsWith("__badtime:")) importKeySeen.add(dk);
-      state.events.push(ev);
-      n++;
-    }
-    const afterPush = state.events.length;
-    dedupeStateEventsByImportKey();
-    const afterDedup = state.events.length;
-    const removedByDedup = afterPush - afterDedup;
-    save();
-    refreshActivityDatalist();
-    fillMergeSelects();
-    renderActivityList();
-    renderTimeline();
-    syncReportDatesFromEvents();
-    renderReport();
-    toast(
-      `已處理 ${rows.length} 行：新加入 ${n} 筆，略過格式 ${skip} 行，匯入階段重複 ${dupSkip} 筆；整庫合併再刪 ${removedByDedup} 筆，現共 ${afterDedup} 筆紀錄。`
-    );
-  });
-
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => {
       const tab = btn.getAttribute("data-tab");
@@ -3298,8 +3230,34 @@
         p.classList.toggle("hidden", p.getAttribute("data-panel") !== tab);
       });
       if (tab === "report") renderReport();
+      if (tab === "timeline") renderTimeline();
     });
   });
+
+  (function bindTimelineDatePicker() {
+    const pick = document.getElementById("timelinePickDate");
+    const recentBtn = document.getElementById("btnTimelineRecent");
+    if (pick) {
+      pick.addEventListener("change", () => {
+        const v = pick.value.trim();
+        if (!v) {
+          timelineCenterYmd = null;
+        } else {
+          const norm = parseYMDStrict(v);
+          timelineCenterYmd = norm || null;
+          if (!norm) pick.value = "";
+        }
+        renderTimeline();
+      });
+    }
+    if (recentBtn) {
+      recentBtn.addEventListener("click", () => {
+        timelineCenterYmd = null;
+        if (pick) pick.value = "";
+        renderTimeline();
+      });
+    }
+  })();
 
   /** Report 預設日期：曆月頭～曆月尾（`syncReportDatesFromEvents` 用）。 */
   function monthBoundsYMD(d) {
@@ -3821,6 +3779,12 @@
     const btn = document.getElementById("btnReportExport");
     if (!btn) return;
     btn.addEventListener("click", () => runReportDataExport());
+  })();
+
+  (function bindReportDataLimit() {
+    const el = document.getElementById("reportDataLimit");
+    if (!el) return;
+    el.addEventListener("change", () => renderReport());
   })();
 
   // Structure CSV 已移除；舊版 preview 元素唔再綁定。
