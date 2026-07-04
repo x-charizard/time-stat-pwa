@@ -58,3 +58,4 @@ git status
 優先序：Import 頁／localStorage → 同目錄 **config.remote.json**（專案已帶空嘅 config.remote.json，可改填 execUrl／token 再部署；勿將真 token commit 上公開 repo，或用净 app.js 兩個 DEFAULT）→ app.js 內 **REMOTE_SYNC_BASE_DEFAULT**／**REMOTE_SYNC_TOKEN_DEFAULT**（只自己 build 嘅副本可先填呢兩個常數）。
 
 開網會自動 fetch config.remote.json，再向 Apps Script 拉取 TimeStatDB；電腦同電話用**同一個公開 HTTPS 網址**就唔使逐台再撳 Import。
+Redeploying site
