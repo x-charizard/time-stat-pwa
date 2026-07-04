@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=127" />
+  <link rel="stylesheet" href="styles.css?v=128" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -96,9 +96,8 @@
   <section data-panel="timeline" class="hidden">
     <div class="card timeline-toolbar-card">
       <div class="timeline-toolbar">
-        <label for="timelinePickDate">日期</label>
-        <input type="date" id="timelinePickDate" class="input-xl" aria-label="Timeline center date" />
-        <button type="button" class="ghost timeline-recent-btn" id="btnTimelineRecent">最近三日</button>
+        <label for="timelinePickDate">Date</label>
+        <input type="date" id="timelinePickDate" class="input-xl" aria-label="Timeline date" />
       </div>
     </div>
     <div class="card timeline-cal-card">
@@ -160,15 +159,6 @@
         <div class="card report-main-stack">
           <div class="report-main-header report-main-header--actions-only">
             <div class="report-main-header-actions">
-              <label class="report-data-limit-label" for="reportDataLimit">Rows</label>
-              <select id="reportDataLimit" class="report-data-limit-select" aria-label="Data rows to show">
-                <option value="50">50</option>
-                <option value="100">100</option>
-                <option value="200">200</option>
-                <option value="400">400</option>
-                <option value="1000">1000</option>
-                <option value="all" selected>All</option>
-              </select>
               <button type="button" class="report-export-btn" id="btnReportExport" aria-label="Export Data CSV">Export</button>
               <div class="report-unit-toggle" id="reportUnitToggle" role="group" aria-label="Display Units">
                 <button type="button" class="report-unit-btn active" data-unit="hours">Hours</button>
@@ -184,6 +174,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=127"></script>
+  <script src="app.js?v=128"></script>
 </body>
 </html>
