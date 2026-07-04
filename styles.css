@@ -613,27 +613,6 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   text-align: center;
 }
 
-.mapping-context {
-  display: grid;
-  grid-template-columns: minmax(4.5rem, 0.85fr) minmax(0, 1.5fr);
-  gap: 6px 10px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border);
-}
-
-.mapping-context > div:nth-child(odd) {
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 600;
-  text-align: right;
-}
-
-.mapping-context > div:nth-child(even) {
-  text-align: center;
-  word-break: break-word;
-}
-
 #mappingApprovalCard h3 {
   font-size: 1.1rem;
   font-weight: 700;
