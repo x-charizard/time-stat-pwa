@@ -59,3 +59,4 @@ git status
 
 開網會自動 fetch config.remote.json，再向 Apps Script 拉取 TimeStatDB；電腦同電話用**同一個公開 HTTPS 網址**就唔使逐台再撳 Import。
 Redeploying site
+ 
