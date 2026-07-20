@@ -157,9 +157,34 @@
   let state = loadState();
   let reportPresetSuppress = false;
   let timelinePointerTipAbort = null;
-  /** @type {string|null} null = 預設最近三日；有值 = 以該日為中心顯示前一日／當日／後一日 */
+  /** Timeline 揀嘅日子（YYYY-MM-DD）；預設今日 */
   let timelineCenterYmd = null;
   const timelineBlockDetailMap = new WeakMap();
+  let _reportFiltersCachedGen = -1;
+  let _reportRenderScheduled = false;
+  let _historyInferCacheGen = -1;
+  const _historyInferCache = new Map();
+
+  const CLASSIFICATION_GROUP_OPTIONS = ["Work", "Rest"];
+  const CLASSIFICATION_LAYER_OPTIONS = ["Health", "Freedom", "Achievement"];
+  const CLASSIFICATION_CAT_OPTIONS = [
+    "Mental Health",
+    "Physical Health",
+    "Time",
+    "Finance",
+    "Time Management",
+    "Financial Management",
+    "Business",
+    "Art",
+  ];
+  const CLASSIFICATION_SUB_OPTIONS = [
+    "Long Term",
+    "Short Term",
+    "Project",
+    "non-project",
+    "Needs-Review",
+    "Xavier Li Photography",
+  ];
   let _eventsMutationGen = 0;
   let _sortedUniqueCachedGen = -1;
   let _sortedUniqueCache = null;
@@ -294,8 +319,30 @@
     return [...state.events].sort((a, b) => new Date(a.start) - new Date(b.start));
   }
 
+  function todayYmd() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return ymdFromLocalDate(d);
+  }
+
+  function yesterdayYmd() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 1);
+    return ymdFromLocalDate(d);
+  }
+
+  function initTimelineDatePicker() {
+    timelineCenterYmd = todayYmd();
+    const pick = document.getElementById("timelinePickDate");
+    if (pick) pick.value = timelineCenterYmd;
+  }
+
   function getTimelineDisplayDays() {
-    if (!timelineCenterYmd) {
+    const pick = timelineCenterYmd || todayYmd();
+    const today = todayYmd();
+    const yesterday = yesterdayYmd();
+    if (pick === today || pick === yesterday) {
       const out = [];
       for (let i = 2; i >= 0; i--) {
         const d = new Date();
@@ -305,9 +352,9 @@
       }
       return out;
     }
-    const anchor = parseYMDStrict(timelineCenterYmd);
+    const anchor = parseYMDStrict(pick);
     if (!anchor) {
-      timelineCenterYmd = null;
+      timelineCenterYmd = todayYmd();
       return getTimelineDisplayDays();
     }
     const [yy, mo, da] = anchor.split("-").map(Number);
@@ -623,9 +670,7 @@
     if (nowStatus) nowStatus.textContent = timelineNowStatusText();
     if (!asc.length) {
       empty.classList.remove("hidden");
-      empty.textContent = timelineCenterYmd
-        ? "No records for the selected 3-day window."
-        : "No records in the last 3 days.";
+      empty.textContent = "No records in the selected 3-day window.";
       return;
     }
     empty.classList.add("hidden");
@@ -792,61 +837,25 @@
     return hit ? hit.projectId : "";
   }
 
-  function allKnownProjectSources() {
-    const seen = new Set();
-    const out = [];
-    const add = (project, projectId) => {
-      const p = reportNormLabel(project);
-      if (!p) return;
-      const key = p.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      out.push({ project: p, projectId: reportNormLabel(projectId) || projectIdByName(p) });
-    };
-    const reg = Array.isArray(state.projectsRegistry) ? state.projectsRegistry : [];
-    for (let i = 0; i < reg.length; i++) add(reg[i].project, reg[i].projectId);
-    for (const p of uniqueProjectsSorted()) add(p, projectIdByName(p));
-    return out;
-  }
-
   function suggestProjectsFromText(activityLabel, remark) {
     const remarkLow = reportNormLabel(remark).toLowerCase();
-    const actLow = reportNormLabel(activityLabel).toLowerCase();
-    const combined = (actLow + " " + remarkLow).trim();
-    if (!remarkLow && !actLow) return [];
-    const sources = allKnownProjectSources();
+    if (!remarkLow) return [];
+    const reg = Array.isArray(state.projectsRegistry) ? state.projectsRegistry : [];
     const hits = [];
     const seen = new Set();
-    const remarkWords = remarkLow.split(/[\s,，、·]+/).filter((w) => w.length >= 3);
-    for (let i = 0; i < sources.length; i++) {
-      const p = sources[i].project;
+    for (let i = 0; i < reg.length; i++) {
+      const p = reportNormLabel(reg[i].project);
       const pl = p.toLowerCase();
-      if (!pl || seen.has(pl)) continue;
-      let matched = false;
-      if (remarkLow && (remarkLow.includes(pl) || pl.includes(remarkLow))) matched = true;
-      if (!matched && combined && combined.includes(pl)) matched = true;
-      if (!matched && remarkWords.some((w) => pl.includes(w) || w.includes(pl))) matched = true;
-      if (!matched && remarkLow.length >= 3) {
-        const firstTok = pl.split(/[\s,，、·]+/)[0];
-        if (firstTok && (remarkLow === firstTok || remarkLow.startsWith(firstTok) || firstTok.startsWith(remarkLow))) {
-          matched = true;
-        }
-      }
-      if (matched) {
+      if (!p || seen.has(pl)) continue;
+      if (remarkLow.includes(pl) || pl === remarkLow) {
         seen.add(pl);
-        hits.push(sources[i]);
+        hits.push({
+          project: p,
+          projectId: reportNormLabel(reg[i].projectId) || projectIdByName(p),
+        });
       }
     }
-    if (!hits.length && remarkLow.length >= 3) {
-      const looksNamed =
-        /(namaste|indonesia|dantian|順流道|time stat|15m|project|deadline|milestone)/i.test(remarkLow) ||
-        remarkWords.some((w) => w.length >= 4);
-      if (looksNamed) {
-        const titled = remark.trim();
-        hits.push({ project: titled, projectId: projectIdByName(titled) });
-      }
-    }
-    return hits.slice(0, 3);
+    return hits.slice(0, 2);
   }
 
   /** Transporting：按 vault 規則用「下一筆非 Transporting activity」推斷層／類（記錄當下後驗）。 */
@@ -879,7 +888,6 @@
   }
 
   function buildMappingCandidates(activityLabel, remark, evStartIso) {
-    const out = [];
     const suggested = suggestProjectsFromText(activityLabel, remark);
     let inferred = inferByHistoryOrHeuristic(activityLabel);
     const actKey = normalizeActivityKey(activityLabel);
@@ -888,7 +896,6 @@
       inferred = { group: inferred.group, layer: tr.layer, cat: tr.cat };
     }
     const text = (String(activityLabel || "") + " " + String(remark || "")).toLowerCase();
-    const looksProject = /(project|deadline|milestone|namaste|indonesia|15m|time stat|dantian|順流道)/.test(text);
     const inferSubByRules = (layer, hasProjectSignal) => {
       const layerN = reportNormLabel(layer).toLowerCase();
       if (layerN === "health") {
@@ -901,65 +908,48 @@
       if (layerN === "freedom") {
         return hasProjectSignal ? "Project" : "non-project";
       }
-      return hasProjectSignal ? "Project" : "";
+      return hasProjectSignal ? "Project" : "non-project";
     };
-    const g0 = inferred.group;
-    const l0 = inferred.layer;
-    const c0 = inferred.cat;
-    if (suggested.length) {
-      const sp = suggested[0];
-      out.push({
-        label: "建議 1（由 Activity/Remark 推斷）",
-        group: g0,
-        layer: "Freedom",
-        cat: "",
-        subCat: inferSubByRules("Freedom", true),
-        activity: activityLabel,
-        project: sp.project,
-        projectId: sp.projectId || projectIdByName(sp.project),
-      });
-      out.push({
-        label: "建議 2（同 activity 但非 project）",
-        group: g0,
-        layer: l0,
-        cat: c0,
-        subCat: inferSubByRules(l0, false),
-        activity: activityLabel,
-        project: "",
-        projectId: "",
-      });
-    } else {
-      out.push({
-        label: looksProject ? "建議 1（由 Remark 推斷）" : "建議 1（歷史/預設）",
-        group: g0,
-        layer: l0,
-        cat: c0,
-        subCat: inferSubByRules(l0, looksProject),
-        activity: activityLabel,
-        project: "",
-        projectId: "",
-      });
-      out.push({
-        label: "建議 2（保守）",
-        group: g0,
-        layer: l0,
-        cat: c0,
-        subCat: inferSubByRules(l0, false),
-        activity: activityLabel,
-        project: "",
-        projectId: "",
-      });
-    }
-    const dedup = [];
-    const seen = new Set();
-    for (let i = 0; i < out.length; i++) {
-      const c = out[i];
-      const key = [c.group, c.layer, c.cat, c.subCat, c.activity, c.project, c.projectId].join("|");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      dedup.push(c);
-    }
-    return dedup.slice(0, 3);
+    const g0 = inferred.group || "Rest";
+    const l0 = inferred.layer || "Health";
+    const c0 = inferred.cat || "Mental Health";
+    const hasProj = suggested.length > 0;
+    const sp = hasProj ? suggested[0] : null;
+
+    const cand1 = hasProj
+      ? {
+          label: "Suggestion 1",
+          group: g0,
+          layer: "Freedom",
+          cat: "Time",
+          subCat: "Project",
+          activity: activityLabel,
+          project: sp.project,
+          projectId: sp.projectId || projectIdByName(sp.project),
+        }
+      : {
+          label: "Suggestion 1",
+          group: g0,
+          layer: l0,
+          cat: c0,
+          subCat: inferSubByRules(l0, false),
+          activity: activityLabel,
+          project: "",
+          projectId: "",
+        };
+
+    const cand2 = {
+      label: "Suggestion 2",
+      group: g0,
+      layer: l0,
+      cat: c0,
+      subCat: "non-project",
+      activity: activityLabel,
+      project: "",
+      projectId: "",
+    };
+
+    return [cand1, cand2];
   }
 
   function inferByHistoryOrHeuristic(activityLabel) {
@@ -1077,12 +1067,13 @@
     const pid = String(ev.projectId || "").trim();
     if (form || pid) {
       if (eventProjectLinksProjectsRegistry(ev)) return "Project";
-      return "Project";
+      return "non-project";
     }
     const sug = suggestProjectsFromText(activityLabel, String(remark || ""));
     if (!sug.length) return "non-project";
-    if (sug.length === 1) return "Project";
-    return "Needs-Review";
+    const probe = { projectsFromForm: sug[0].project, projectId: sug[0].projectId || "" };
+    if (eventProjectLinksProjectsRegistry(probe)) return "Project";
+    return "non-project";
   }
 
   function inferRulesLayerCatExcludeTransporting(ev) {
@@ -1264,6 +1255,15 @@
     refreshManualAutoSuggestions();
   }
 
+  function scheduleRenderReport() {
+    if (_reportRenderScheduled) return;
+    _reportRenderScheduled = true;
+    requestAnimationFrame(() => {
+      _reportRenderScheduled = false;
+      renderReport();
+    });
+  }
+
   function pushEventAndRefresh(ev, msg, opts) {
     const silent = opts && opts.silent;
     const formSource = opts && opts.formSource;
@@ -1271,19 +1271,21 @@
     bumpEventsMutationGen();
     save();
     refreshActivityDatalist();
-    refreshProjectPickers();
-    fillMergeSelects();
     renderTimeline();
-    renderReport();
     if (silent) {
       if (formSource === "manual") clearManualLogForm();
       else if (formSource === "quick") clearQuickLogForm();
+      window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
       refreshQuickAutoSuggestions();
       refreshManualAutoSuggestions();
       updateLastSavedHint(ev);
       toast(`${msg} · 總筆數 ${state.events.length}`);
     }
+    requestAnimationFrame(() => {
+      fillMergeSelects();
+      scheduleRenderReport();
+    });
   }
 
   function updateLastSavedHint(ev) {
@@ -1313,60 +1315,44 @@
     const list = document.getElementById("mappingApprovalList");
     const meta = document.getElementById("mappingApprovalMeta");
     if (!card || !list || !meta) return;
-    meta.textContent = "";
+    const place = String(payload.ev.place || "").trim() || "—";
+    const withStr =
+      payload.ev.people && payload.ev.people.length ? payload.ev.people.join(", ") : "—";
+    const remarkDisp = String(payload.remark || payload.ev.remark || "").trim() || "—";
+    meta.innerHTML =
+      `<div class="mapping-context">` +
+      `<div>Place</div><div>${escapeHtml(place)}</div>` +
+      `<div>With</div><div>${escapeHtml(withStr)}</div>` +
+      `<div>Remark</div><div>${escapeHtml(remarkDisp)}</div>` +
+      `</div>`;
     list.innerHTML = "";
+    const projectOpts = uniqueProjectsSorted();
+    const mkSel = (id, options, selected, allowBlank) => {
+      let h = `<select id="${id}" class="mapping-edit-select">`;
+      if (allowBlank) h += `<option value="">blank</option>`;
+      for (let i = 0; i < options.length; i++) {
+        const v = options[i];
+        const sel = v === selected ? " selected" : "";
+        h += `<option value="${escapeHtml(v)}"${sel}>${escapeHtml(v)}</option>`;
+      }
+      h += `</select>`;
+      return h;
+    };
     payload.candidates.forEach((c) => {
       const row = document.createElement("div");
       row.className = "mapping-suggestion";
       const editableId = uid();
-      const groupOpts = reportUniqueSorted([
-        ...groupsForReport(),
-        "Work",
-        "Rest",
-      ]);
-      const layerOpts = reportUniqueSorted([
-        ...layersForReport(),
-        "Health",
-        "Freedom",
-        "Achievement",
-      ]);
-      const catOpts = reportUniqueSorted([
-        ...catsForReport(),
-        "Mental Health",
-        "Physical Health",
-        "Time",
-        "Finance",
-        "Time Management",
-        "Financial Management",
-      ]);
-      const subOpts = reportUniqueSorted([
-        ...subsForReport(),
-        "Long Term",
-        "Short Term",
-        "Project",
-        "non-project",
-      ]);
-      const projectOpts = reportUniqueSorted([...uniqueProjectsSorted(), c.project, c.projectId].filter(Boolean));
-      const mkSel = (id, options, selected, withEmpty) => {
-        let h = `<select id="${id}" class="mapping-edit-select">`;
-        if (withEmpty) h += `<option value="">blank</option>`;
-        for (let i = 0; i < options.length; i++) {
-          const v = options[i];
-          const sel = v === selected ? ' selected' : "";
-          h += `<option value="${escapeHtml(v)}"${sel}>${escapeHtml(v)}</option>`;
-        }
-        h += `</select>`;
-        return h;
-      };
+      const catSelected = normalizeCatDisplayForRaw(c.cat) || c.cat || CLASSIFICATION_CAT_OPTIONS[0];
+      const projOpts = reportUniqueSorted([...projectOpts, c.project].filter(Boolean));
       row.innerHTML =
         `<h4 class="mapping-suggestion-title">${escapeHtml(c.label || "Suggestion")}</h4>` +
         `<div class="mapping-grid">` +
-        `<div>Group</div><div>${mkSel(`map-g-${editableId}`, groupOpts, c.group || "", true)}</div>` +
-        `<div>Layers</div><div>${mkSel(`map-l-${editableId}`, layerOpts, c.layer || "", true)}</div>` +
-        `<div>Cat</div><div>${mkSel(`map-c-${editableId}`, catOpts, c.cat || "", true)}</div>` +
-        `<div>Sub Cat</div><div>${mkSel(`map-s-${editableId}`, subOpts, c.subCat || "", true)}</div>` +
+        `<div>Group</div><div>${mkSel(`map-g-${editableId}`, CLASSIFICATION_GROUP_OPTIONS, c.group || CLASSIFICATION_GROUP_OPTIONS[0], false)}</div>` +
+        `<div>Layers</div><div>${mkSel(`map-l-${editableId}`, CLASSIFICATION_LAYER_OPTIONS, c.layer || CLASSIFICATION_LAYER_OPTIONS[0], false)}</div>` +
+        `<div>Cat</div><div>${mkSel(`map-c-${editableId}`, CLASSIFICATION_CAT_OPTIONS, catSelected, false)}</div>` +
+        `<div>Sub Cat</div><div>${mkSel(`map-s-${editableId}`, CLASSIFICATION_SUB_OPTIONS, c.subCat || CLASSIFICATION_SUB_OPTIONS[0], false)}</div>` +
         `<div>Activity</div><div>${escapeHtml(c.activity || "—")}</div>` +
-        `<div>Project</div><div>${mkSel(`map-p-${editableId}`, projectOpts, c.project || "", true)}</div>` +
+        `<div>Project</div><div>${mkSel(`map-p-${editableId}`, projOpts, c.project || "", true)}</div>` +
         `</div>`;
       const btn = document.createElement("button");
       btn.type = "button";
@@ -1411,9 +1397,7 @@
       list.appendChild(row);
     });
     card.classList.remove("hidden");
-    setTimeout(() => {
-      card.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   document.getElementById("btnLogNow").addEventListener("click", () => {
@@ -1919,14 +1903,30 @@
 
   let reportPeopleSearchTimer = null;
   let reportKeywordSearchTimer = null;
-  function getReportRawRecordCap(totalRows) {
-    const el = document.getElementById("reportDataLimit");
-    if (!el) return totalRows;
-    const v = String(el.value || "all").trim().toLowerCase();
-    if (v === "all" || v === "") return totalRows;
-    const n = parseInt(v, 10);
-    if (!Number.isFinite(n) || n <= 0) return totalRows;
-    return n;
+
+  function buildReportMappingContext(list) {
+    const nextMap = chronologicalNextById(list);
+    const inferred = new Map();
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const nextEv = nextMap.get(ev.id) || null;
+      const m = inferTimeStatMappingForRaw(ev, nextEv);
+      const catRaw = String(m.cat || "").trim();
+      const catDisp = normalizeCatDisplayForRaw(catRaw) || catRaw;
+      inferred.set(ev.id, {
+        group: reportNormLabel(m.group),
+        layer: reportNormLabel(m.layer),
+        cat: reportNormLabel(catDisp),
+        subCat: reportNormLabel(m.subCat),
+      });
+    }
+    return { nextMap, inferred };
+  }
+
+  function refreshReportFilterSelectsIfNeeded() {
+    if (_reportFiltersCachedGen === _eventsMutationGen) return;
+    _reportFiltersCachedGen = _eventsMutationGen;
+    refreshReportFilterSelects();
   }
 
   function reportNormLabel(s) {
@@ -2510,11 +2510,12 @@
     return toYmd || fromYmd || ymdFromLocalDate(new Date());
   }
 
-  function aggregateReportForRange(fromYmd, toYmd, list, f, showByDay) {
+  function aggregateReportForRange(fromYmd, toYmd, list, f, showByDay, ctxOpt) {
     if (!fromYmd || !toYmd) return null;
     const t0 = new Date(fromYmd + "T00:00:00").getTime();
     const t1 = new Date(toYmd + "T23:59:59.999").getTime();
     if (Number.isNaN(t0) || Number.isNaN(t1) || t0 > t1) return null;
+    const ctx = ctxOpt || buildReportMappingContext(list);
     const rawSegmentRows = [];
     const byEnt = {};
     const byGroup = {};
@@ -2536,12 +2537,12 @@
       segmentsKept++;
       rawSegmentRows.push({ ev, ms });
       byEnt[ev.activityId] = (byEnt[ev.activityId] || 0) + ms;
-      const inf = reportInferredMapping(ev, list);
+      const inf = ctx.inferred.get(ev.id) || reportInferredMapping(ev, list);
       const g = inf.group || "\uff08\u672a\u6a19 Group\uff09";
       const ly = inf.layer || "\u2014";
       byGroup[g] = (byGroup[g] || 0) + ms;
       byLayer[ly] = (byLayer[ly] || 0) + ms;
-      const pj = reportNormLabel(ev.projectsFromForm || "") || "\uff08\u7a7a\uff0f\u672a\u914d Project\uff09";
+      const pj = reportNormLabel(ev.projectsFromForm || "") || "blank";
       const cj = inf.cat || "\uff08\u7a7a\uff0f\u672a\u914d Cat\uff09";
       const sj = inf.subCat || "\uff08\u7a7a\uff0f\u672a\u914d Sub\uff09";
       byProject[pj] = (byProject[pj] || 0) + ms;
@@ -2923,7 +2924,7 @@
   }
 
   function renderReport() {
-    refreshReportFilterSelects();
+    refreshReportFilterSelectsIfNeeded();
     const presetElR = document.getElementById("reportPeriodPreset");
     const preset = (presetElR && presetElR.value) || "custom";
     if (!reportPresetSuppress && preset !== "custom") applyReportPeriodPreset();
@@ -2947,6 +2948,7 @@
     }
     const f = readReportFilters();
     const list = sortedEventsUniqueById();
+    const reportCtx = buildReportMappingContext(list);
     const reportUnitMode = readReportUnitMode();
 
     const renderFilterMismatch = () => {
@@ -2980,9 +2982,9 @@
         });
       }
       const ag = [
-        aggregateReportForRange(slices.ranges[0].from, slices.ranges[0].to, list, f, false),
-        aggregateReportForRange(slices.ranges[1].from, slices.ranges[1].to, list, f, false),
-        aggregateReportForRange(slices.ranges[2].from, slices.ranges[2].to, list, f, false),
+        aggregateReportForRange(slices.ranges[0].from, slices.ranges[0].to, list, f, false, reportCtx),
+        aggregateReportForRange(slices.ranges[1].from, slices.ranges[1].to, list, f, false, reportCtx),
+        aggregateReportForRange(slices.ranges[2].from, slices.ranges[2].to, list, f, false, reportCtx),
       ];
       if (ag[0] === null || ag[1] === null || ag[2] === null) {
         box.innerHTML = `<p class="muted">Invalid Time Windows.</p>`;
@@ -3086,7 +3088,7 @@
       return;
     }
 
-    const agg = aggregateReportForRange(from, to, list, f, showByDay);
+    const agg = aggregateReportForRange(from, to, list, f, showByDay, reportCtx);
     if (agg.segmentsInRange === 0) {
       box.innerHTML = `<p class="muted">No Billable Segments In This Range.</p>`;
       return;
@@ -3175,26 +3177,22 @@
     html += tbl("People", byPerson);
 
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
-    const cap = getReportRawRecordCap(sortedRaw.length);
-    const sliceRaw = sortedRaw.slice(0, cap);
-    const nextGlobal = chronologicalNextById(list);
     html += `<h2 class="report-h">Data</h2>`;
 
     html += `<div class="report-records-wrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
-    for (let ri = 0; ri < sliceRaw.length; ri++) {
-      const row = sliceRaw[ri];
+    for (let ri = 0; ri < sortedRaw.length; ri++) {
+      const row = sortedRaw[ri];
       const ev = row.ev;
       const ms = row.ms;
       const startStr = ymdHmFromEventStart(ev.start);
       const durStr = durationMinutesLabel(ms);
-      const nextEv = nextGlobal.get(ev.id) || null;
-      const mapped = inferTimeStatMappingForRaw(ev, nextEv);
-      const g = String(mapped.group || "").trim() || "\u2014";
-      const ly = String(mapped.layer || "").trim() || "\u2014";
-      const cj = normalizeCatDisplayForRaw(String(mapped.cat || "").trim()) || "\u2014";
-      const sj = String(mapped.subCat || "").trim() || "\u2014";
+      const mapped = reportCtx.inferred.get(ev.id);
+      const g = mapped ? String(mapped.group || "").trim() || "\u2014" : "\u2014";
+      const ly = mapped ? String(mapped.layer || "").trim() || "\u2014" : "\u2014";
+      const cj = mapped ? String(mapped.cat || "").trim() || "\u2014" : "\u2014";
+      const sj = mapped ? String(mapped.subCat || "").trim() || "\u2014" : "\u2014";
       const act = activityDisplayName(ev.activityId);
-      const pj = displayProjectForRawRecord(ev).trim() || "\u2014";
+      const pj = displayProjectForRawRecord(ev).trim() || "blank";
       const place = String(ev.place || "").trim() || "\u2014";
       const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
       const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
@@ -3204,9 +3202,6 @@
         `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
     }
     html += `</tbody></table></div>`;
-    if (sortedRaw.length > cap) {
-      html += `<p class="muted" style="margin-top:6px;">Showing first ${cap} of ${sortedRaw.length} rows (chronological).</p>`;
-    }
 
     box.innerHTML = html;
     } finally {
@@ -3223,6 +3218,7 @@
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => {
       const tab = btn.getAttribute("data-tab");
+      hideTimelineTip();
       document.querySelectorAll(".tabs button").forEach((b) => {
         b.classList.toggle("active", b === btn);
       });
@@ -3236,24 +3232,12 @@
 
   (function bindTimelineDatePicker() {
     const pick = document.getElementById("timelinePickDate");
-    const recentBtn = document.getElementById("btnTimelineRecent");
     if (pick) {
       pick.addEventListener("change", () => {
         const v = pick.value.trim();
-        if (!v) {
-          timelineCenterYmd = null;
-        } else {
-          const norm = parseYMDStrict(v);
-          timelineCenterYmd = norm || null;
-          if (!norm) pick.value = "";
-        }
-        renderTimeline();
-      });
-    }
-    if (recentBtn) {
-      recentBtn.addEventListener("click", () => {
-        timelineCenterYmd = null;
-        if (pick) pick.value = "";
+        const norm = v ? parseYMDStrict(v) : null;
+        timelineCenterYmd = norm || todayYmd();
+        if (v && !norm) pick.value = timelineCenterYmd;
         renderTimeline();
       });
     }
@@ -3676,6 +3660,7 @@
   refreshQuickAutoSuggestions();
   fillMergeSelects();
   renderActivityList();
+  initTimelineDatePicker();
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
@@ -3779,12 +3764,6 @@
     const btn = document.getElementById("btnReportExport");
     if (!btn) return;
     btn.addEventListener("click", () => runReportDataExport());
-  })();
-
-  (function bindReportDataLimit() {
-    const el = document.getElementById("reportDataLimit");
-    if (!el) return;
-    el.addEventListener("change", () => renderReport());
   })();
 
   // Structure CSV 已移除；舊版 preview 元素唔再綁定。
