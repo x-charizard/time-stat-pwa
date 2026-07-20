@@ -447,8 +447,10 @@ select.select-xl {
   height: 220px;
   overflow-y: auto;
   overflow-x: hidden;
-  scroll-snap-type: y mandatory;
+  scroll-snap-type: y proximity;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   z-index: 1;
 }
 .manual-wheel-list {
@@ -461,8 +463,10 @@ select.select-xl {
   font-size: 22px;
   font-variant-numeric: tabular-nums;
   scroll-snap-align: center;
-  scroll-snap-stop: always;
+  scroll-snap-stop: normal;
   color: var(--text);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 /* 後補日期：大掣（唔用 select） */

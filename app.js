@@ -1264,6 +1264,22 @@
     });
   }
 
+  function scrollPageToTopInstant() {
+    try {
+      const html = document.documentElement;
+      const prev = html.style.scrollBehavior;
+      html.style.scrollBehavior = "auto";
+      window.scrollTo(0, 0);
+      html.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+      html.style.scrollBehavior = prev || "";
+    } catch (e) {
+      try {
+        window.scrollTo(0, 0);
+      } catch (e2) {}
+    }
+  }
+
   function pushEventAndRefresh(ev, msg, opts) {
     const silent = opts && opts.silent;
     const formSource = opts && opts.formSource;
@@ -1275,7 +1291,11 @@
     if (silent) {
       if (formSource === "manual") clearManualLogForm();
       else if (formSource === "quick") clearQuickLogForm();
-      window.scrollTo({ top: 0, behavior: "smooth" });
+      // 等高度收合完先即時回頂；避免 smooth scroll + 內容縮短喺 iOS 造成半邊黑屏
+      requestAnimationFrame(() => {
+        scrollPageToTopInstant();
+        requestAnimationFrame(scrollPageToTopInstant);
+      });
     } else {
       refreshQuickAutoSuggestions();
       refreshManualAutoSuggestions();
@@ -3368,26 +3388,85 @@
     }
   }
 
-  function finalizeWheelScroll(viewport, hiddenInput, modulus) {
+  function readWheelValue(viewport, modulus) {
     const itemH = WHEEL_ITEM_H;
     let idx = Math.round(viewport.scrollTop / itemH);
-    if (idx < modulus) viewport.scrollTop += modulus * itemH;
-    else if (idx >= modulus * 2) viewport.scrollTop -= modulus * itemH;
-    idx = Math.round(viewport.scrollTop / itemH);
-    const v = ((idx % modulus) + modulus) % modulus;
+    return ((idx % modulus) + modulus) % modulus;
+  }
+
+  function wrapWheelIfNeeded(viewport, modulus) {
+    const itemH = WHEEL_ITEM_H;
+    let idx = Math.round(viewport.scrollTop / itemH);
+    if (idx < modulus) {
+      viewport.scrollTop = (idx + modulus) * itemH;
+    } else if (idx >= modulus * 2) {
+      viewport.scrollTop = (idx - modulus) * itemH;
+    }
+  }
+
+  function finalizeWheelScroll(viewport, hiddenInput, modulus, allowWrap) {
+    if (allowWrap) wrapWheelIfNeeded(viewport, modulus);
+    const v = readWheelValue(viewport, modulus);
     hiddenInput.value = String(v).padStart(2, "0");
     updateManualTimeSummary();
   }
 
   function attachWheel(viewport, hiddenInput, modulus) {
-    let debounceT;
-    function schedule() {
+    let debounceT = null;
+    let touching = false;
+    let wrapping = false;
+
+    function settle(forceWrap) {
+      if (wrapping) return;
       clearTimeout(debounceT);
-      debounceT = setTimeout(() => finalizeWheelScroll(viewport, hiddenInput, modulus), 90);
+      debounceT = setTimeout(() => {
+        if (touching && !forceWrap) return;
+        wrapping = true;
+        finalizeWheelScroll(viewport, hiddenInput, modulus, true);
+        wrapping = false;
+      }, forceWrap ? 16 : 140);
     }
-    viewport.addEventListener("scroll", schedule, { passive: true });
-    viewport.addEventListener("touchend", () => setTimeout(() => finalizeWheelScroll(viewport, hiddenInput, modulus), 150));
-    viewport.addEventListener("scrollend", () => finalizeWheelScroll(viewport, hiddenInput, modulus));
+
+    viewport.addEventListener(
+      "scroll",
+      () => {
+        if (wrapping) return;
+        // 轉動中只更新顯示，唔跳 wrap，避免打斷慣性
+        const v = readWheelValue(viewport, modulus);
+        hiddenInput.value = String(v).padStart(2, "0");
+        updateManualTimeSummary();
+        settle(false);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener(
+      "touchstart",
+      () => {
+        touching = true;
+        clearTimeout(debounceT);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener(
+      "touchend",
+      () => {
+        touching = false;
+        settle(true);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener(
+      "touchcancel",
+      () => {
+        touching = false;
+        settle(true);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener("scrollend", () => {
+      touching = false;
+      settle(true);
+    });
   }
 
   function setWheelToValue(viewport, hiddenInput, modulus, valNum) {
@@ -3396,7 +3475,7 @@
     viewport.scrollTop = idx * WHEEL_ITEM_H;
     hiddenInput.value = String(v).padStart(2, "0");
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => finalizeWheelScroll(viewport, hiddenInput, modulus));
+      requestAnimationFrame(() => finalizeWheelScroll(viewport, hiddenInput, modulus, true));
     });
   }
 
