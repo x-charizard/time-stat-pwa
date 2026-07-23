@@ -42,7 +42,8 @@
    * 留空則只靠 localStorage／下面 config.remote.json／Import 頁。
    */
   const REMOTE_SYNC_BASE_DEFAULT = "https://script.google.com/macros/s/AKfycbxoMoig6kFTBXWw0mdnKKjM6ELqzjXb4F1xBtYnw5kLHpeHo8C2-dgIxQIBddtV73SCmQ/exec";
-  const REMOTE_SYNC_TOKEN_DEFAULT = "Xa57317748!";
+  /** @deprecated 已改用 Google Sign-In；唔好再 bake API token */
+  const REMOTE_SYNC_TOKEN_DEFAULT = "";
 
   function getRemoteSyncBase() {
     const baked = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
