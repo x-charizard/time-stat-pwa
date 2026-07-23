@@ -1,7 +1,7 @@
 {
   "name": "Time Log",
   "short_name": "Time Log",
-  "description": "Local time log and CSV import",
+  "description": "Local time log PWA",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0f1115",

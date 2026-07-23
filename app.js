@@ -1,6 +1,5 @@
 (function () {
   const STORAGE_KEY = "time-stat-state-v1";
-  const REQUIRED_PROJECTS_CSV_NAME = "Time stat V2 - Projects.csv";
   const DAY_MS = 86400000;
   const MIN_TIMELINE_MS = 30 * 60000;
   /** Report Activity filter：選項來自最近 N 個曆日（含今日）有出現過嘅紀錄。 */
@@ -159,7 +158,34 @@
   let state = loadState();
   let reportPresetSuppress = false;
   let timelinePointerTipAbort = null;
+  /** Timeline 揀嘅日子（YYYY-MM-DD）；預設今日 */
+  let timelineCenterYmd = null;
   const timelineBlockDetailMap = new WeakMap();
+  let _reportFiltersCachedGen = -1;
+  let _reportRenderScheduled = false;
+  let _historyInferCacheGen = -1;
+  const _historyInferCache = new Map();
+
+  const CLASSIFICATION_GROUP_OPTIONS = ["Work", "Rest"];
+  const CLASSIFICATION_LAYER_OPTIONS = ["Health", "Freedom", "Achievement"];
+  const CLASSIFICATION_CAT_OPTIONS = [
+    "Mental Health",
+    "Physical Health",
+    "Time",
+    "Finance",
+    "Time Management",
+    "Financial Management",
+    "Business",
+    "Art",
+  ];
+  const CLASSIFICATION_SUB_OPTIONS = [
+    "Long Term",
+    "Short Term",
+    "Project",
+    "non-project",
+    "Needs-Review",
+    "Xavier Li Photography",
+  ];
   let _eventsMutationGen = 0;
   let _sortedUniqueCachedGen = -1;
   let _sortedUniqueCache = null;
@@ -294,18 +320,66 @@
     return [...state.events].sort((a, b) => new Date(a.start) - new Date(b.start));
   }
 
-  /** 時間軸：最近三個曆日（今日、昨日、前日）由當地 0:00 起計 */
-  function timelineThreeDayCutoffMs() {
-    const t = new Date();
-    t.setHours(0, 0, 0, 0);
-    t.setDate(t.getDate() - 2);
-    return t.getTime();
+  function todayYmd() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return ymdFromLocalDate(d);
+  }
+
+  function yesterdayYmd() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    d.setDate(d.getDate() - 1);
+    return ymdFromLocalDate(d);
+  }
+
+  function initTimelineDatePicker() {
+    timelineCenterYmd = todayYmd();
+    const pick = document.getElementById("timelinePickDate");
+    if (pick) pick.value = timelineCenterYmd;
+  }
+
+  function getTimelineDisplayDays() {
+    const pick = timelineCenterYmd || todayYmd();
+    const today = todayYmd();
+    const yesterday = yesterdayYmd();
+    if (pick === today || pick === yesterday) {
+      const out = [];
+      for (let i = 2; i >= 0; i--) {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() - i);
+        out.push({ date: d, ymd: ymdFromLocalDate(d) });
+      }
+      return out;
+    }
+    const anchor = parseYMDStrict(pick);
+    if (!anchor) {
+      timelineCenterYmd = todayYmd();
+      return getTimelineDisplayDays();
+    }
+    const [yy, mo, da] = anchor.split("-").map(Number);
+    const out = [];
+    for (let off = -1; off <= 1; off++) {
+      const d = new Date(yy, mo - 1, da);
+      d.setHours(0, 0, 0, 0);
+      d.setDate(d.getDate() + off);
+      out.push({ date: d, ymd: ymdFromLocalDate(d) });
+    }
+    return out;
+  }
+
+  /** 時間軸可視三日欄最早一日 0:00（用於篩選跨日段） */
+  function timelineViewCutoffMs() {
+    const cols = getTimelineDisplayDays();
+    if (!cols.length) return Date.now();
+    return ymdDayBounds(cols[0].ymd).start;
   }
 
   /** 時間軸用：三日欄任何一刻有用到嘅紀錄（包含「開始喺視窗外但段尾跌入視窗」——跨日凌晨）。 */
   function timelineEventsAscending(fullAscOpt) {
     const fullAsc = fullAscOpt || sortedEventsUniqueById();
-    const cutoff = timelineThreeDayCutoffMs();
+    const cutoff = timelineViewCutoffMs();
     return fullAsc.filter((ev) => {
       const t0 = new Date(ev.start).getTime();
       if (Number.isNaN(t0)) return false;
@@ -597,17 +671,12 @@
     if (nowStatus) nowStatus.textContent = timelineNowStatusText();
     if (!asc.length) {
       empty.classList.remove("hidden");
+      empty.textContent = "No records in the selected 3-day window.";
       return;
     }
     empty.classList.add("hidden");
 
-    const columns = [];
-    for (let i = 2; i >= 0; i--) {
-      const d = new Date();
-      d.setHours(0, 0, 0, 0);
-      d.setDate(d.getDate() - i);
-      columns.push({ date: d, ymd: ymdFromLocalDate(d) });
-    }
+    const columns = getTimelineDisplayDays();
 
     const wk = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const inner = document.createElement("div");
@@ -770,28 +839,64 @@
   }
 
   function suggestProjectsFromText(activityLabel, remark) {
-    const text = reportNormLabel(activityLabel + " " + (remark || "")).toLowerCase();
-    if (!text) return [];
+    const remarkLow = reportNormLabel(remark).toLowerCase();
+    if (!remarkLow) return [];
     const reg = Array.isArray(state.projectsRegistry) ? state.projectsRegistry : [];
     const hits = [];
+    const seen = new Set();
     for (let i = 0; i < reg.length; i++) {
       const p = reportNormLabel(reg[i].project);
-      const pid = reportNormLabel(reg[i].projectId);
-      if (!p) continue;
       const pl = p.toLowerCase();
-      if (text.includes(pl) || pl.includes(text)) {
-        hits.push({ project: p, projectId: pid });
+      if (!p || seen.has(pl)) continue;
+      if (remarkLow.includes(pl) || pl === remarkLow) {
+        seen.add(pl);
+        hits.push({
+          project: p,
+          projectId: reportNormLabel(reg[i].projectId) || projectIdByName(p),
+        });
       }
     }
     return hits.slice(0, 2);
   }
 
-  function buildMappingCandidates(activityLabel, remark) {
-    const out = [];
+  /** Transporting：按 vault 規則用「下一筆非 Transporting activity」推斷層／類（記錄當下後驗）。 */
+  function inferTransportingLayerCatFromNext(evStartIso) {
+    const asc = sortedEventsUniqueById();
+    const t0 = new Date(evStartIso).getTime();
+    if (Number.isNaN(t0)) return { layer: "Freedom", cat: "Time" };
+    const nextMap = chronologicalNextById(asc);
+    let follow = null;
+    for (let i = 0; i < asc.length; i++) {
+      if (new Date(asc[i].start).getTime() > t0) {
+        follow = asc[i];
+        break;
+      }
+    }
+    let hops = 0;
+    while (follow && hops < 8) {
+      const fk = normalizeActivityKey(activityDisplayName(follow.activityId));
+      if (fk !== "transporting") break;
+      follow = nextMap.get(follow.id) || null;
+      hops++;
+    }
+    if (!follow) return { layer: "Freedom", cat: "Time" };
+    const nb = inferRulesLayerCatExcludeTransporting(follow);
+    const nl = (nb.layer || "").trim().toLowerCase();
+    if (nl === "health") return { layer: "Health", cat: nb.cat || "Mental Health" };
+    const nbLayerLow = (nb.layer || "").toLowerCase();
+    const cat = nb.cat && nb.cat !== "Needs-Review" && nbLayerLow !== "needs-review" ? nb.cat : "Time";
+    return { layer: "Freedom", cat: cat };
+  }
+
+  function buildMappingCandidates(activityLabel, remark, evStartIso) {
     const suggested = suggestProjectsFromText(activityLabel, remark);
-    const inferred = inferByHistoryOrHeuristic(activityLabel);
+    let inferred = inferByHistoryOrHeuristic(activityLabel);
+    const actKey = normalizeActivityKey(activityLabel);
+    if (actKey === "transporting" && evStartIso) {
+      const tr = inferTransportingLayerCatFromNext(evStartIso);
+      inferred = { group: inferred.group, layer: tr.layer, cat: tr.cat };
+    }
     const text = (String(activityLabel || "") + " " + String(remark || "")).toLowerCase();
-    const looksProject = /(project|deadline|milestone|namaste|indonesia|15m|time stat|dantian|順流道)/.test(text);
     const inferSubByRules = (layer, hasProjectSignal) => {
       const layerN = reportNormLabel(layer).toLowerCase();
       if (layerN === "health") {
@@ -804,65 +909,48 @@
       if (layerN === "freedom") {
         return hasProjectSignal ? "Project" : "non-project";
       }
-      return hasProjectSignal ? "Project" : "";
+      return hasProjectSignal ? "Project" : "non-project";
     };
-    const g0 = inferred.group;
-    const l0 = inferred.layer;
-    const c0 = inferred.cat;
-    if (suggested.length) {
-      const sp = suggested[0];
-      out.push({
-        label: "建議 1（由 Activity/Remark 推斷）",
-        group: g0,
-        layer: "Freedom",
-        cat: "",
-        subCat: inferSubByRules("Freedom", true),
-        activity: activityLabel,
-        project: sp.project,
-        projectId: sp.projectId || projectIdByName(sp.project),
-      });
-      out.push({
-        label: "建議 2（同 activity 但非 project）",
-        group: g0,
-        layer: l0,
-        cat: c0,
-        subCat: inferSubByRules(l0, false),
-        activity: activityLabel,
-        project: "",
-        projectId: "",
-      });
-    } else {
-      out.push({
-        label: looksProject ? "建議 1（由 Remark 推斷）" : "建議 1（歷史/預設）",
-        group: g0,
-        layer: l0,
-        cat: c0,
-        subCat: inferSubByRules(l0, looksProject),
-        activity: activityLabel,
-        project: "",
-        projectId: "",
-      });
-      out.push({
-        label: "建議 2（保守）",
-        group: g0,
-        layer: l0,
-        cat: c0,
-        subCat: inferSubByRules(l0, false),
-        activity: activityLabel,
-        project: "",
-        projectId: "",
-      });
-    }
-    const dedup = [];
-    const seen = new Set();
-    for (let i = 0; i < out.length; i++) {
-      const c = out[i];
-      const key = [c.group, c.layer, c.cat, c.subCat, c.activity, c.project, c.projectId].join("|");
-      if (seen.has(key)) continue;
-      seen.add(key);
-      dedup.push(c);
-    }
-    return dedup.slice(0, 3);
+    const g0 = inferred.group || "Rest";
+    const l0 = inferred.layer || "Health";
+    const c0 = inferred.cat || "Mental Health";
+    const hasProj = suggested.length > 0;
+    const sp = hasProj ? suggested[0] : null;
+
+    const cand1 = hasProj
+      ? {
+          label: "Suggestion 1",
+          group: g0,
+          layer: "Freedom",
+          cat: "Time",
+          subCat: "Project",
+          activity: activityLabel,
+          project: sp.project,
+          projectId: sp.projectId || projectIdByName(sp.project),
+        }
+      : {
+          label: "Suggestion 1",
+          group: g0,
+          layer: l0,
+          cat: c0,
+          subCat: inferSubByRules(l0, false),
+          activity: activityLabel,
+          project: "",
+          projectId: "",
+        };
+
+    const cand2 = {
+      label: "Suggestion 2",
+      group: g0,
+      layer: l0,
+      cat: c0,
+      subCat: "non-project",
+      activity: activityLabel,
+      project: "",
+      projectId: "",
+    };
+
+    return [cand1, cand2];
   }
 
   function inferByHistoryOrHeuristic(activityLabel) {
@@ -980,12 +1068,13 @@
     const pid = String(ev.projectId || "").trim();
     if (form || pid) {
       if (eventProjectLinksProjectsRegistry(ev)) return "Project";
-      return "Project";
+      return "non-project";
     }
     const sug = suggestProjectsFromText(activityLabel, String(remark || ""));
     if (!sug.length) return "non-project";
-    if (sug.length === 1) return "Project";
-    return "Needs-Review";
+    const probe = { projectsFromForm: sug[0].project, projectId: sug[0].projectId || "" };
+    if (eventProjectLinksProjectsRegistry(probe)) return "Project";
+    return "non-project";
   }
 
   function inferRulesLayerCatExcludeTransporting(ev) {
@@ -1144,19 +1233,80 @@
     if (card) card.classList.add("hidden");
   }
 
-  function pushEventAndRefresh(ev, msg) {
+  function clearQuickLogForm() {
+    ["quickPlace", "quickActivity", "quickPeople", "quickRemark"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = "";
+      el.dataset.userEdited = "0";
+      delete el.dataset.autoSuggestedValue;
+    });
+    refreshQuickAutoSuggestions();
+  }
+
+  function clearManualLogForm() {
+    ["manualPlace", "manualActivity", "manualPeople", "manualRemark"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = "";
+      el.dataset.userEdited = "0";
+      delete el.dataset.autoSuggestedValue;
+    });
+    initManualDateTime();
+    refreshManualAutoSuggestions();
+  }
+
+  function scheduleRenderReport() {
+    if (_reportRenderScheduled) return;
+    _reportRenderScheduled = true;
+    requestAnimationFrame(() => {
+      _reportRenderScheduled = false;
+      renderReport();
+    });
+  }
+
+  function scrollPageToTopInstant() {
+    try {
+      const html = document.documentElement;
+      const prev = html.style.scrollBehavior;
+      html.style.scrollBehavior = "auto";
+      window.scrollTo(0, 0);
+      html.scrollTop = 0;
+      if (document.body) document.body.scrollTop = 0;
+      html.style.scrollBehavior = prev || "";
+    } catch (e) {
+      try {
+        window.scrollTo(0, 0);
+      } catch (e2) {}
+    }
+  }
+
+  function pushEventAndRefresh(ev, msg, opts) {
+    const silent = opts && opts.silent;
+    const formSource = opts && opts.formSource;
     state.events.push(ev);
     bumpEventsMutationGen();
     save();
     refreshActivityDatalist();
-    refreshProjectPickers();
-    fillMergeSelects();
     renderTimeline();
-    renderReport();
-    refreshQuickAutoSuggestions();
-    refreshManualAutoSuggestions();
-    updateLastSavedHint(ev);
-    toast(`${msg} · 總筆數 ${state.events.length}`);
+    if (silent) {
+      if (formSource === "manual") clearManualLogForm();
+      else if (formSource === "quick") clearQuickLogForm();
+      // 等高度收合完先即時回頂；避免 smooth scroll + 內容縮短喺 iOS 造成半邊黑屏
+      requestAnimationFrame(() => {
+        scrollPageToTopInstant();
+        requestAnimationFrame(scrollPageToTopInstant);
+      });
+    } else {
+      refreshQuickAutoSuggestions();
+      refreshManualAutoSuggestions();
+      updateLastSavedHint(ev);
+      toast(`${msg} · 總筆數 ${state.events.length}`);
+    }
+    requestAnimationFrame(() => {
+      fillMergeSelects();
+      scheduleRenderReport();
+    });
   }
 
   function updateLastSavedHint(ev) {
@@ -1186,59 +1336,44 @@
     const list = document.getElementById("mappingApprovalList");
     const meta = document.getElementById("mappingApprovalMeta");
     if (!card || !list || !meta) return;
-    meta.textContent = "";
+    const place = String(payload.ev.place || "").trim() || "—";
+    const withStr =
+      payload.ev.people && payload.ev.people.length ? payload.ev.people.join(", ") : "—";
+    const remarkDisp = String(payload.remark || payload.ev.remark || "").trim() || "—";
+    meta.innerHTML =
+      `<div class="mapping-context">` +
+      `<div>Place</div><div>${escapeHtml(place)}</div>` +
+      `<div>With</div><div>${escapeHtml(withStr)}</div>` +
+      `<div>Remark</div><div>${escapeHtml(remarkDisp)}</div>` +
+      `</div>`;
     list.innerHTML = "";
+    const projectOpts = uniqueProjectsSorted();
+    const mkSel = (id, options, selected, allowBlank) => {
+      let h = `<select id="${id}" class="mapping-edit-select">`;
+      if (allowBlank) h += `<option value="">blank</option>`;
+      for (let i = 0; i < options.length; i++) {
+        const v = options[i];
+        const sel = v === selected ? " selected" : "";
+        h += `<option value="${escapeHtml(v)}"${sel}>${escapeHtml(v)}</option>`;
+      }
+      h += `</select>`;
+      return h;
+    };
     payload.candidates.forEach((c) => {
       const row = document.createElement("div");
       row.className = "mapping-suggestion";
       const editableId = uid();
-      const groupOpts = reportUniqueSorted([
-        ...groupsForReport(),
-        "Work",
-        "Rest",
-      ]);
-      const layerOpts = reportUniqueSorted([
-        ...layersForReport(),
-        "Health",
-        "Freedom",
-        "Achievement",
-      ]);
-      const catOpts = reportUniqueSorted([
-        ...catsForReport(),
-        "Mental Health",
-        "Physical Health",
-        "Time",
-        "Finance",
-        "Time Management",
-        "Financial Management",
-      ]);
-      const subOpts = reportUniqueSorted([
-        ...subsForReport(),
-        "Long Term",
-        "Short Term",
-        "Project",
-        "non-project",
-      ]);
-      const projectOpts = uniqueProjectsSorted();
-      const mkSel = (id, options, selected, withEmpty) => {
-        let h = `<select id="${id}" class="mapping-edit-select">`;
-        if (withEmpty) h += `<option value="">blank</option>`;
-        for (let i = 0; i < options.length; i++) {
-          const v = options[i];
-          const sel = v === selected ? ' selected' : "";
-          h += `<option value="${escapeHtml(v)}"${sel}>${escapeHtml(v)}</option>`;
-        }
-        h += `</select>`;
-        return h;
-      };
+      const catSelected = normalizeCatDisplayForRaw(c.cat) || c.cat || CLASSIFICATION_CAT_OPTIONS[0];
+      const projOpts = reportUniqueSorted([...projectOpts, c.project].filter(Boolean));
       row.innerHTML =
+        `<h4 class="mapping-suggestion-title">${escapeHtml(c.label || "Suggestion")}</h4>` +
         `<div class="mapping-grid">` +
-        `<div>Group</div><div>${mkSel(`map-g-${editableId}`, groupOpts, c.group || "", true)}</div>` +
-        `<div>Layers</div><div>${mkSel(`map-l-${editableId}`, layerOpts, c.layer || "", true)}</div>` +
-        `<div>Cat</div><div>${mkSel(`map-c-${editableId}`, catOpts, c.cat || "", true)}</div>` +
-        `<div>Sub Cat</div><div>${mkSel(`map-s-${editableId}`, subOpts, c.subCat || "", true)}</div>` +
+        `<div>Group</div><div>${mkSel(`map-g-${editableId}`, CLASSIFICATION_GROUP_OPTIONS, c.group || CLASSIFICATION_GROUP_OPTIONS[0], false)}</div>` +
+        `<div>Layers</div><div>${mkSel(`map-l-${editableId}`, CLASSIFICATION_LAYER_OPTIONS, c.layer || CLASSIFICATION_LAYER_OPTIONS[0], false)}</div>` +
+        `<div>Cat</div><div>${mkSel(`map-c-${editableId}`, CLASSIFICATION_CAT_OPTIONS, catSelected, false)}</div>` +
+        `<div>Sub Cat</div><div>${mkSel(`map-s-${editableId}`, CLASSIFICATION_SUB_OPTIONS, c.subCat || CLASSIFICATION_SUB_OPTIONS[0], false)}</div>` +
         `<div>Activity</div><div>${escapeHtml(c.activity || "—")}</div>` +
-        `<div>Project</div><div>${mkSel(`map-p-${editableId}`, projectOpts, c.project || "", true)}</div>` +
+        `<div>Project</div><div>${mkSel(`map-p-${editableId}`, projOpts, c.project || "", true)}</div>` +
         `</div>`;
       const btn = document.createElement("button");
       btn.type = "button";
@@ -1272,8 +1407,9 @@
           delete ev.project;
           if (ev.group === "Work" || ev.group === "Rest") ev.category = ev.group;
           const msg = pendingApproval.doneMsg;
+          const formSource = pendingApproval.formSource;
           clearApprovalPanel();
-          pushEventAndRefresh(ev, msg);
+          pushEventAndRefresh(ev, msg, { silent: true, formSource: formSource });
         } catch (err) {
           toast("入庫失敗：" + (err && err.message ? err.message : "未知錯誤"));
         }
@@ -1282,9 +1418,7 @@
       list.appendChild(row);
     });
     card.classList.remove("hidden");
-    setTimeout(() => {
-      card.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 0);
+    card.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   document.getElementById("btnLogNow").addEventListener("click", () => {
@@ -1328,6 +1462,7 @@
       activityLabel: label,
       remark: remark,
       doneMsg: MSG_LOG_NOW_DONE,
+      formSource: "quick",
     });
   });
 
@@ -1375,9 +1510,7 @@
       activityLabel: label,
       remark: remark,
       doneMsg: MSG_MANUAL_DONE,
-      onDirectSave: function () {
-        initManualDateTime();
-      },
+      formSource: "manual",
     });
   });
 
@@ -1397,11 +1530,10 @@
     const activityLabel = params.activityLabel;
     const remark = params.remark;
     const doneMsg = params.doneMsg;
-    const onDirectSave = params.onDirectSave;
-    const candidates = buildMappingCandidates(activityLabel, remark);
+    const formSource = params.formSource || "quick";
+    const candidates = buildMappingCandidates(activityLabel, remark, ev.start);
     if (!candidates.length) {
-      pushEventAndRefresh(ev, doneMsg);
-      if (typeof onDirectSave === "function") onDirectSave();
+      pushEventAndRefresh(ev, doneMsg, { silent: true, formSource: formSource });
       return;
     }
     showApprovalPanel({
@@ -1409,6 +1541,7 @@
       activityLabel: activityLabel,
       candidates: candidates,
       doneMsg: doneMsg,
+      formSource: formSource,
     });
   }
 
@@ -1791,7 +1924,31 @@
 
   let reportPeopleSearchTimer = null;
   let reportKeywordSearchTimer = null;
-  const REPORT_RAW_RECORD_CAP = 400;
+
+  function buildReportMappingContext(list) {
+    const nextMap = chronologicalNextById(list);
+    const inferred = new Map();
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const nextEv = nextMap.get(ev.id) || null;
+      const m = inferTimeStatMappingForRaw(ev, nextEv);
+      const catRaw = String(m.cat || "").trim();
+      const catDisp = normalizeCatDisplayForRaw(catRaw) || catRaw;
+      inferred.set(ev.id, {
+        group: reportNormLabel(m.group),
+        layer: reportNormLabel(m.layer),
+        cat: reportNormLabel(catDisp),
+        subCat: reportNormLabel(m.subCat),
+      });
+    }
+    return { nextMap, inferred };
+  }
+
+  function refreshReportFilterSelectsIfNeeded() {
+    if (_reportFiltersCachedGen === _eventsMutationGen) return;
+    _reportFiltersCachedGen = _eventsMutationGen;
+    refreshReportFilterSelects();
+  }
 
   function reportNormLabel(s) {
     return String(s || "").trim();
@@ -2374,11 +2531,12 @@
     return toYmd || fromYmd || ymdFromLocalDate(new Date());
   }
 
-  function aggregateReportForRange(fromYmd, toYmd, list, f, showByDay) {
+  function aggregateReportForRange(fromYmd, toYmd, list, f, showByDay, ctxOpt) {
     if (!fromYmd || !toYmd) return null;
     const t0 = new Date(fromYmd + "T00:00:00").getTime();
     const t1 = new Date(toYmd + "T23:59:59.999").getTime();
     if (Number.isNaN(t0) || Number.isNaN(t1) || t0 > t1) return null;
+    const ctx = ctxOpt || buildReportMappingContext(list);
     const rawSegmentRows = [];
     const byEnt = {};
     const byGroup = {};
@@ -2400,12 +2558,12 @@
       segmentsKept++;
       rawSegmentRows.push({ ev, ms });
       byEnt[ev.activityId] = (byEnt[ev.activityId] || 0) + ms;
-      const inf = reportInferredMapping(ev, list);
+      const inf = ctx.inferred.get(ev.id) || reportInferredMapping(ev, list);
       const g = inf.group || "\uff08\u672a\u6a19 Group\uff09";
       const ly = inf.layer || "\u2014";
       byGroup[g] = (byGroup[g] || 0) + ms;
       byLayer[ly] = (byLayer[ly] || 0) + ms;
-      const pj = reportNormLabel(ev.projectsFromForm || "") || "\uff08\u7a7a\uff0f\u672a\u914d Project\uff09";
+      const pj = reportNormLabel(ev.projectsFromForm || "") || "blank";
       const cj = inf.cat || "\uff08\u7a7a\uff0f\u672a\u914d Cat\uff09";
       const sj = inf.subCat || "\uff08\u7a7a\uff0f\u672a\u914d Sub\uff09";
       byProject[pj] = (byProject[pj] || 0) + ms;
@@ -2787,7 +2945,7 @@
   }
 
   function renderReport() {
-    refreshReportFilterSelects();
+    refreshReportFilterSelectsIfNeeded();
     const presetElR = document.getElementById("reportPeriodPreset");
     const preset = (presetElR && presetElR.value) || "custom";
     if (!reportPresetSuppress && preset !== "custom") applyReportPeriodPreset();
@@ -2811,6 +2969,7 @@
     }
     const f = readReportFilters();
     const list = sortedEventsUniqueById();
+    const reportCtx = buildReportMappingContext(list);
     const reportUnitMode = readReportUnitMode();
 
     const renderFilterMismatch = () => {
@@ -2844,9 +3003,9 @@
         });
       }
       const ag = [
-        aggregateReportForRange(slices.ranges[0].from, slices.ranges[0].to, list, f, false),
-        aggregateReportForRange(slices.ranges[1].from, slices.ranges[1].to, list, f, false),
-        aggregateReportForRange(slices.ranges[2].from, slices.ranges[2].to, list, f, false),
+        aggregateReportForRange(slices.ranges[0].from, slices.ranges[0].to, list, f, false, reportCtx),
+        aggregateReportForRange(slices.ranges[1].from, slices.ranges[1].to, list, f, false, reportCtx),
+        aggregateReportForRange(slices.ranges[2].from, slices.ranges[2].to, list, f, false, reportCtx),
       ];
       if (ag[0] === null || ag[1] === null || ag[2] === null) {
         box.innerHTML = `<p class="muted">Invalid Time Windows.</p>`;
@@ -2950,7 +3109,7 @@
       return;
     }
 
-    const agg = aggregateReportForRange(from, to, list, f, showByDay);
+    const agg = aggregateReportForRange(from, to, list, f, showByDay, reportCtx);
     if (agg.segmentsInRange === 0) {
       box.innerHTML = `<p class="muted">No Billable Segments In This Range.</p>`;
       return;
@@ -3038,27 +3197,23 @@
     }
     html += tbl("People", byPerson);
 
-    const cap = REPORT_RAW_RECORD_CAP;
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
-    const sliceRaw = sortedRaw.slice(0, cap);
-    const nextGlobal = chronologicalNextById(list);
     html += `<h2 class="report-h">Data</h2>`;
 
     html += `<div class="report-records-wrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
-    for (let ri = 0; ri < sliceRaw.length; ri++) {
-      const row = sliceRaw[ri];
+    for (let ri = 0; ri < sortedRaw.length; ri++) {
+      const row = sortedRaw[ri];
       const ev = row.ev;
       const ms = row.ms;
       const startStr = ymdHmFromEventStart(ev.start);
       const durStr = durationMinutesLabel(ms);
-      const nextEv = nextGlobal.get(ev.id) || null;
-      const mapped = inferTimeStatMappingForRaw(ev, nextEv);
-      const g = String(mapped.group || "").trim() || "\u2014";
-      const ly = String(mapped.layer || "").trim() || "\u2014";
-      const cj = normalizeCatDisplayForRaw(String(mapped.cat || "").trim()) || "\u2014";
-      const sj = String(mapped.subCat || "").trim() || "\u2014";
+      const mapped = reportCtx.inferred.get(ev.id);
+      const g = mapped ? String(mapped.group || "").trim() || "\u2014" : "\u2014";
+      const ly = mapped ? String(mapped.layer || "").trim() || "\u2014" : "\u2014";
+      const cj = mapped ? String(mapped.cat || "").trim() || "\u2014" : "\u2014";
+      const sj = mapped ? String(mapped.subCat || "").trim() || "\u2014" : "\u2014";
       const act = activityDisplayName(ev.activityId);
-      const pj = displayProjectForRawRecord(ev).trim() || "\u2014";
+      const pj = displayProjectForRawRecord(ev).trim() || "blank";
       const place = String(ev.place || "").trim() || "\u2014";
       const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
       const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
@@ -3068,9 +3223,6 @@
         `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
     }
     html += `</tbody></table></div>`;
-    if (sortedRaw.length > cap) {
-      html += `<p class="muted" style="margin-top:6px;">Showing First ${cap} Rows (${sortedRaw.length} Total; Chronological).</p>`;
-    }
 
     box.innerHTML = html;
     } finally {
@@ -3084,214 +3236,10 @@
     return t;
   }
 
-  /** ---------- CSV import (Papa) ---------- */
-  let lastParsed = null;
-
-  document.getElementById("csvFile").addEventListener("change", function () {
-    const f = this.files && this.files[0];
-    if (!f || typeof Papa === "undefined") {
-      if (typeof Papa === "undefined") toast("Papa Parse 未載入");
-      return;
-    }
-    const seenH = {};
-    function transformHeader(h) {
-      const base = h == null || h === "" ? "Column" : String(h);
-      seenH[base] = (seenH[base] || 0) + 1;
-      if (seenH[base] === 1) return base;
-      return base + "__" + seenH[base];
-    }
-    Papa.parse(f, {
-      header: true,
-      transformHeader,
-      skipEmptyLines: false,
-      complete: (res) => {
-        lastParsed = res;
-        const headers = res.meta.fields || [];
-        const selTs = document.getElementById("mapTimestamp");
-        const selAct = document.getElementById("mapActivity");
-        const selPlace = document.getElementById("mapPlace");
-        const selCat = document.getElementById("mapCategory");
-        const selProj = document.getElementById("mapProjects");
-        [selTs, selAct, selPlace, selCat, selProj].forEach((sel) => {
-          if (!sel) return;
-          sel.innerHTML = '<option value="">—</option>';
-          headers.forEach((h) => {
-            const o = document.createElement("option");
-            o.value = h;
-            o.textContent = h;
-            sel.appendChild(o);
-          });
-        });
-        function pick(pred) {
-          for (let i = 0; i < headers.length; i++) {
-            if (pred(headers[i])) return headers[i];
-          }
-          return "";
-        }
-        selTs.value = pick((h) => h === "Timestamp") || pick((h) => /timestamp/i.test(h)) || "";
-        selAct.value =
-          pick((h) => h === "Category__2") ||
-          pick((h) => h === "Activities") ||
-          pick((h) => /^activity$/i.test(h)) ||
-          "";
-        selPlace.value =
-          pick((h) => /^Place__\d+$/.test(h)) ||
-          pick((h) => h.startsWith("Place__")) ||
-          pick((h) => h === "Place") ||
-          "";
-        selCat.value = pick((h) => h === "Category") || "";
-        if (selProj) {
-          selProj.value =
-            pick((h) => /^what\s+is\s+the\s+project/i.test(String(h).replace(/\u3000/g, " "))) ||
-            pick((h) => h === "Projects") ||
-            pick((h) => h === "What is the Projects?") ||
-            pick((h) => /^What is the Projects\?__\d+$/i.test(h)) ||
-            pick((h) => /^Projects__\d+$/i.test(h)) ||
-            "";
-        }
-
-        document.getElementById("importPreview").textContent =
-          `讀取 ${res.data.length} 行；請確認欄位對應再按「匯入」。`;
-        toast("CSV 已解析");
-      },
-      error: (err) => toast("CSV 錯：" + err.message),
-    });
-    this.value = "";
-  });
-
-  (function () {
-    const projectsInp = document.getElementById("projectsCsvFile");
-    if (!projectsInp) return;
-    projectsInp.addEventListener("change", function () {
-      const f = this.files && this.files[0];
-      if (!f || typeof Papa === "undefined") {
-        if (typeof Papa === "undefined") toast("Papa Parse 未載入");
-        return;
-      }
-      if (f.name !== REQUIRED_PROJECTS_CSV_NAME) {
-        toast(`Projects 只接受：${REQUIRED_PROJECTS_CSV_NAME}`);
-        this.value = "";
-        return;
-      }
-      Papa.parse(f, {
-        header: true,
-        skipEmptyLines: "greedy",
-        complete: (res) => {
-          const rows = parseProjectsCsvRows(res.data || []);
-          state.projectsRegistry = rows;
-          save();
-          refreshProjectPickers();
-          const prev = document.getElementById("projectsImportPreview");
-          if (prev) prev.textContent = `Projects：${rows.length} 行（已寫入本機）`;
-          toast("已匯入 Projects");
-        },
-        error: (err) => toast("Projects CSV 錯：" + err.message),
-      });
-      this.value = "";
-    });
-  })();
-
-  document.getElementById("btnImportCsv").addEventListener("click", () => {
-    if (!lastParsed || !lastParsed.data) {
-      toast("請先揀 CSV 檔");
-      return;
-    }
-    const tsCol = document.getElementById("mapTimestamp").value;
-    const actCol = document.getElementById("mapActivity").value;
-    if (!tsCol || !actCol) {
-      toast("揀 Timestamp 同 Activity 欄");
-      return;
-    }
-    const placeCol = document.getElementById("mapPlace").value;
-    const catCol = document.getElementById("mapCategory").value;
-    const projCol = (document.getElementById("mapProjects") && document.getElementById("mapProjects").value) || "";
-    let n = 0;
-    let skip = 0;
-    let dupSkip = 0;
-    const rows = lastParsed.data;
-    const importKeySeen = new Set();
-    for (let ei = 0; ei < state.events.length; ei++) {
-      const k0 = eventImportDedupeKey(state.events[ei]);
-      if (k0 && !String(k0).startsWith("__badtime:")) importKeySeen.add(k0);
-    }
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rawTs = row[tsCol];
-      const iso = parseSheetsTimestamp(rawTs);
-      if (!iso) {
-        skip++;
-        continue;
-      }
-      const actLabel = String(row[actCol] || "").trim();
-      if (!actLabel) {
-        skip++;
-        continue;
-      }
-      let ent = getOrCreateActivity(actLabel);
-      if (!ent) continue;
-      const ev = {
-        id: uid(),
-        start: iso,
-        activityId: ent.id,
-      };
-      if (placeCol && row[placeCol]) ev.place = String(row[placeCol]).trim();
-      if (catCol && row[catCol]) ev.category = String(row[catCol]).trim();
-      assignOptionalFormFields(ev, row);
-      mergeImportCsvLooseFields(ev, row, [tsCol, actCol, placeCol, catCol, projCol]);
-      const w2 = row["With__2"];
-      const w0 = row["With"];
-      if (w2 && String(w2).trim()) ev.people = splitPeople(w2);
-      else if (w0 && String(w0).trim()) ev.people = splitPeople(w0);
-      if (projCol && row[projCol] != null) {
-        const pv = String(row[projCol]).trim();
-        if (pv) {
-          if (ev.projectsFromForm) {
-            if (!ev.projectsFromForm.toLowerCase().includes(pv.toLowerCase())) {
-              ev.projectsFromForm = ev.projectsFromForm + " · " + pv;
-            }
-          } else {
-            ev.projectsFromForm = pv;
-          }
-          const toks = String(ev.projectsFromForm || "")
-            .split(/\s*[·,，、]\s*/)
-            .map((x) => x.trim())
-            .filter(Boolean);
-          const firstTok = toks[0];
-          if (firstTok) {
-            const pid = projectIdByName(firstTok);
-            if (pid) ev.projectId = pid;
-            else delete ev.projectId;
-          }
-        }
-      }
-      const dk = eventImportDedupeKey(ev);
-      if (dk && !String(dk).startsWith("__badtime:") && importKeySeen.has(dk)) {
-        dupSkip++;
-        continue;
-      }
-      if (dk && !String(dk).startsWith("__badtime:")) importKeySeen.add(dk);
-      state.events.push(ev);
-      n++;
-    }
-    const afterPush = state.events.length;
-    dedupeStateEventsByImportKey();
-    const afterDedup = state.events.length;
-    const removedByDedup = afterPush - afterDedup;
-    save();
-    refreshActivityDatalist();
-    fillMergeSelects();
-    renderActivityList();
-    renderTimeline();
-    syncReportDatesFromEvents();
-    renderReport();
-    toast(
-      `已處理 ${rows.length} 行：新加入 ${n} 筆，略過格式 ${skip} 行，匯入階段重複 ${dupSkip} 筆；整庫合併再刪 ${removedByDedup} 筆，現共 ${afterDedup} 筆紀錄。`
-    );
-  });
-
   document.querySelectorAll(".tabs button").forEach((btn) => {
     btn.addEventListener("click", () => {
       const tab = btn.getAttribute("data-tab");
+      hideTimelineTip();
       document.querySelectorAll(".tabs button").forEach((b) => {
         b.classList.toggle("active", b === btn);
       });
@@ -3299,8 +3247,22 @@
         p.classList.toggle("hidden", p.getAttribute("data-panel") !== tab);
       });
       if (tab === "report") renderReport();
+      if (tab === "timeline") renderTimeline();
     });
   });
+
+  (function bindTimelineDatePicker() {
+    const pick = document.getElementById("timelinePickDate");
+    if (pick) {
+      pick.addEventListener("change", () => {
+        const v = pick.value.trim();
+        const norm = v ? parseYMDStrict(v) : null;
+        timelineCenterYmd = norm || todayYmd();
+        if (v && !norm) pick.value = timelineCenterYmd;
+        renderTimeline();
+      });
+    }
+  })();
 
   /** Report 預設日期：曆月頭～曆月尾（`syncReportDatesFromEvents` 用）。 */
   function monthBoundsYMD(d) {
@@ -3427,26 +3389,85 @@
     }
   }
 
-  function finalizeWheelScroll(viewport, hiddenInput, modulus) {
+  function readWheelValue(viewport, modulus) {
     const itemH = WHEEL_ITEM_H;
     let idx = Math.round(viewport.scrollTop / itemH);
-    if (idx < modulus) viewport.scrollTop += modulus * itemH;
-    else if (idx >= modulus * 2) viewport.scrollTop -= modulus * itemH;
-    idx = Math.round(viewport.scrollTop / itemH);
-    const v = ((idx % modulus) + modulus) % modulus;
+    return ((idx % modulus) + modulus) % modulus;
+  }
+
+  function wrapWheelIfNeeded(viewport, modulus) {
+    const itemH = WHEEL_ITEM_H;
+    let idx = Math.round(viewport.scrollTop / itemH);
+    if (idx < modulus) {
+      viewport.scrollTop = (idx + modulus) * itemH;
+    } else if (idx >= modulus * 2) {
+      viewport.scrollTop = (idx - modulus) * itemH;
+    }
+  }
+
+  function finalizeWheelScroll(viewport, hiddenInput, modulus, allowWrap) {
+    if (allowWrap) wrapWheelIfNeeded(viewport, modulus);
+    const v = readWheelValue(viewport, modulus);
     hiddenInput.value = String(v).padStart(2, "0");
     updateManualTimeSummary();
   }
 
   function attachWheel(viewport, hiddenInput, modulus) {
-    let debounceT;
-    function schedule() {
+    let debounceT = null;
+    let touching = false;
+    let wrapping = false;
+
+    function settle(forceWrap) {
+      if (wrapping) return;
       clearTimeout(debounceT);
-      debounceT = setTimeout(() => finalizeWheelScroll(viewport, hiddenInput, modulus), 90);
+      debounceT = setTimeout(() => {
+        if (touching && !forceWrap) return;
+        wrapping = true;
+        finalizeWheelScroll(viewport, hiddenInput, modulus, true);
+        wrapping = false;
+      }, forceWrap ? 16 : 140);
     }
-    viewport.addEventListener("scroll", schedule, { passive: true });
-    viewport.addEventListener("touchend", () => setTimeout(() => finalizeWheelScroll(viewport, hiddenInput, modulus), 150));
-    viewport.addEventListener("scrollend", () => finalizeWheelScroll(viewport, hiddenInput, modulus));
+
+    viewport.addEventListener(
+      "scroll",
+      () => {
+        if (wrapping) return;
+        // 轉動中只更新顯示，唔跳 wrap，避免打斷慣性
+        const v = readWheelValue(viewport, modulus);
+        hiddenInput.value = String(v).padStart(2, "0");
+        updateManualTimeSummary();
+        settle(false);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener(
+      "touchstart",
+      () => {
+        touching = true;
+        clearTimeout(debounceT);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener(
+      "touchend",
+      () => {
+        touching = false;
+        settle(true);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener(
+      "touchcancel",
+      () => {
+        touching = false;
+        settle(true);
+      },
+      { passive: true },
+    );
+    viewport.addEventListener("scrollend", () => {
+      touching = false;
+      settle(true);
+    });
   }
 
   function setWheelToValue(viewport, hiddenInput, modulus, valNum) {
@@ -3455,7 +3476,7 @@
     viewport.scrollTop = idx * WHEEL_ITEM_H;
     hiddenInput.value = String(v).padStart(2, "0");
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => finalizeWheelScroll(viewport, hiddenInput, modulus));
+      requestAnimationFrame(() => finalizeWheelScroll(viewport, hiddenInput, modulus, true));
     });
   }
 
@@ -3719,6 +3740,7 @@
   refreshQuickAutoSuggestions();
   fillMergeSelects();
   renderActivityList();
+  initTimelineDatePicker();
   renderTimeline();
   syncReportDatesFromEvents();
   renderReport();
