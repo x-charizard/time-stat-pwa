@@ -43,7 +43,7 @@
    * 亦可由 config.remote.json 的 execUrl／googleClientId 覆寫。
    */
   const REMOTE_SYNC_BASE_DEFAULT =
-    "https://script.google.com/macros/s/AKfycbxoMoig6kFTBXWw0mdnKKjM6ELqzjXb4F1xBtYnw5kLHpeHo8C2-dgIxQIBddtV73SCmQ/exec";
+    "https://script.google.com/macros/s/AKfycbychnH7RHqxJbfRmbjdKjE2ejRRGWxLhZZkgyCJW0a_6_G_Aqk3lcLHP1ZqTN2f6Bp9fA/exec";
   /** 填入你嘅 OAuth Web Client ID，例如 123456789-xxxx.apps.googleusercontent.com */
   const GOOGLE_CLIENT_ID_DEFAULT =
     "348329876798-nhvl3ppsckle1lv1r7u3vs2tb6pm3al0.apps.googleusercontent.com";
@@ -3596,8 +3596,16 @@
     }
     if (!j || !j.ok) {
       const err = (j && j.error) || "load_failed";
-      if (handleRemoteUnauthorized_(err)) throw new Error(err);
-      throw new Error(err);
+      const api = j && j.authApi ? String(j.authApi) : "";
+      if (handleRemoteUnauthorized_(err)) {
+        if (err === "unauthorized" && !api) {
+          throw new Error(
+            "unauthorized — Apps Script 仍係舊版（無 authApi）。請刪舊 Code.gs、只留 TimeStatSync.gs、管理部署→新版本。"
+          );
+        }
+        throw new Error(err + (api ? " [" + api + "]" : ""));
+      }
+      throw new Error(err + (api ? " [" + api + "]" : ""));
     }
     if (!Object.prototype.hasOwnProperty.call(j, "state")) {
       toast("Google 端未回傳 state（請確認 Apps Script 已部署 doPost + action=load）。");
@@ -3722,9 +3730,11 @@
       clearAuthSession();
       const err = e && e.message ? e.message : String(e);
       showAuthOverlay_(
-        err === "email_not_allowed"
+        err === "email_not_allowed" || String(err).indexOf("email_not_allowed") === 0
           ? "This Google account is not allowed."
-          : "Sign-in ok but sync failed: " + err,
+          : String(err).indexOf("unauthorized") === 0
+            ? String(err)
+            : "Sign-in ok but sync failed: " + err,
       );
     }
   }
