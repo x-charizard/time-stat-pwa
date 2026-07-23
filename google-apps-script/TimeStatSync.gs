@@ -3,17 +3,21 @@
  *
  * 用法：
  * 1) 將此檔內容貼到「綁定你張試算表」嘅 Apps Script 專案（試算表 → 擴充功能 → Apps Script）。
- * 2) Project settings → Script properties：新增 API_TOKEN（值 = 你自己嘅密碼）。
- * 3) 部署 → 網頁應用程式：執行身分 = 我；存取權 = 任何人／任何人擁有連結（視乎你需要）。
- * 4) 將部署後嘅 .../exec 網址填入 PWA Import 頁「exec 網址」（唔好帶 query）；token 填 API_TOKEN。
+ * 2) Project settings → Script properties：
+ *    - ALLOWED_EMAILS = xavierlichitau@gmail.com,xavierlichitau1995@gmail.com
+ *    - GOOGLE_CLIENT_ID = Google Cloud OAuth Web Client ID
+ *    - API_TOKEN（可選緊急後門；唔好放公開前端）
+ * 3) 部署 → 網頁應用程式：執行身分 = 我；存取權 = 任何人／任何人擁有連結。
+ * 4) PWA 用 Google Sign-In 取得 idToken，POST 到 .../exec。
  *
  * 瀏覽器 POST：請用 Content-Type: text/plain（body 仍然係 JSON 字串），避免 application/json 觸發 CORS preflight。
  *
  * API（POST + text/plain，body 為 JSON）：
- * - { token, action:"load" }           → { ok:true, state:object }
- * - { token, action:"migrateFormToDb" } → Form 合併寫入 TimeStatDB
- * - { token, state }                  → 寫入 TimeStatDB
- * GET ...?token=&action=load 仍可用；瀏覽器 GET 可能因 302 丟 query。
+ * - { idToken, action:"load" }           → { ok:true, state:object }
+ * - { idToken, action:"migrateFormToDb" } → Form 合併寫入 TimeStatDB
+ * - { idToken, state }                  → 寫入 TimeStatDB
+ * 可選：{ token: API_TOKEN, ... } 作緊急後門（唔經前端）。
+ * GET ...?idToken=&action=load 仍可用。
  *
  * 資料：工作表 "TimeStatDB"，一格 JSON；超長自動分 CHUNK。
  *
@@ -34,11 +38,100 @@ function jsonOut_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function authToken_(e) {
+function allowedEmailsList_() {
   var props = PropertiesService.getScriptProperties();
-  var expected = props.getProperty("API_TOKEN");
+  var raw = String(props.getProperty("ALLOWED_EMAILS") || "");
+  return raw
+    .split(/[,;\s]+/)
+    .map(function (s) {
+      return String(s || "")
+        .trim()
+        .toLowerCase();
+    })
+    .filter(Boolean);
+}
+
+/**
+ * 驗證 Google ID token（GIS credential）。
+ * @returns {{ ok: boolean, email?: string, error?: string }}
+ */
+function verifyGoogleIdToken_(idToken) {
+  var token = String(idToken || "").trim();
+  if (!token) return { ok: false, error: "missing_id_token" };
+  var props = PropertiesService.getScriptProperties();
+  var clientId = String(props.getProperty("GOOGLE_CLIENT_ID") || "").trim();
+  if (!clientId) return { ok: false, error: "missing_google_client_id" };
+  var allowed = allowedEmailsList_();
+  if (!allowed.length) return { ok: false, error: "missing_allowed_emails" };
+
+  var url =
+    "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(token);
+  var res;
+  try {
+    res = UrlFetchApp.fetch(url, { muteHttpExceptions: true, followRedirects: true });
+  } catch (ex) {
+    return { ok: false, error: "tokeninfo_fetch_failed" };
+  }
+  var code = res.getResponseCode();
+  var bodyText = String(res.getContentText() || "");
+  if (code < 200 || code >= 300) return { ok: false, error: "invalid_id_token" };
+  var info;
+  try {
+    info = JSON.parse(bodyText);
+  } catch (ex2) {
+    return { ok: false, error: "tokeninfo_bad_json" };
+  }
+  var aud = String(info.aud || "").trim();
+  if (aud !== clientId) return { ok: false, error: "aud_mismatch" };
+  var verified = String(info.email_verified || "").toLowerCase();
+  if (verified !== "true" && verified !== "1") return { ok: false, error: "email_not_verified" };
+  var email = String(info.email || "")
+    .trim()
+    .toLowerCase();
+  if (!email) return { ok: false, error: "missing_email" };
+  var hit = false;
+  for (var i = 0; i < allowed.length; i++) {
+    if (allowed[i] === email) {
+      hit = true;
+      break;
+    }
+  }
+  if (!hit) return { ok: false, error: "email_not_allowed" };
+  return { ok: true, email: email };
+}
+
+/** API_TOKEN 緊急後門（唔經公開前端）。 */
+function authApiTokenOk_(token) {
+  var expected = PropertiesService.getScriptProperties().getProperty("API_TOKEN");
+  if (!expected) return false;
+  return String(token || "") === String(expected);
+}
+
+/**
+ * 統一授權：優先 idToken（Google 登入）；否則可選 API_TOKEN 後門。
+ * @returns {{ ok: boolean, email?: string, via?: string, error?: string }}
+ */
+function authorizeRequest_(idToken, apiToken) {
+  var id = String(idToken || "").trim();
+  if (id) {
+    var v = verifyGoogleIdToken_(id);
+    if (v.ok) return { ok: true, email: v.email, via: "idToken" };
+    return { ok: false, error: v.error || "unauthorized" };
+  }
+  if (authApiTokenOk_(apiToken)) return { ok: true, via: "apiToken" };
+  return { ok: false, error: "unauthorized" };
+}
+
+function authFromGet_(e) {
+  var idToken = e && e.parameter && e.parameter.idToken ? String(e.parameter.idToken) : "";
   var token = e && e.parameter && e.parameter.token ? String(e.parameter.token) : "";
-  return { ok: Boolean(expected) && token === expected, expected: expected, token: token };
+  return authorizeRequest_(idToken, token);
+}
+
+/** @deprecated 舊名；改用 authFromGet_ / authorizeRequest_ */
+function authToken_(e) {
+  var a = authFromGet_(e);
+  return { ok: a.ok, expected: "", token: "" };
 }
 
 function readStateFromSheet_() {
@@ -713,8 +806,8 @@ function buildStateFromFormSheetPack_() {
 }
 
 function doGet(e) {
-  var a = authToken_(e);
-  if (!a.ok) return jsonOut_({ ok: false, error: "unauthorized" });
+  var a = authFromGet_(e);
+  if (!a.ok) return jsonOut_({ ok: false, error: a.error || "unauthorized" });
 
   var action = e && e.parameter && e.parameter.action ? String(e.parameter.action) : "";
   if (action === "load") {
@@ -764,8 +857,8 @@ function doPost(e) {
   } catch (x) {
     return jsonOut_({ ok: false, error: "bad_json" });
   }
-  var expected = PropertiesService.getScriptProperties().getProperty("API_TOKEN");
-  if (!body || body.token !== expected) return jsonOut_({ ok: false, error: "unauthorized" });
+  var auth = authorizeRequest_(body && body.idToken, body && body.token);
+  if (!auth.ok) return jsonOut_({ ok: false, error: auth.error || "unauthorized" });
 
   if (String(body.action || "") === "load") {
     try {

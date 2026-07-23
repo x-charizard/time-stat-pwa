@@ -19,16 +19,29 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=129" />
+  <link rel="stylesheet" href="styles.css?v=130" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+  <div id="authOverlay" class="auth-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="authOverlayTitle">
+    <div class="auth-card">
+      <h2 id="authOverlayTitle" class="auth-title">Time Log</h2>
+      <p id="authOverlayMsg" class="muted auth-msg">Sign in with Google to load your data.</p>
+      <div id="googleSignInBtn" class="google-signin-host"></div>
+    </div>
+  </div>
+
   <div class="tabs" role="tablist">
     <button type="button" class="active" data-tab="log">Log</button>
     <button type="button" data-tab="timeline">Timeline</button>
     <button type="button" data-tab="report">Report</button>
+  </div>
+  <div class="auth-bar">
+    <span id="authEmailLabel" class="auth-email muted"></span>
+    <button type="button" class="ghost auth-signout hidden" id="btnSignOut">Sign out</button>
   </div>
 
   <section data-panel="log">
@@ -174,6 +187,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=129"></script>
+  <script src="app.js?v=130"></script>
 </body>
 </html>

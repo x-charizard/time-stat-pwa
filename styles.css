@@ -1467,3 +1467,67 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   white-space: pre-wrap;
   pointer-events: none;
 }
+
+/* Google Sign-In gate */
+.auth-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #0f1115;
+}
+.auth-overlay.hidden {
+  display: none !important;
+}
+.auth-card {
+  width: min(100%, 360px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px 22px;
+  text-align: center;
+}
+.auth-title {
+  margin: 0 0 10px;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text);
+}
+.auth-msg {
+  margin: 0 0 18px;
+  line-height: 1.45;
+}
+.google-signin-host {
+  display: flex;
+  justify-content: center;
+  min-height: 44px;
+}
+.auth-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: -6px 0 12px;
+  min-height: 36px;
+}
+.auth-email {
+  font-size: 0.82rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 60vw;
+}
+.auth-signout {
+  width: auto;
+  min-height: 36px;
+  padding: 0 12px;
+  flex: 0 0 auto;
+}
+body.auth-locked .tabs,
+body.auth-locked .auth-bar,
+body.auth-locked [data-panel] {
+  visibility: hidden;
+}

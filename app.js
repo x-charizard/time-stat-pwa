@@ -33,16 +33,20 @@
 
   /** 兼容舊版 entities / entityId 備份 */
   const REMOTE_LS_BASE_KEY = "timeStatRemoteSyncBase";
-  const REMOTE_LS_TOKEN_KEY = "timeStatRemoteSyncToken";
+  const REMOTE_LS_CLIENT_ID_KEY = "timeStatGoogleClientId";
+  const AUTH_ID_TOKEN_KEY = "timeStatGoogleIdToken";
+  const AUTH_EMAIL_KEY = "timeStatGoogleEmail";
 
   /**
-   * 部署用：填晒之後**每台機開網都會自動連 Google**，唔使再喺 Import 頁手動輸入。
-   * （token 會出現喺前端；只適合個人用；外洩請去 Apps Script 改 API_TOKEN。）
-   * 留空則只靠 localStorage／下面 config.remote.json／Import 頁。
+   * Apps Script …/exec（公開無妨；真正守門係 Google 登入 + ALLOWED_EMAILS）。
+   * Google OAuth Web Client ID（公開；喺 Cloud Console 建立後填入）。
+   * 亦可由 config.remote.json 的 execUrl／googleClientId 覆寫。
    */
-  const REMOTE_SYNC_BASE_DEFAULT = "https://script.google.com/macros/s/AKfycbxoMoig6kFTBXWw0mdnKKjM6ELqzjXb4F1xBtYnw5kLHpeHo8C2-dgIxQIBddtV73SCmQ/exec";
-  /** @deprecated 已改用 Google Sign-In；唔好再 bake API token */
-  const REMOTE_SYNC_TOKEN_DEFAULT = "";
+  const REMOTE_SYNC_BASE_DEFAULT =
+    "https://script.google.com/macros/s/AKfycbxoMoig6kFTBXWw0mdnKKjM6ELqzjXb4F1xBtYnw5kLHpeHo8C2-dgIxQIBddtV73SCmQ/exec";
+  /** 填入你嘅 OAuth Web Client ID，例如 123456789-xxxx.apps.googleusercontent.com */
+  const GOOGLE_CLIENT_ID_DEFAULT =
+    "348329876798-nhvl3ppsckle1lv1r7u3vs2tb6pm3al0.apps.googleusercontent.com";
 
   function getRemoteSyncBase() {
     const baked = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
@@ -60,24 +64,62 @@
     return "";
   }
 
-  function getRemoteSyncToken() {
-    const bakedT = String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim();
-    if (bakedT) return bakedT;
+  function getGoogleClientId() {
+    const baked = String(GOOGLE_CLIENT_ID_DEFAULT || "").trim();
+    if (baked) return baked;
     try {
-      const t = localStorage.getItem(REMOTE_LS_TOKEN_KEY);
-      if (t && String(t).trim()) return String(t).trim();
+      const c = localStorage.getItem(REMOTE_LS_CLIENT_ID_KEY);
+      if (c && String(c).trim()) return String(c).trim();
     } catch (e) {}
     try {
-      if (typeof window !== "undefined" && window.__TIME_STAT_REMOTE_TOKEN__) {
-        const w = String(window.__TIME_STAT_REMOTE_TOKEN__).trim();
+      if (typeof window !== "undefined" && window.__TIME_STAT_GOOGLE_CLIENT_ID__) {
+        const w = String(window.__TIME_STAT_GOOGLE_CLIENT_ID__).trim();
         if (w) return w;
       }
     } catch (e2) {}
     return "";
   }
 
+  function getGoogleIdToken() {
+    try {
+      return String(sessionStorage.getItem(AUTH_ID_TOKEN_KEY) || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function getAuthEmail() {
+    try {
+      return String(sessionStorage.getItem(AUTH_EMAIL_KEY) || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function setAuthSession(idToken, email) {
+    try {
+      if (idToken) sessionStorage.setItem(AUTH_ID_TOKEN_KEY, String(idToken));
+      else sessionStorage.removeItem(AUTH_ID_TOKEN_KEY);
+      if (email) sessionStorage.setItem(AUTH_EMAIL_KEY, String(email));
+      else sessionStorage.removeItem(AUTH_EMAIL_KEY);
+    } catch (e) {}
+  }
+
+  function clearAuthSession() {
+    setAuthSession("", "");
+  }
+
+  function isSignedIn() {
+    return Boolean(getGoogleIdToken());
+  }
+
+  /** 有 exec 網址就視為啟用遠端；實際請求要已 Google 登入。 */
   function useRemoteSync() {
-    return Boolean(getRemoteSyncBase() && getRemoteSyncToken());
+    return Boolean(getRemoteSyncBase());
+  }
+
+  function canRemoteSync() {
+    return Boolean(getRemoteSyncBase() && getGoogleIdToken());
   }
 
   try {
@@ -85,10 +127,11 @@
       window.__TIME_STAT_SYNC_STATUS__ = function () {
         return {
           useRemote: useRemoteSync(),
+          canSync: canRemoteSync(),
           baseLen: getRemoteSyncBase().length,
-          hasToken: Boolean(getRemoteSyncToken()),
-          bakedBaseLen: String(REMOTE_SYNC_BASE_DEFAULT || "").trim().length,
-          bakedHasToken: Boolean(String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim()),
+          hasIdToken: Boolean(getGoogleIdToken()),
+          clientIdLen: getGoogleClientId().length,
+          authEmail: getAuthEmail() || "",
         };
       };
     }
@@ -104,6 +147,30 @@
     } catch (e) {
       return "";
     }
+  }
+
+  function remoteAuthBody(extra) {
+    const body = Object.assign({}, extra || {});
+    const idToken = getGoogleIdToken();
+    if (idToken) body.idToken = idToken;
+    return body;
+  }
+
+  function handleRemoteUnauthorized_(errMsg) {
+    const m = String(errMsg || "");
+    if (
+      m === "unauthorized" ||
+      m === "invalid_id_token" ||
+      m === "email_not_allowed" ||
+      m === "aud_mismatch" ||
+      m === "email_not_verified" ||
+      m === "missing_id_token"
+    ) {
+      clearAuthSession();
+      showAuthOverlay_("Session expired or not allowed. Please sign in again.");
+      return true;
+    }
+    return false;
   }
 
   /** 與 loadState／遠端 hydrate 共用：將任意 object 正規化成 app state。 */
@@ -237,18 +304,19 @@
   })();
 
   async function pushRemoteStateQuiet() {
-    if (!useRemoteSync()) return;
+    if (!canRemoteSync()) return;
     const url = getRemotePostUrl();
-    const token = getRemoteSyncToken();
-    if (!url || !token) return;
+    if (!url) return;
     try {
-      await fetch(url, {
+      const r = await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ token: token, state: state }),
+        body: JSON.stringify(remoteAuthBody({ state: state })),
         mode: "cors",
         cache: "no-store",
       });
+      const j = await r.json().catch(() => ({}));
+      if (j && j.ok === false) handleRemoteUnauthorized_(j.error);
     } catch (e) {
       /* ignore network */
     }
@@ -3513,11 +3581,11 @@
 
 
   async function runRemoteHydrate() {
-    if (!useRemoteSync()) return;
+    if (!canRemoteSync()) return;
     const r = await fetch(getRemotePostUrl(), {
       method: "POST",
       headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ token: getRemoteSyncToken(), action: "load" }),
+      body: JSON.stringify(remoteAuthBody({ action: "load" })),
       cache: "no-store",
     });
     const j = await r.json().catch(() => ({}));
@@ -3526,7 +3594,11 @@
         console.info("[TimeStat] form import debug", j._formImportDebug);
       } catch (e) {}
     }
-    if (!j || !j.ok) throw new Error((j && j.error) || "load_failed");
+    if (!j || !j.ok) {
+      const err = (j && j.error) || "load_failed";
+      if (handleRemoteUnauthorized_(err)) throw new Error(err);
+      throw new Error(err);
+    }
     if (!Object.prototype.hasOwnProperty.call(j, "state")) {
       toast("Google 端未回傳 state（請確認 Apps Script 已部署 doPost + action=load）。");
       return;
@@ -3563,176 +3635,182 @@
     initManualDateTime();
     refreshManualAutoSuggestions();
     updateLastSavedHint();
+    updateAuthChrome_();
   }
 
-
-  function setRemoteSyncBootStatus_(msg) {
-    try {
-      const el = document.getElementById("remoteSyncBootStatus");
-      if (el) el.textContent = String(msg || "");
-    } catch (e) {}
+  function showAuthOverlay_(message) {
+    const overlay = document.getElementById("authOverlay");
+    const msg = document.getElementById("authOverlayMsg");
+    if (msg && message) msg.textContent = String(message);
+    if (overlay) overlay.classList.remove("hidden");
+    document.body.classList.add("auth-locked");
+    updateAuthChrome_();
+    renderGoogleSignInButton_();
   }
 
-  function syncRemoteSyncInputsFromGetters_() {
-    const baseEl = document.getElementById("remoteSyncBase");
-    const tokEl = document.getElementById("remoteSyncToken");
+  function hideAuthOverlay_() {
+    const overlay = document.getElementById("authOverlay");
+    if (overlay) overlay.classList.add("hidden");
+    document.body.classList.remove("auth-locked");
+    updateAuthChrome_();
+  }
+
+  function updateAuthChrome_() {
+    const emailEl = document.getElementById("authEmailLabel");
+    const btnOut = document.getElementById("btnSignOut");
+    const email = getAuthEmail();
+    if (emailEl) emailEl.textContent = email || "";
+    if (btnOut) btnOut.classList.toggle("hidden", !isSignedIn());
+  }
+
+  function parseJwtEmail_(credential) {
     try {
-      if (baseEl) baseEl.value = getRemoteSyncBase();
-      if (tokEl) tokEl.value = getRemoteSyncToken();
+      const parts = String(credential || "").split(".");
+      if (parts.length < 2) return "";
+      const json = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+      const payload = JSON.parse(json);
+      return String(payload.email || "").trim();
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function renderGoogleSignInButton_() {
+    const host = document.getElementById("googleSignInBtn");
+    if (!host) return;
+    host.innerHTML = "";
+    const clientId = getGoogleClientId();
+    if (!clientId) {
+      host.innerHTML =
+        '<p class="muted" style="margin:0;">Missing Google Client ID. Set GOOGLE_CLIENT_ID_DEFAULT in app.js or config.remote.json → googleClientId.</p>';
+      return;
+    }
+    if (typeof google === "undefined" || !google.accounts || !google.accounts.id) {
+      host.innerHTML = '<p class="muted" style="margin:0;">Loading Google Sign-In…</p>';
+      return;
+    }
+    google.accounts.id.initialize({
+      client_id: clientId,
+      callback: onGoogleCredentialResponse_,
+      auto_select: false,
+      cancel_on_tap_outside: true,
+    });
+    google.accounts.id.renderButton(host, {
+      theme: "outline",
+      size: "large",
+      width: 280,
+      text: "signin_with",
+      shape: "rectangular",
+    });
+  }
+
+  async function onGoogleCredentialResponse_(response) {
+    const cred = response && response.credential ? String(response.credential) : "";
+    if (!cred) {
+      toast("Google sign-in failed.");
+      return;
+    }
+    const email = parseJwtEmail_(cred);
+    setAuthSession(cred, email);
+    const msg = document.getElementById("authOverlayMsg");
+    if (msg) msg.textContent = "Signed in" + (email ? " as " + email : "") + ". Loading…";
+    try {
+      await runRemoteHydrate();
+      hideAuthOverlay_();
+      toast("Signed in" + (email ? " · " + email : ""));
+    } catch (e) {
+      clearAuthSession();
+      const err = e && e.message ? e.message : String(e);
+      showAuthOverlay_(
+        err === "email_not_allowed"
+          ? "This Google account is not allowed."
+          : "Sign-in ok but sync failed: " + err,
+      );
+    }
+  }
+
+  function signOut_() {
+    clearAuthSession();
+    try {
+      if (typeof google !== "undefined" && google.accounts && google.accounts.id) {
+        google.accounts.id.disableAutoSelect();
+      }
     } catch (e) {}
+    showAuthOverlay_("Signed out. Sign in with an allowed Google account to load your data.");
   }
 
   async function loadRemoteSyncDefaultsFromJson_() {
     if (typeof fetch === "undefined") return;
-    var dB0 = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
-    var dT0 = String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim();
-    if (dB0 && dT0) return;
     try {
       const r = await fetch("config.remote.json", { cache: "no-store" });
       if (!r.ok) return;
       const j = await r.json().catch(() => null);
       if (!j || typeof j !== "object") return;
       const bu = j.execUrl != null ? String(j.execUrl).trim() : "";
-      const tk = j.token != null ? String(j.token).trim() : "";
-      if (bu && typeof window !== "undefined") window.__TIME_STAT_REMOTE_BASE__ = bu;
-      if (tk && typeof window !== "undefined") window.__TIME_STAT_REMOTE_TOKEN__ = tk;
+      const cid = j.googleClientId != null ? String(j.googleClientId).trim() : "";
+      if (bu && typeof window !== "undefined" && !String(REMOTE_SYNC_BASE_DEFAULT || "").trim()) {
+        window.__TIME_STAT_REMOTE_BASE__ = bu;
+      }
+      if (cid && typeof window !== "undefined" && !String(GOOGLE_CLIENT_ID_DEFAULT || "").trim()) {
+        window.__TIME_STAT_GOOGLE_CLIENT_ID__ = cid;
+      }
     } catch (e) {
       /* 無檔案／離線：無視 */
     }
   }
 
-  (function hydrateRemoteStateAsync() {
+  function bootAuthAndRemote_() {
     void (async () => {
       try {
         await loadRemoteSyncDefaultsFromJson_();
-        syncRemoteSyncInputsFromGetters_();
       } catch (e) {}
+
+      const btnOut = document.getElementById("btnSignOut");
+      if (btnOut && !btnOut.dataset.bound) {
+        btnOut.dataset.bound = "1";
+        btnOut.addEventListener("click", () => signOut_());
+      }
+
       if (!useRemoteSync()) {
-        var _bl = String(REMOTE_SYNC_BASE_DEFAULT || "").trim().length;
-        var _tk = Boolean(String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim());
-        setRemoteSyncBootStatus_(
-          "【同步狀態】未連線（目前讀唔到 exec／token）。\n" +
-            "→ **唔使手填表**：喺**要上架嗰份** app.js 填好 REMOTE_SYNC_BASE_DEFAULT（…/exec）同 REMOTE_SYNC_TOKEN_DEFAULT，再重新部署；內建值會**優先**於本機。\n" +
-            "→ 若你已填仍見此訊息：線上可能仲係舊檔——請硬刷新／清快取；Console 打 window.__TIME_STAT_SYNC_STATUS__() 睇 bakedBaseLen／bakedHasToken（線上檔案係咪真係有字）。\n" +
-            "→ 今次線上檢測：bakedBaseLen=" +
-            _bl +
-            "，bakedHasToken=" +
-            _tk +
-            "。",
-        );
+        hideAuthOverlay_();
+        updateAuthChrome_();
         return;
       }
-      setRemoteSyncBootStatus_("【同步狀態】連線中，向 Google 拉取…");
-      try {
-        await runRemoteHydrate();
-        try {
-          window.__TIME_STAT_LAST_HYDRATE__ = {
-            ok: true,
-            at: new Date().toISOString(),
-            events: state.events.length,
-          };
-        } catch (e2) {}
-        setRemoteSyncBootStatus_(
-          "【同步狀態】已拉取。目前 events = " +
-            state.events.length +
-            "。\n若仍係 0：請喺試算表睇 TimeStatDB 有冇 JSON；或喺 Apps Script 跑 migrateFormRowsToTimeStatDb／按「Form→DB」。",
-        );
-      } catch (e) {
-        toast("拉取 Google 失敗：" + (e.message || String(e)));
-        try {
-          window.__TIME_STAT_LAST_HYDRATE__ = { ok: false, error: String(e.message || e) };
-        } catch (e3) {}
-        setRemoteSyncBootStatus_("【同步狀態】拉取失敗：" + (e.message || String(e)));
+
+      if (!getGoogleClientId()) {
+        showAuthOverlay_("Configure Google Client ID (app.js GOOGLE_CLIENT_ID_DEFAULT or config.remote.json).");
+        return;
       }
+
+      if (isSignedIn()) {
+        hideAuthOverlay_();
+        try {
+          await runRemoteHydrate();
+        } catch (e) {
+          if (!handleRemoteUnauthorized_(e && e.message)) {
+            showAuthOverlay_("Could not load data: " + (e.message || String(e)));
+          }
+        }
+        return;
+      }
+
+      showAuthOverlay_("Sign in with Google to load your Time Stat data.");
     })();
-  })();
+  }
 
-  (function bindGoogleSheetRemoteControls() {
-    const baseEl = document.getElementById("remoteSyncBase");
-    const tokEl = document.getElementById("remoteSyncToken");
-    const btnPull = document.getElementById("btnRemotePull");
-    const btnMigrate = document.getElementById("btnRemoteMigrate");
-    const btnPush = document.getElementById("btnRemotePush");
-    if (!baseEl || !tokEl) return;
-    const bakedReady =
-      Boolean(String(REMOTE_SYNC_BASE_DEFAULT || "").trim()) &&
-      Boolean(String(REMOTE_SYNC_TOKEN_DEFAULT || "").trim());
-    const manualWrap = document.getElementById("remoteSyncManualWrap");
-    const bakedHint = document.getElementById("remoteSyncBakedHint");
-    if (bakedReady) {
-      if (manualWrap) manualWrap.classList.add("hidden");
-      if (bakedHint) bakedHint.classList.remove("hidden");
+  // Wait for GIS script; then boot.
+  (function waitGisThenBoot() {
+    let tries = 0;
+    function tick() {
+      tries++;
+      if ((typeof google !== "undefined" && google.accounts && google.accounts.id) || tries > 40) {
+        bootAuthAndRemote_();
+        return;
+      }
+      setTimeout(tick, 100);
     }
-    try {
-      baseEl.value = getRemoteSyncBase();
-      tokEl.value = getRemoteSyncToken();
-    } catch (e) {}
-    function persist() {
-      try {
-        localStorage.setItem(REMOTE_LS_BASE_KEY, String(baseEl.value || "").trim());
-        localStorage.setItem(REMOTE_LS_TOKEN_KEY, String(tokEl.value || "").trim());
-      } catch (e) {}
-    }
-    baseEl.addEventListener("change", persist);
-    tokEl.addEventListener("change", persist);
-    if (btnPull) {
-      btnPull.addEventListener("click", () => {
-        void (async () => {
-          try {
-            if (!useRemoteSync()) {
-              toast("請先填 Apps Script exec 網址（唔好帶 query）同 API_TOKEN。");
-              return;
-            }
-            await runRemoteHydrate();
-            toast("已從 TimeStatDB 拉取並更新畫面。");
-          } catch (e) {
-            toast("拉取失敗：" + (e.message || String(e)));
-          }
-        })();
-      });
-    }
-    if (btnMigrate) {
-      btnMigrate.addEventListener("click", () => {
-        void (async () => {
-          try {
-            if (!useRemoteSync()) {
-              toast("請先填 exec 網址同 token。");
-              return;
-            }
-            const r = await fetch(getRemotePostUrl(), {
-              method: "POST",
-              headers: { "Content-Type": "text/plain;charset=utf-8" },
-              body: JSON.stringify({ token: getRemoteSyncToken(), action: "migrateFormToDb" }),
-              cache: "no-store",
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!j.ok) throw new Error((j && j.error) || "migrate_failed");
-            toast("Form 已合併寫入 TimeStatDB（events≈" + (j.wroteEvents != null ? j.wroteEvents : "?") + "）。");
-            await runRemoteHydrate();
-          } catch (e) {
-            toast("遷移失敗：" + (e.message || String(e)));
-          }
-        })();
-      });
-    }
-    if (btnPush) {
-      btnPush.addEventListener("click", () => {
-        void (async () => {
-          try {
-            if (!useRemoteSync()) {
-              toast("請先填 exec 網址同 token。");
-              return;
-            }
-            await pushRemoteStateQuiet();
-            toast("已嘗試上傳本機 state 到 TimeStatDB。");
-          } catch (e) {
-            toast("上傳失敗：" + (e.message || String(e)));
-          }
-        })();
-      });
-    }
+    tick();
   })();
-
 
   refreshActivityDatalist();
   refreshProjectPickers();
