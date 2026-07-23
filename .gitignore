@@ -5,6 +5,9 @@ venv/
 .env
 .env.*
 
+# Nested accidental clone — do not commit
+/time-stat-pwa/
+
 # 若果唔想將備份／匯出 commit 上 git，取消下面註解：
 # data/*.json
 # data/*.csv
