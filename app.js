@@ -739,12 +739,46 @@
 
   function refreshActivityDatalist() {
     const dl = document.getElementById("activitySuggest");
+    if (dl) {
+      dl.innerHTML = "";
+      const labels = new Set();
+      state.activities.forEach((e) => labels.add(e.name));
+      [...labels]
+        .sort((a, b) => a.localeCompare(b, "zh-Hant"))
+        .forEach((name) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          dl.appendChild(opt);
+        });
+    }
+    refreshPlaceDatalist();
+  }
+
+  /** Place 下拉：最近用過嘅地點優先（旅行時 Ubud 會排前） */
+  function refreshPlaceDatalist() {
+    const dl = document.getElementById("placeSuggest");
     if (!dl) return;
     dl.innerHTML = "";
-    const labels = new Set();
-    state.activities.forEach((e) => labels.add(e.name));
-    [...labels]
-      .sort((a, b) => a.localeCompare(b, "zh-Hant"))
+    const now = Date.now();
+    const monthAgo = now - 30 * DAY_MS;
+    const lastSeen = new Map();
+    const count = new Map();
+    for (let i = 0; i < state.events.length; i++) {
+      const p = String(state.events[i].place || "").trim();
+      if (!p) continue;
+      const t = new Date(state.events[i].start).getTime();
+      if (Number.isNaN(t) || t < monthAgo) continue;
+      count.set(p, (count.get(p) || 0) + 1);
+      const prev = lastSeen.get(p) || 0;
+      if (t > prev) lastSeen.set(p, t);
+    }
+    [...lastSeen.keys()]
+      .sort((a, b) => {
+        const tb = lastSeen.get(b) || 0;
+        const ta = lastSeen.get(a) || 0;
+        if (tb !== ta) return tb - ta;
+        return (count.get(b) || 0) - (count.get(a) || 0);
+      })
       .forEach((name) => {
         const opt = document.createElement("option");
         opt.value = name;
@@ -2016,27 +2050,44 @@
     });
   }
 
+  /**
+   * Place 自動建議：偏重「最近用過」同「近七日頻率」，時段只係加分。
+   * （舊邏輯淨係同鐘點先計分 → 旅行地點成日輸畀舊家）
+   */
   function mostLikelyPlaceByTime(hour, minute) {
     const now = Date.now();
     const monthAgo = now - 30 * DAY_MS;
+    const weekAgo = now - 7 * DAY_MS;
     const score = new Map();
+    let latestPlace = "";
+    let latestT = -1;
+    const targetMins = hour * 60 + minute;
     for (let i = 0; i < state.events.length; i++) {
       const ev = state.events[i];
       const p = String(ev.place || "").trim();
       if (!p) continue;
       const t = new Date(ev.start).getTime();
       if (Number.isNaN(t) || t < monthAgo) continue;
+      if (t > latestT) {
+        latestT = t;
+        latestPlace = p;
+      }
       const d = new Date(t);
-      const eh = d.getHours();
-      const em = d.getMinutes();
-      const diff = Math.abs(eh * 60 + em - (hour * 60 + minute));
-      let w = 0;
-      if (diff === 0) w = 5;
-      else if (eh === hour && diff <= 5) w = 3;
-      else if (eh === hour) w = 2;
-      else if (diff <= 30) w = 1;
-      if (!w) continue;
+      const diff = Math.abs(d.getHours() * 60 + d.getMinutes() - targetMins);
+      const daysAgo = (now - t) / DAY_MS;
+      let w = 1;
+      if (t >= weekAgo) w += 5;
+      if (daysAgo <= 1) w += 8;
+      else if (daysAgo <= 3) w += 4;
+      else if (daysAgo <= 7) w += 2;
+      if (diff === 0) w += 3;
+      else if (diff <= 5) w += 2;
+      else if (diff <= 30) w += 1;
+      else if (diff <= 90) w += 0.5;
       score.set(p, (score.get(p) || 0) + w);
+    }
+    if (latestPlace) {
+      score.set(latestPlace, (score.get(latestPlace) || 0) + 12);
     }
     let best = "";
     let bestScore = -1;

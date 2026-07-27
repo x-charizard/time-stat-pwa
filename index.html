@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=139" />
+  <link rel="stylesheet" href="styles.css?v=140" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -49,7 +49,8 @@
   <section data-panel="log">
     <div class="card">
       <label for="quickPlace" style="margin-top:0;">Place</label>
-      <input type="text" id="quickPlace" autocomplete="off" />
+      <input type="text" id="quickPlace" list="placeSuggest" autocomplete="off" />
+      <datalist id="placeSuggest"></datalist>
       <label for="quickActivity" style="margin-top:10px;">Activity</label>
       <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" />
       <datalist id="activitySuggest"></datalist>
@@ -61,7 +62,7 @@
     </div>
     <div class="card">
       <label for="manualPlace" style="margin-top:0;">Place</label>
-      <input type="text" id="manualPlace" autocomplete="off" />
+      <input type="text" id="manualPlace" list="placeSuggest" autocomplete="off" />
       <label for="manualActivity" style="margin-top:10px;">Activity</label>
       <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" />
       <details class="pick-details" id="manualDateDetails">
@@ -189,6 +190,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=139"></script>
+  <script src="app.js?v=140"></script>
 </body>
 </html>
