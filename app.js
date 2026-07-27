@@ -559,14 +559,15 @@
     const act = activityDisplayName(cur.activityId);
     const hmStart = formatHmLocal(cur.start);
     const hmNow = formatHmLocal(new Date());
+    const idxMap = timelineIndexById_(all);
     const inWin = timelineEventsAscending(all);
-    const shown = inWin.filter((ev) => timelinePassesMin(ev, all)).length;
+    const shown = inWin.filter((ev) => timelinePassesMin(ev, all, idxMap)).length;
     const shortHidden = inWin.length - shown;
     const days = getTimelineDisplayDays()
       .map((c) => c.ymd)
       .join(" · ");
-    let extra = ` · window ${days} · ${shown}/${all.length} blocks`;
-    if (shortHidden > 0) extra += ` (${shortHidden} under 30m hidden)`;
+    let extra = ` · window ${days} · ${shown}/${all.length} (≥30m)`;
+    if (shortHidden > 0) extra += ` · ${shortHidden} under 30m`;
     return `${act} (${hmStart} ~ ${hmNow})${extra}`;
   }
 
@@ -675,7 +676,10 @@
     return { start, endEx: start + DAY_MS };
   }
 
-  /** Timeline 專用：同一毫秒開始 + 同一 Activity 只保留最後一筆（常見於重覆匯入），避免兩格完全疊住。 */
+  /**
+   * Timeline 專用：同一毫秒開始 + 同一 Activity 只保留最後一筆（常見於重覆匯入），避免兩格完全疊住。
+   * 注意：Report 唔做呢層；若要同 Report 對齊，render 路徑唔應再用呢個去重。
+   */
   function dedupeTimelineByStartAndActivity(asc) {
     if (!asc || asc.length < 2) return asc || [];
     const lastIdxByKey = new Map();
@@ -707,14 +711,38 @@
     }
   }
 
-  function timelinePassesMin(ev, fullAsc) {
-    const idx = fullAsc.indexOf(ev);
+  function timelineIndexById_(fullAsc) {
+    const m = new Map();
+    for (let i = 0; i < fullAsc.length; i++) {
+      const id = fullAsc[i] && fullAsc[i].id;
+      if (id != null && id !== "" && !m.has(id)) m.set(id, i);
+    }
+    return m;
+  }
+
+  function timelinePassesMin(ev, fullAsc, idxMapOpt) {
+    const idx =
+      idxMapOpt && ev && ev.id != null && ev.id !== ""
+        ? idxMapOpt.has(ev.id)
+          ? idxMapOpt.get(ev.id)
+          : -1
+        : fullAsc.indexOf(ev);
     if (idx < 0) return false;
     return segmentDurationMsForReport(fullAsc, idx) >= MIN_TIMELINE_MS;
   }
 
-  function timelineDayClip(ev, colYmd, fullAsc) {
-    const idx = fullAsc.indexOf(ev);
+  /**
+   * 將一段 clip 入某日欄。
+   * ≥30 分鐘只睇「成段」長度（同 Report 可對齊嘅門檻）；
+   * 唔好再要求「當日切片」都 ≥30 分鐘——否則跨日／接近午夜嘅長段會喺某日欄消失，但 Report 仍計到。
+   */
+  function timelineDayClip(ev, colYmd, fullAsc, idxMapOpt) {
+    const idx =
+      idxMapOpt && ev && ev.id != null && ev.id !== ""
+        ? idxMapOpt.has(ev.id)
+          ? idxMapOpt.get(ev.id)
+          : -1
+        : fullAsc.indexOf(ev);
     if (idx < 0) return null;
     const segAll = segmentDurationMsForReport(fullAsc, idx);
     if (segAll < MIN_TIMELINE_MS) return null;
@@ -728,7 +756,6 @@
     const ve = Math.min(segmentEnd, d1);
     if (ve <= vs) return null;
     const seg = ve - vs;
-    if (seg < MIN_TIMELINE_MS) return null;
     return { vs, ve, t1: isCurrent ? null : t1Wall, t0, seg };
   }
 
@@ -737,7 +764,9 @@
     const empty = document.getElementById("timelineEmpty");
     const nowStatus = document.getElementById("timelineNowStatus");
     const fullAsc = sortedEventsUniqueById();
-    const asc = dedupeTimelineByStartAndActivity(timelineEventsAscending(fullAsc));
+    // 同 Report：唔再做 start+activity 額外去重（否則同秒同 activity 多筆會漏）
+    const asc = timelineEventsAscending(fullAsc);
+    const idxMap = timelineIndexById_(fullAsc);
     if (!root || !empty) return;
     timelineClearRoot(root);
     if (timelinePointerTipAbort) {
@@ -792,7 +821,7 @@
     const stripeById = new Map();
     let slot = 0;
     for (const ev of asc) {
-      const ok = timelinePassesMin(ev, fullAsc);
+      const ok = timelinePassesMin(ev, fullAsc, idxMap);
       if (ok) stripeById.set(ev.id, slot % 2 === 0 ? "a" : "b");
       slot += ok ? 1 : 2;
     }
@@ -803,7 +832,7 @@
       const clips = [];
       for (let ei = 0; ei < asc.length; ei++) {
         const ev = asc[ei];
-        const clip = timelineDayClip(ev, c.ymd, fullAsc);
+        const clip = timelineDayClip(ev, c.ymd, fullAsc, idxMap);
         if (!clip) continue;
         clips.push({ ev, clip });
       }
