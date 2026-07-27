@@ -4071,6 +4071,7 @@
       refreshManualAutoSuggestions();
       updateLastSavedHint();
       updateAuthChrome_();
+      refreshSoftCapBanner();
       return;
     }
     state = parsed.out;
@@ -4094,6 +4095,7 @@
     refreshManualAutoSuggestions();
     updateLastSavedHint();
     updateAuthChrome_();
+    refreshSoftCapBanner();
   }
 
   function showAuthOverlay_(message) {
@@ -4297,6 +4299,7 @@
   initManualDateTime();
   refreshManualAutoSuggestions();
   updateLastSavedHint();
+  refreshSoftCapBanner();
   const cancelBtn = document.getElementById("btnMappingCancel");
   if (cancelBtn) cancelBtn.addEventListener("click", clearApprovalPanel);
 
