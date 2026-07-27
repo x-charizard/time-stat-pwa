@@ -13,6 +13,7 @@
  *    - API_TOKEN（可選緊急後門；唔好放公開前端）
  * 3) 部署 → 管理部署 → 編輯 → 版本「新版本」→ 部署（執行身分=我；存取權=任何人）。
  * 4) 編輯器跑 testAuthSetup()，Logger 應見 authApi=gis-v1 同 properties OK。
+ * 5) 可跑 rebuildTimeStatLog()：由 TimeStatDB 重建可讀表 TimeStatLog（Start／Activity／…）。
  *
  * 瀏覽器 POST：Content-Type: text/plain（body 仍然係 JSON），避免 CORS preflight。
  *
@@ -23,10 +24,13 @@
  * - { idToken, state }                  → 寫入 TimeStatDB
  * 可選：{ token: API_TOKEN, ... } 作緊急後門（唔經前端）。
  *
- * 資料：工作表 "TimeStatDB"，一格 JSON；超長自動分 CHUNK。
+ * 資料：
+ * - 工作表 "TimeStatDB"：一格 JSON（超長自動 CHUNK）— App 用
+ * - 工作表 "TimeStatLog"：可讀表（Start／Activity／Place／Group／Remark…）— 你用嚟 check；每次 save 自動重寫
  */
 
 var DB_SHEET = "TimeStatDB";
+var LOG_SHEET = "TimeStatLog";
 var CHUNK_MARK = "TIME_STAT_CHUNKED_V1";
 var CHUNK_SIZE = 45000;
 var AUTH_API = "gis-v1";
@@ -239,17 +243,139 @@ function writeStateToSheet_(obj) {
   var json = JSON.stringify(obj);
   if (json.length <= CHUNK_SIZE) {
     sh.getRange(1, 1).setValue(json);
+  } else {
+    sh.getRange(1, 1).setValue(CHUNK_MARK);
+    var parts = [];
+    for (var i = 0; i < json.length; i += CHUNK_SIZE) {
+      parts.push(json.slice(i, i + CHUNK_SIZE));
+    }
+    sh.getRange(2, 1).setValue(parts.length);
+    for (var j = 0; j < parts.length; j++) {
+      sh.getRange(3 + j, 1).setValue(parts[j]);
+    }
+  }
+  try {
+    writeReadableLogSheet_(obj);
+  } catch (logEx) {
+    // 可讀表失敗唔阻主 DB 寫入
+  }
+}
+
+/**
+ * 可讀 log 表：方便喺 spreadsheet 直接睇 Activity／有冇入到庫。
+ * 編輯器亦可手動跑 rebuildTimeStatLog()。
+ */
+function writeReadableLogSheet_(obj) {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sh = ss.getSheetByName(LOG_SHEET);
+  if (!sh) sh = ss.insertSheet(LOG_SHEET);
+  sh.clearContents();
+  var headers = [
+    "Start",
+    "End",
+    "Duration_min",
+    "Activity",
+    "Place",
+    "Group",
+    "Remark",
+    "With",
+    "Project",
+    "EventId",
+  ];
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sh.getRange(1, 1, 1, headers.length).setFontWeight("bold");
+
+  if (!obj || typeof obj !== "object") return;
+  var acts = Array.isArray(obj.activities) ? obj.activities : [];
+  var idToName = {};
+  for (var a = 0; a < acts.length; a++) {
+    if (acts[a] && acts[a].id != null) {
+      idToName[String(acts[a].id)] = String(acts[a].name || "");
+    }
+  }
+  var events = Array.isArray(obj.events) ? obj.events.slice() : [];
+  events.sort(function (x, y) {
+    return new Date(x.start).getTime() - new Date(y.start).getTime();
+  });
+  if (!events.length) {
+    sh.setFrozenRows(1);
     return;
   }
-  sh.getRange(1, 1).setValue(CHUNK_MARK);
-  var parts = [];
-  for (var i = 0; i < json.length; i += CHUNK_SIZE) {
-    parts.push(json.slice(i, i + CHUNK_SIZE));
+
+  var rows = [];
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i] || {};
+    var t0 = new Date(ev.start).getTime();
+    var t1 = null;
+    if (i + 1 < events.length) {
+      t1 = new Date(events[i + 1].start).getTime();
+    }
+    var durMin = "";
+    var endStr = "";
+    if (t1 != null && !isNaN(t0) && !isNaN(t1) && t1 >= t0) {
+      durMin = Math.round((t1 - t0) / 60000);
+      endStr = formatSheetDateTime_(new Date(t1));
+    } else if (!isNaN(t0) && i === events.length - 1) {
+      endStr = "(open)";
+    }
+    var people = Array.isArray(ev.people) ? ev.people.join(", ") : "";
+    var group = String(ev.group || ev.category || "").trim();
+    rows.push([
+      isNaN(t0) ? String(ev.start || "") : formatSheetDateTime_(new Date(t0)),
+      endStr,
+      durMin,
+      idToName[String(ev.activityId)] || String(ev.activityId || ""),
+      String(ev.place || ""),
+      group,
+      String(ev.remark || ""),
+      people,
+      String(ev.projectsFromForm || ev.project || ""),
+      String(ev.id || ""),
+    ]);
   }
-  sh.getRange(2, 1).setValue(parts.length);
-  for (var j = 0; j < parts.length; j++) {
-    sh.getRange(3 + j, 1).setValue(parts[j]);
+  sh.getRange(2, 1, rows.length + 1, headers.length).setValues(rows);
+  sh.setFrozenRows(1);
+  try {
+    sh.autoResizeColumns(1, headers.length);
+  } catch (e2) {}
+}
+
+function formatSheetDateTime_(d) {
+  if (!d || isNaN(d.getTime())) return "";
+  function pad(n) {
+    return (n < 10 ? "0" : "") + n;
   }
+  return (
+    d.getFullYear() +
+    "-" +
+    pad(d.getMonth() + 1) +
+    "-" +
+    pad(d.getDate()) +
+    " " +
+    pad(d.getHours()) +
+    ":" +
+    pad(d.getMinutes()) +
+    ":" +
+    pad(d.getSeconds())
+  );
+}
+
+/** 手動：由現有 TimeStatDB JSON 重建 TimeStatLog（唔使等 PWA 再 sync） */
+function rebuildTimeStatLog() {
+  var st = readStateFromSheet_();
+  if (!st) {
+    Logger.log("TimeStatDB empty or unreadable");
+    try {
+      SpreadsheetApp.getUi().alert("TimeStatDB 讀唔到／空白");
+    } catch (e) {}
+    return;
+  }
+  writeReadableLogSheet_(st);
+  var n = st.events && st.events.length ? st.events.length : 0;
+  Logger.log("TimeStatLog rebuilt: " + n + " events");
+  try {
+    SpreadsheetApp.getUi().alert("TimeStatLog 已重建：" + n + " 筆");
+  } catch (e2) {}
 }
 
 function mergeMigratedIntoState_(st, migrated) {
