@@ -322,12 +322,12 @@
       el.textContent = "Cloud: signed out";
       return;
     }
-    if (status === "pending") el.textContent = "Cloud: syncing…";
+    if (status === "pending") el.textContent = "Cloud: syncing… · local " + state.events.length;
     else if (status === "ok")
       el.textContent = "Cloud: synced · " + state.events.length + " events";
     else if (status === "error")
-      el.textContent = "Cloud: sync failed" + (detail ? " · " + detail : "");
-    else el.textContent = "Cloud: ready";
+      el.textContent = "Cloud: sync failed" + (detail ? " · " + detail : "") + " · local " + state.events.length;
+    else el.textContent = "Cloud: ready · local " + state.events.length;
   }
 
   async function pushRemoteStateOnce_() {
@@ -1448,7 +1448,8 @@
     const stored = normalizeStoredWorkRest(ev);
     if (stored) return stored;
     if (ev.group === "Work" || ev.group === "Rest") return ev.group;
-    return inferRulesWorkRestGroup(ev);
+    // soft cap：未標 Group 嘅舊紀錄唔當 Work，避免推斷過度放大工時
+    return "";
   }
 
   function sumWakeDayMs_(refMs, predicate) {
@@ -1473,11 +1474,11 @@
     return sumWakeDayMs_(refMs, (ev) => isTradingActivityEv_(ev));
   }
 
-  function formatHoursMinutes_(ms) {
-    const m = Math.max(0, Math.round(ms / 60000));
-    const h = Math.floor(m / 60);
-    const mm = m % 60;
-    return h + "h " + String(mm).padStart(2, "0") + "m";
+  function formatCapClock_(ms) {
+    const totalMin = Math.max(0, Math.floor(ms / 60000));
+    const h = Math.floor(totalMin / 60);
+    const m = totalMin % 60;
+    return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
   /**
@@ -1502,22 +1503,16 @@
     const bits = [];
     if (isWork && workOver) {
       bits.push(
-        "今日（" +
-          workPack.bounds.wakeLabel +
-          " 起）Work 已 " +
-          formatHoursMinutes_(workPack.ms) +
-          "（上限 " +
-          formatHoursMinutes_(workCap) +
-          "）。停低手；若仍要入 Work，Remark 請填 Reason。"
+        "Today's Work: " +
+          formatCapClock_(workPack.ms) +
+          "（已過 4h）。仍入 Work 請喺 Remark 填 Reason。"
       );
     }
     if (isTrading && tradingOver) {
       bits.push(
-        "今日 Trading 已 " +
-          formatHoursMinutes_(tradePack.ms) +
-          "（上限 " +
-          formatHoursMinutes_(tradeCap) +
-          "）。停低手；若仍要入 Trading，Remark 請填 Reason。"
+        "Today's Trading: " +
+          formatCapClock_(tradePack.ms) +
+          "（已過 2h）。仍入 Trading 請喺 Remark 填 Reason。"
       );
     }
     return { ok: false, message: bits.join(" "), needsReason: true, workOver, tradingOver };
@@ -1531,26 +1526,6 @@
     else ev.remark = "Reason: " + r;
   }
 
-  function syncRemarkLabelsForSoftCap_() {
-    const now = Date.now();
-    const workPack = sumWorkMsInWakeDay(now);
-    const tradePack = sumTradingMsInWakeDay(now);
-    const workOver = workPack.ms > getWorkCapMs_();
-    const tradingOver = tradePack.ms > getTradingCapMs_();
-    const needHint = workOver || tradingOver;
-    const labelText = needHint ? "Remark / Reason（超限入 Work／Trading 時必填）" : "Remark";
-    const ph = needHint ? "超限仍要入：請填 Reason（平時可留空）" : "";
-    [
-      ["quickRemark", "label[for=quickRemark]"],
-      ["manualRemark", "label[for=manualRemark]"],
-    ].forEach(([id, labSel]) => {
-      const lab = document.querySelector(labSel);
-      if (lab) lab.textContent = labelText;
-      const ta = document.getElementById(id);
-      if (ta) ta.placeholder = ph;
-    });
-  }
-
   function refreshSoftCapBanner() {
     const el = document.getElementById("softCapBanner");
     if (!el) return;
@@ -1561,34 +1536,20 @@
     const tradeCap = getTradingCapMs_();
     const workOver = workPack.ms > workCap;
     const tradingOver = tradePack.ms > tradeCap;
-    syncRemarkLabelsForSoftCap_();
+    // Remark 標籤永遠只顯示 Remark；placeholder 唔改（保持空白 default）
+    const qLab = document.querySelector("label[for=quickRemark]");
+    const mLab = document.querySelector("label[for=manualRemark]");
+    if (qLab) qLab.textContent = "Remark";
+    if (mLab) mLab.textContent = "Remark";
     if (!workOver && !tradingOver) {
       el.classList.add("hidden");
       el.textContent = "";
       return;
     }
     const lines = [];
-    if (workOver) {
-      lines.push(
-        "Work " +
-          formatHoursMinutes_(workPack.ms) +
-          "／上限 " +
-          formatHoursMinutes_(workCap) +
-          "（清醒日 " +
-          workPack.bounds.wakeLabel +
-          " 起）。停低手；仍入 Work 要填 Reason。"
-      );
-    }
-    if (tradingOver) {
-      lines.push(
-        "Trading " +
-          formatHoursMinutes_(tradePack.ms) +
-          "／上限 " +
-          formatHoursMinutes_(tradeCap) +
-          "。停低手；仍入 Trading 要填 Reason。"
-      );
-    }
-    el.textContent = lines.join(" ");
+    if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
+    if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
+    el.textContent = lines.join(" · ");
     el.classList.remove("hidden");
   }
 
@@ -1859,7 +1820,6 @@
           const gate = softCapGateForEvent(ev);
           if (!gate.ok) {
             toast(gate.message || "請填 Remark／Reason");
-            syncRemarkLabelsForSoftCap_();
             return;
           }
           applyReasonPrefixIfNeeded_(ev, gate.needsReason);
@@ -1998,7 +1958,6 @@
     const early = softCapGateForEvent(probe);
     if (!early.ok) {
       toast(early.message || "請填 Remark／Reason");
-      syncRemarkLabelsForSoftCap_();
       const ta =
         formSource === "manual"
           ? document.getElementById("manualRemark")
