@@ -687,16 +687,7 @@
     const act = activityDisplayName(cur.activityId);
     const hmStart = formatHmLocal(cur.start);
     const hmNow = formatHmLocal(new Date());
-    const idxMap = timelineIndexById_(all);
-    const inWin = timelineEventsAscending(all);
-    const shown = inWin.filter((ev) => timelinePassesMin(ev, all, idxMap)).length;
-    const shortHidden = inWin.length - shown;
-    const days = getTimelineDisplayDays()
-      .map((c) => c.ymd)
-      .join(" · ");
-    let extra = ` · window ${days} · ${shown}/${all.length} (≥30m)`;
-    if (shortHidden > 0) extra += ` · ${shortHidden} under 30m`;
-    return `${act} (${hmStart} ~ ${hmNow})${extra}`;
+    return `${act} (${hmStart} ~ ${hmNow})`;
   }
 
   /** Timeline 浮層：顯示成段 activity（與報表同一 segment 計法），跨日亦係完整一段嘅時間／分鐘。 */
@@ -1387,7 +1378,9 @@
   const WAKE_TIME_KEY = "timeStatWakeTime";
   const WORK_CAP_HOURS_KEY = "timeStatWorkCapHours";
   const TRADING_CAP_HOURS_KEY = "timeStatTradingCapHours";
+  const WORK_CUTOFF_HOUR_KEY = "timeStatWorkCutoffHour";
   const TRADING_ACTIVITY_KEYS = new Set(["trading", "trading practice", "trading planning"]);
+  const MSG_GET_REST_AFTER_17 = "Get REST after 17:00.";
 
   function getWakeTimeHm_() {
     try {
@@ -1416,6 +1409,27 @@
       if (Number.isFinite(n) && n > 0) return n * 3600000;
     } catch (e) {}
     return 2 * 3600000;
+  }
+
+  /** 本地鐘：17:00（含）至翌日 wake 之前 = 硬擋 Work 時段 */
+  function getWorkCutoffHour_() {
+    try {
+      const n = Number(localStorage.getItem(WORK_CUTOFF_HOUR_KEY));
+      if (Number.isFinite(n) && n >= 0 && n <= 23) return Math.floor(n);
+    } catch (e) {}
+    return 17;
+  }
+
+  function isInWorkHardBlockWindow_(refInput) {
+    const d = refInput instanceof Date ? refInput : new Date(refInput);
+    if (Number.isNaN(d.getTime())) return false;
+    const mins = d.getHours() * 60 + d.getMinutes();
+    const cutoffMins = getWorkCutoffHour_() * 60;
+    const wake = getWakeTimeHm_();
+    const wakeMins = wake.h * 60 + wake.mi;
+    if (mins >= cutoffMins) return true;
+    if (mins < wakeMins) return true;
+    return false;
   }
 
   /** 清醒日：[當日 wake, 翌日 wake)；若 ref 喺當日 wake 之前，屬前一個清醒日。 */
@@ -1483,7 +1497,8 @@
 
   /**
    * 超限後仍可入 Work／Trading，但 Remark 必填（當 Reason）。
-   * @returns {{ ok: boolean, message?: string, needsReason?: boolean, workOver?: boolean, tradingOver?: boolean }}
+   * 17:00 起至翌日 wake：硬性唔准入 Work。
+   * @returns {{ ok: boolean, message?: string, needsReason?: boolean, workOver?: boolean, tradingOver?: boolean, hardBlock?: boolean }}
    */
   function softCapGateForEvent(ev) {
     const refMs = new Date(ev.start).getTime();
@@ -1491,6 +1506,14 @@
     const remark = String(ev.remark || "").trim();
     const isWork = eventWorkRestGroupForCap_(ev) === "Work";
     const isTrading = isTradingActivityEv_(ev);
+    if (isWork && isInWorkHardBlockWindow_(refMs)) {
+      return {
+        ok: false,
+        hardBlock: true,
+        message: MSG_GET_REST_AFTER_17,
+        needsReason: false,
+      };
+    }
     const workPack = sumWorkMsInWakeDay(refMs);
     const tradePack = sumTradingMsInWakeDay(refMs);
     const workCap = getWorkCapMs_();
@@ -1536,17 +1559,18 @@
     const tradeCap = getTradingCapMs_();
     const workOver = workPack.ms > workCap;
     const tradingOver = tradePack.ms > tradeCap;
-    // Remark 標籤永遠只顯示 Remark；placeholder 唔改（保持空白 default）
+    const afterHours = isInWorkHardBlockWindow_(now);
     const qLab = document.querySelector("label[for=quickRemark]");
     const mLab = document.querySelector("label[for=manualRemark]");
     if (qLab) qLab.textContent = "Remark";
     if (mLab) mLab.textContent = "Remark";
-    if (!workOver && !tradingOver) {
+    if (!workOver && !tradingOver && !afterHours) {
       el.classList.add("hidden");
       el.textContent = "";
       return;
     }
     const lines = [];
+    if (afterHours) lines.push(MSG_GET_REST_AFTER_17);
     if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
     if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
     el.textContent = lines.join(" · ");
