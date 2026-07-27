@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=141" />
+  <link rel="stylesheet" href="styles.css?v=142" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -57,18 +57,16 @@
     <div class="card">
       <label for="quickPlace" style="margin-top:0;">Place</label>
       <div class="suggest-field">
-        <input type="text" id="quickPlace" list="placeSuggest" autocomplete="off" />
+        <input type="text" id="quickPlace" autocomplete="off" />
         <button type="button" class="suggest-chevron" data-suggest-for="quickPlace" aria-label="Place suggestions">▾</button>
         <div id="quickPlaceMenu" class="suggest-menu hidden" role="listbox"></div>
       </div>
-      <datalist id="placeSuggest"></datalist>
       <label for="quickActivity" style="margin-top:10px;">Activity</label>
       <div class="suggest-field">
-        <input type="text" id="quickActivity" list="activitySuggest" autocomplete="off" />
+        <input type="text" id="quickActivity" autocomplete="off" />
         <button type="button" class="suggest-chevron" data-suggest-for="quickActivity" aria-label="Activity suggestions">▾</button>
         <div id="quickActivityMenu" class="suggest-menu hidden" role="listbox"></div>
       </div>
-      <datalist id="activitySuggest"></datalist>
       <label for="quickPeople" style="margin-top:10px;">With</label>
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">Remark</label>
@@ -78,13 +76,13 @@
     <div class="card">
       <label for="manualPlace" style="margin-top:0;">Place</label>
       <div class="suggest-field">
-        <input type="text" id="manualPlace" list="placeSuggest" autocomplete="off" />
+        <input type="text" id="manualPlace" autocomplete="off" />
         <button type="button" class="suggest-chevron" data-suggest-for="manualPlace" aria-label="Place suggestions">▾</button>
         <div id="manualPlaceMenu" class="suggest-menu hidden" role="listbox"></div>
       </div>
       <label for="manualActivity" style="margin-top:10px;">Activity</label>
       <div class="suggest-field">
-        <input type="text" id="manualActivity" list="activitySuggest" autocomplete="off" />
+        <input type="text" id="manualActivity" autocomplete="off" />
         <button type="button" class="suggest-chevron" data-suggest-for="manualActivity" aria-label="Activity suggestions">▾</button>
         <div id="manualActivityMenu" class="suggest-menu hidden" role="listbox"></div>
       </div>
@@ -213,6 +211,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=141"></script>
+  <script src="app.js?v=142"></script>
 </body>
 </html>

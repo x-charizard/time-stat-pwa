@@ -770,52 +770,7 @@
   }
 
   function refreshActivityDatalist() {
-    const dl = document.getElementById("activitySuggest");
-    if (dl) {
-      dl.innerHTML = "";
-      const labels = new Set();
-      state.activities.forEach((e) => labels.add(e.name));
-      [...labels]
-        .sort((a, b) => a.localeCompare(b, "zh-Hant"))
-        .forEach((name) => {
-          const opt = document.createElement("option");
-          opt.value = name;
-          dl.appendChild(opt);
-        });
-    }
-    refreshPlaceDatalist();
-  }
-
-  /** Place 下拉：最近用過嘅地點優先（旅行時 Ubud 會排前） */
-  function refreshPlaceDatalist() {
-    const dl = document.getElementById("placeSuggest");
-    if (!dl) return;
-    dl.innerHTML = "";
-    const now = Date.now();
-    const monthAgo = now - 30 * DAY_MS;
-    const lastSeen = new Map();
-    const count = new Map();
-    for (let i = 0; i < state.events.length; i++) {
-      const p = String(state.events[i].place || "").trim();
-      if (!p) continue;
-      const t = new Date(state.events[i].start).getTime();
-      if (Number.isNaN(t) || t < monthAgo) continue;
-      count.set(p, (count.get(p) || 0) + 1);
-      const prev = lastSeen.get(p) || 0;
-      if (t > prev) lastSeen.set(p, t);
-    }
-    [...lastSeen.keys()]
-      .sort((a, b) => {
-        const tb = lastSeen.get(b) || 0;
-        const ta = lastSeen.get(a) || 0;
-        if (tb !== ta) return tb - ta;
-        return (count.get(b) || 0) - (count.get(a) || 0);
-      })
-      .forEach((name) => {
-        const opt = document.createElement("option");
-        opt.value = name;
-        dl.appendChild(opt);
-      });
+    // Place／Activity 建議改用自製 ▾ Top-3；唔再用原生 datalist（電話會多一隻箭咀）
   }
 
   function uniqueProjectsSorted() {
@@ -2083,7 +2038,39 @@
   }
 
   /**
-   * Place 排名：偏重最近用過／近七日；回傳由高至低（最多 limit 個）。
+   * 過濾極少出現／疑似錯字：次數 < minCount 唔入榜；
+   * 若短字串係另一個更長、更常用字串嘅 prefix（Ubu ⊂ Ubud），剔走短嗰個。
+   */
+  function finalizeSuggestRanking_(scoredEntries, countMap, limit) {
+    const lim = Math.max(1, limit || 3);
+    const minCount = 2;
+    let entries = scoredEntries.slice().sort((a, b) => {
+      const ca = countMap.get(a[0]) || 0;
+      const cb = countMap.get(b[0]) || 0;
+      if (cb !== ca) return cb - ca;
+      if (b[1] !== a[1]) return b[1] - a[1];
+      return a[0].localeCompare(b[0], "zh-Hant");
+    });
+    const solid = entries.filter((e) => (countMap.get(e[0]) || 0) >= minCount);
+    if (solid.length) entries = solid;
+    const labels = entries.map((e) => e[0]);
+    const filtered = labels.filter((p) => {
+      const pl = p.toLowerCase();
+      const longer = labels.find(
+        (q) =>
+          q !== p &&
+          q.toLowerCase().startsWith(pl) &&
+          q.length > p.length &&
+          (countMap.get(q) || 0) >= (countMap.get(p) || 0)
+      );
+      return !longer;
+    });
+    return (filtered.length ? filtered : labels).slice(0, lim);
+  }
+
+  /**
+   * Place 排名：頻率優先，再計近七日／時段。
+   * 舊版「上次 +12」會把單次錯字（如 Ubu）推上第一。
    */
   function rankPlacesByLikelihood(hour, minute, limit) {
     const lim = Math.max(1, limit || 3);
@@ -2091,6 +2078,7 @@
     const monthAgo = now - 30 * DAY_MS;
     const weekAgo = now - 7 * DAY_MS;
     const score = new Map();
+    const count = new Map();
     let latestPlace = "";
     let latestT = -1;
     const targetMins = hour * 60 + minute;
@@ -2100,6 +2088,7 @@
       if (!p) continue;
       const t = new Date(ev.start).getTime();
       if (Number.isNaN(t) || t < monthAgo) continue;
+      count.set(p, (count.get(p) || 0) + 1);
       if (t > latestT) {
         latestT = t;
         latestPlace = p;
@@ -2109,35 +2098,33 @@
       const daysAgo = (now - t) / DAY_MS;
       let w = 1;
       if (t >= weekAgo) w += 5;
-      if (daysAgo <= 1) w += 8;
-      else if (daysAgo <= 3) w += 4;
+      if (daysAgo <= 1) w += 5;
+      else if (daysAgo <= 3) w += 3;
       else if (daysAgo <= 7) w += 2;
-      if (diff === 0) w += 3;
-      else if (diff <= 5) w += 2;
-      else if (diff <= 30) w += 1;
-      else if (diff <= 90) w += 0.5;
+      if (diff === 0) w += 2;
+      else if (diff <= 5) w += 1;
+      else if (diff <= 30) w += 0.5;
       score.set(p, (score.get(p) || 0) + w);
     }
-    if (latestPlace) {
-      score.set(latestPlace, (score.get(latestPlace) || 0) + 12);
+    // 只有出現 ≥2 次嘅「上次地點」先加分，避免單次錯字霸榜
+    if (latestPlace && (count.get(latestPlace) || 0) >= 2) {
+      score.set(latestPlace, (score.get(latestPlace) || 0) + 6);
     }
-    return [...score.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-Hant"))
-      .slice(0, lim)
-      .map((e) => e[0]);
+    return finalizeSuggestRanking_([...score.entries()], count, lim);
   }
 
   function mostLikelyPlaceByTime(hour, minute) {
     return rankPlacesByLikelihood(hour, minute, 1)[0] || "";
   }
 
-  /** Activity 排名：近七日 + 時段；回傳最多 limit 個 */
+  /** Activity 排名：頻率優先；單次錯字／罕用名唔入 Top */
   function rankActivitiesByLikelihood(hour, minute, limit) {
     const lim = Math.max(1, limit || 3);
     const now = Date.now();
     const monthAgo = now - 30 * DAY_MS;
     const weekAgo = now - 7 * DAY_MS;
     const score = new Map();
+    const count = new Map();
     let latestAct = "";
     let latestT = -1;
     const targetMins = hour * 60 + minute;
@@ -2147,6 +2134,7 @@
       if (!a || a === "（已刪 Activity）") continue;
       const t = new Date(ev.start).getTime();
       if (Number.isNaN(t) || t < monthAgo) continue;
+      count.set(a, (count.get(a) || 0) + 1);
       if (t > latestT) {
         latestT = t;
         latestAct = a;
@@ -2156,22 +2144,18 @@
       const daysAgo = (now - t) / DAY_MS;
       let w = 1;
       if (t >= weekAgo) w += 5;
-      if (daysAgo <= 1) w += 6;
+      if (daysAgo <= 1) w += 5;
       else if (daysAgo <= 3) w += 3;
       else if (daysAgo <= 7) w += 1;
-      if (diff === 0) w += 4;
-      else if (diff <= 5) w += 3;
-      else if (diff <= 30) w += 2;
-      else if (diff <= 90) w += 1;
+      if (diff === 0) w += 3;
+      else if (diff <= 5) w += 2;
+      else if (diff <= 30) w += 1;
       score.set(a, (score.get(a) || 0) + w);
     }
-    if (latestAct) {
-      score.set(latestAct, (score.get(latestAct) || 0) + 8);
+    if (latestAct && (count.get(latestAct) || 0) >= 2) {
+      score.set(latestAct, (score.get(latestAct) || 0) + 5);
     }
-    return [...score.entries()]
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-Hant"))
-      .slice(0, lim)
-      .map((e) => e[0]);
+    return finalizeSuggestRanking_([...score.entries()], count, lim);
   }
 
   function mostLikelyActivityByTime(hour, minute) {
