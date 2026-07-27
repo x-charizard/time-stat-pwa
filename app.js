@@ -559,7 +559,15 @@
     const act = activityDisplayName(cur.activityId);
     const hmStart = formatHmLocal(cur.start);
     const hmNow = formatHmLocal(new Date());
-    return `${act} (${hmStart} ~ ${hmNow})`;
+    const inWin = timelineEventsAscending(all);
+    const shown = inWin.filter((ev) => timelinePassesMin(ev, all)).length;
+    const shortHidden = inWin.length - shown;
+    const days = getTimelineDisplayDays()
+      .map((c) => c.ymd)
+      .join(" · ");
+    let extra = ` · window ${days} · ${shown}/${all.length} blocks`;
+    if (shortHidden > 0) extra += ` (${shortHidden} under 30m hidden)`;
+    return `${act} (${hmStart} ~ ${hmNow})${extra}`;
   }
 
   /** Timeline 浮層：顯示成段 activity（與報表同一 segment 計法），跨日亦係完整一段嘅時間／分鐘。 */
@@ -3624,6 +3632,62 @@
     const nextEvCount = (parsed.out.events || []).length;
     if (nextEvCount === 0 && prevEvCount > 0) {
       toast("遠端 0 筆紀錄，已保留本機 " + prevEvCount + " 筆。");
+      return;
+    }
+    // 遠端明顯少過本機：合併保留，避免 truncated／錯部署覆蓋掉資料
+    if (prevEvCount > 0 && nextEvCount > 0 && nextEvCount < prevEvCount) {
+      const remote = parsed.out;
+      const byKey = new Map();
+      for (const ev of remote.events || []) byKey.set(eventImportDedupeKey(ev), ev);
+      for (const ev of state.events || []) {
+        const k = eventImportDedupeKey(ev);
+        if (!byKey.has(k)) byKey.set(k, ev);
+      }
+      const actById = new Map();
+      for (const a of remote.activities || []) actById.set(a.id, a);
+      for (const a of state.activities || []) {
+        if (!actById.has(a.id)) actById.set(a.id, a);
+      }
+      const reg = new Set(
+        []
+          .concat(remote.projectsRegistry || [], state.projectsRegistry || [])
+          .map((x) => String(x || "").trim())
+          .filter(Boolean)
+      );
+      state = {
+        version: remote.version || state.version || 3,
+        activities: Array.from(actById.values()),
+        events: Array.from(byKey.values()),
+        structure: [],
+        projectsRegistry: Array.from(reg),
+      };
+      toast(
+        "遠端 " +
+          nextEvCount +
+          " 筆 < 本機 " +
+          prevEvCount +
+          " 筆，已合併為 " +
+          state.events.length +
+          " 筆（唔覆蓋刪減）。"
+      );
+      bumpEventsMutationGen();
+      dedupeStateEventsByImportKey();
+      state.structure = [];
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      } catch (e) {}
+      void pushRemoteStateQuiet();
+      refreshActivityDatalist();
+      refreshProjectPickers();
+      fillMergeSelects();
+      renderActivityList();
+      renderTimeline();
+      syncReportDatesFromEvents();
+      renderReport();
+      initManualDateTime();
+      refreshManualAutoSuggestions();
+      updateLastSavedHint();
+      updateAuthChrome_();
       return;
     }
     state = parsed.out;

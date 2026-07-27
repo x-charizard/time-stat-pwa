@@ -212,10 +212,12 @@ function readStateFromSheet_() {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var sh = ss.getSheetByName(DB_SHEET);
     if (!sh) return null;
-    var top = String(sh.getRange(1, 1).getDisplayValue() || "");
+    // 必須用 getValue（唔好用 getDisplayValue）— 長 JSON 會被顯示層截斷 → parse 失敗／資料變少
+    var topRaw = sh.getRange(1, 1).getValue();
+    var top = topRaw == null ? "" : String(topRaw);
     if (!top) return null;
     if (top === CHUNK_MARK) {
-      var n = parseInt(String(sh.getRange(2, 1).getDisplayValue() || ""), 10);
+      var n = parseInt(String(sh.getRange(2, 1).getValue() || ""), 10);
       if (!n || n < 1) return null;
       var buf = "";
       for (var r = 0; r < n; r++) {
