@@ -1537,6 +1537,21 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 }
 body.auth-locked .tabs,
 body.auth-locked .auth-bar,
+body.auth-locked .soft-cap-banner,
 body.auth-locked [data-panel] {
   visibility: hidden;
+}
+
+.soft-cap-banner {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius, 10px);
+  border: 1px solid #c45c1a;
+  background: rgba(238, 131, 38, 0.18);
+  color: var(--text, #eee);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+.soft-cap-banner.hidden {
+  display: none !important;
 }

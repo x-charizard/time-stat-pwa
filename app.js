@@ -1384,6 +1384,214 @@
     return "Work";
   }
 
+  const WAKE_TIME_KEY = "timeStatWakeTime";
+  const WORK_CAP_HOURS_KEY = "timeStatWorkCapHours";
+  const TRADING_CAP_HOURS_KEY = "timeStatTradingCapHours";
+  const TRADING_ACTIVITY_KEYS = new Set(["trading", "trading practice", "trading planning"]);
+
+  function getWakeTimeHm_() {
+    try {
+      const raw = String(localStorage.getItem(WAKE_TIME_KEY) || "06:30").trim();
+      const m = raw.match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) return { h: 6, mi: 30, label: "06:30" };
+      const h = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+      const mi = Math.min(59, Math.max(0, parseInt(m[2], 10)));
+      return { h, mi, label: String(h).padStart(2, "0") + ":" + String(mi).padStart(2, "0") };
+    } catch (e) {
+      return { h: 6, mi: 30, label: "06:30" };
+    }
+  }
+
+  function getWorkCapMs_() {
+    try {
+      const n = Number(localStorage.getItem(WORK_CAP_HOURS_KEY));
+      if (Number.isFinite(n) && n > 0) return n * 3600000;
+    } catch (e) {}
+    return 4 * 3600000;
+  }
+
+  function getTradingCapMs_() {
+    try {
+      const n = Number(localStorage.getItem(TRADING_CAP_HOURS_KEY));
+      if (Number.isFinite(n) && n > 0) return n * 3600000;
+    } catch (e) {}
+    return 2 * 3600000;
+  }
+
+  /** 清醒日：[當日 wake, 翌日 wake)；若 ref 喺當日 wake 之前，屬前一個清醒日。 */
+  function wakeDayBounds(refInput) {
+    const d = refInput instanceof Date ? new Date(refInput.getTime()) : new Date(refInput);
+    if (Number.isNaN(d.getTime())) {
+      const now = new Date();
+      return wakeDayBounds(now);
+    }
+    const { h, mi } = getWakeTimeHm_();
+    const wakeToday = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, mi, 0, 0);
+    let start;
+    if (d.getTime() < wakeToday.getTime()) {
+      start = new Date(wakeToday.getTime());
+      start.setDate(start.getDate() - 1);
+    } else {
+      start = wakeToday;
+    }
+    const end = new Date(start.getTime());
+    end.setDate(end.getDate() + 1);
+    return { startMs: start.getTime(), endMs: end.getTime(), wakeLabel: getWakeTimeHm_().label };
+  }
+
+  function isTradingActivityEv_(ev) {
+    const key = normalizeActivityKey(activityDisplayName(ev.activityId));
+    return TRADING_ACTIVITY_KEYS.has(key);
+  }
+
+  function eventWorkRestGroupForCap_(ev) {
+    const stored = normalizeStoredWorkRest(ev);
+    if (stored) return stored;
+    if (ev.group === "Work" || ev.group === "Rest") return ev.group;
+    return inferRulesWorkRestGroup(ev);
+  }
+
+  function sumWakeDayMs_(refMs, predicate) {
+    const bounds = wakeDayBounds(refMs);
+    const list = sortedEventsUniqueById();
+    let total = 0;
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const st = new Date(ev.start).getTime();
+      if (Number.isNaN(st) || st < bounds.startMs || st >= bounds.endMs) continue;
+      if (!predicate(ev)) continue;
+      total += segmentDurationMsForReport(list, i);
+    }
+    return { ms: total, bounds };
+  }
+
+  function sumWorkMsInWakeDay(refMs) {
+    return sumWakeDayMs_(refMs, (ev) => eventWorkRestGroupForCap_(ev) === "Work");
+  }
+
+  function sumTradingMsInWakeDay(refMs) {
+    return sumWakeDayMs_(refMs, (ev) => isTradingActivityEv_(ev));
+  }
+
+  function formatHoursMinutes_(ms) {
+    const m = Math.max(0, Math.round(ms / 60000));
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    return h + "h " + String(mm).padStart(2, "0") + "m";
+  }
+
+  /**
+   * 超限後仍可入 Work／Trading，但 Remark 必填（當 Reason）。
+   * @returns {{ ok: boolean, message?: string, needsReason?: boolean, workOver?: boolean, tradingOver?: boolean }}
+   */
+  function softCapGateForEvent(ev) {
+    const refMs = new Date(ev.start).getTime();
+    if (Number.isNaN(refMs)) return { ok: true };
+    const remark = String(ev.remark || "").trim();
+    const isWork = eventWorkRestGroupForCap_(ev) === "Work";
+    const isTrading = isTradingActivityEv_(ev);
+    const workPack = sumWorkMsInWakeDay(refMs);
+    const tradePack = sumTradingMsInWakeDay(refMs);
+    const workCap = getWorkCapMs_();
+    const tradeCap = getTradingCapMs_();
+    const workOver = workPack.ms > workCap;
+    const tradingOver = tradePack.ms > tradeCap;
+    const needsReason = (isWork && workOver) || (isTrading && tradingOver);
+    if (!needsReason) return { ok: true, needsReason: false, workOver, tradingOver };
+    if (remark) return { ok: true, needsReason: true, workOver, tradingOver };
+    const bits = [];
+    if (isWork && workOver) {
+      bits.push(
+        "今日（" +
+          workPack.bounds.wakeLabel +
+          " 起）Work 已 " +
+          formatHoursMinutes_(workPack.ms) +
+          "（上限 " +
+          formatHoursMinutes_(workCap) +
+          "）。停低手；若仍要入 Work，Remark 請填 Reason。"
+      );
+    }
+    if (isTrading && tradingOver) {
+      bits.push(
+        "今日 Trading 已 " +
+          formatHoursMinutes_(tradePack.ms) +
+          "（上限 " +
+          formatHoursMinutes_(tradeCap) +
+          "）。停低手；若仍要入 Trading，Remark 請填 Reason。"
+      );
+    }
+    return { ok: false, message: bits.join(" "), needsReason: true, workOver, tradingOver };
+  }
+
+  function applyReasonPrefixIfNeeded_(ev, needsReason) {
+    if (!needsReason || !ev) return;
+    const r = String(ev.remark || "").trim();
+    if (!r) return;
+    if (/^reason\s*:/i.test(r)) ev.remark = r;
+    else ev.remark = "Reason: " + r;
+  }
+
+  function syncRemarkLabelsForSoftCap_() {
+    const now = Date.now();
+    const workPack = sumWorkMsInWakeDay(now);
+    const tradePack = sumTradingMsInWakeDay(now);
+    const workOver = workPack.ms > getWorkCapMs_();
+    const tradingOver = tradePack.ms > getTradingCapMs_();
+    const needHint = workOver || tradingOver;
+    const labelText = needHint ? "Remark / Reason（超限入 Work／Trading 時必填）" : "Remark";
+    const ph = needHint ? "超限仍要入：請填 Reason（平時可留空）" : "";
+    [
+      ["quickRemark", "label[for=quickRemark]"],
+      ["manualRemark", "label[for=manualRemark]"],
+    ].forEach(([id, labSel]) => {
+      const lab = document.querySelector(labSel);
+      if (lab) lab.textContent = labelText;
+      const ta = document.getElementById(id);
+      if (ta) ta.placeholder = ph;
+    });
+  }
+
+  function refreshSoftCapBanner() {
+    const el = document.getElementById("softCapBanner");
+    if (!el) return;
+    const now = Date.now();
+    const workPack = sumWorkMsInWakeDay(now);
+    const tradePack = sumTradingMsInWakeDay(now);
+    const workCap = getWorkCapMs_();
+    const tradeCap = getTradingCapMs_();
+    const workOver = workPack.ms > workCap;
+    const tradingOver = tradePack.ms > tradeCap;
+    syncRemarkLabelsForSoftCap_();
+    if (!workOver && !tradingOver) {
+      el.classList.add("hidden");
+      el.textContent = "";
+      return;
+    }
+    const lines = [];
+    if (workOver) {
+      lines.push(
+        "Work " +
+          formatHoursMinutes_(workPack.ms) +
+          "／上限 " +
+          formatHoursMinutes_(workCap) +
+          "（清醒日 " +
+          workPack.bounds.wakeLabel +
+          " 起）。停低手；仍入 Work 要填 Reason。"
+      );
+    }
+    if (tradingOver) {
+      lines.push(
+        "Trading " +
+          formatHoursMinutes_(tradePack.ms) +
+          "／上限 " +
+          formatHoursMinutes_(tradeCap) +
+          "。停低手；仍入 Trading 要填 Reason。"
+      );
+    }
+    el.textContent = lines.join(" ");
+    el.classList.remove("hidden");
+  }
+
   /**
    * Time Stat mapping rules（對應 vault：`Time Stat mapping rules.md`）——僅用於 Report「Raw records」顯示，唔改寫入庫 event。
    */
@@ -1522,6 +1730,7 @@
     save();
     refreshActivityDatalist();
     renderTimeline();
+    refreshSoftCapBanner();
     if (silent) {
       if (formSource === "manual") clearManualLogForm();
       else if (formSource === "quick") clearQuickLogForm();
@@ -1639,6 +1848,21 @@
           }
           delete ev.project;
           if (ev.group === "Work" || ev.group === "Rest") ev.category = ev.group;
+          const formSrc = pendingApproval.formSource || "quick";
+          const remarkEl =
+            formSrc === "manual"
+              ? document.getElementById("manualRemark")
+              : document.getElementById("quickRemark");
+          if (remarkEl && String(remarkEl.value || "").trim()) {
+            ev.remark = String(remarkEl.value).trim();
+          }
+          const gate = softCapGateForEvent(ev);
+          if (!gate.ok) {
+            toast(gate.message || "請填 Remark／Reason");
+            syncRemarkLabelsForSoftCap_();
+            return;
+          }
+          applyReasonPrefixIfNeeded_(ev, gate.needsReason);
           const msg = pendingApproval.doneMsg;
           const formSource = pendingApproval.formSource;
           clearApprovalPanel();
@@ -1764,14 +1988,38 @@
     const remark = params.remark;
     const doneMsg = params.doneMsg;
     const formSource = params.formSource || "quick";
+    if (remark) ev.remark = String(remark).trim();
+    // 入庫前先用推斷／已有 group 檢查；Confirm 改 Group 後會再檢一次
+    const probe = { ...ev };
+    if (!probe.group) {
+      const cands = buildMappingCandidates(activityLabel, remark, ev.start);
+      if (cands[0] && cands[0].group) probe.group = cands[0].group;
+    }
+    const early = softCapGateForEvent(probe);
+    if (!early.ok) {
+      toast(early.message || "請填 Remark／Reason");
+      syncRemarkLabelsForSoftCap_();
+      const ta =
+        formSource === "manual"
+          ? document.getElementById("manualRemark")
+          : document.getElementById("quickRemark");
+      if (ta) {
+        try {
+          ta.focus();
+        } catch (e) {}
+      }
+      return;
+    }
     const candidates = buildMappingCandidates(activityLabel, remark, ev.start);
     if (!candidates.length) {
+      applyReasonPrefixIfNeeded_(ev, early.needsReason);
       pushEventAndRefresh(ev, doneMsg, { silent: true, formSource: formSource });
       return;
     }
     showApprovalPanel({
       ev: ev,
       activityLabel: activityLabel,
+      remark: remark,
       candidates: candidates,
       doneMsg: doneMsg,
       formSource: formSource,
@@ -3481,6 +3729,7 @@
       });
       if (tab === "report") renderReport();
       if (tab === "timeline") renderTimeline();
+      refreshSoftCapBanner();
     });
   });
 
