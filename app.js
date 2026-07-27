@@ -464,6 +464,38 @@
     toast._t = setTimeout(() => el.classList.remove("show"), 2200);
   }
 
+  /** 必須人手撳 OK 先關閉（電話鍵盤唔會遮住；唔會自動 fade） */
+  function showBlockingAlert(message) {
+    try {
+      if (document.activeElement && typeof document.activeElement.blur === "function") {
+        document.activeElement.blur();
+      }
+    } catch (e) {}
+    const overlay = document.getElementById("blockingAlert");
+    const msg = document.getElementById("blockingAlertMsg");
+    const btn = document.getElementById("blockingAlertOk");
+    if (!overlay || !msg || !btn) {
+      window.alert(String(message || ""));
+      return;
+    }
+    msg.textContent = String(message || "");
+    overlay.classList.remove("hidden");
+    const close = () => {
+      overlay.classList.add("hidden");
+      btn.removeEventListener("click", close);
+    };
+    btn.addEventListener("click", close);
+    try {
+      btn.focus();
+    } catch (e2) {}
+  }
+
+  function notifyGateFailure_(gate) {
+    const msg = (gate && gate.message) || "請填 Remark／Reason";
+    if (gate && gate.hardBlock) showBlockingAlert(msg);
+    else toast(msg);
+  }
+
   function escapeHtml(s) {
     const d = document.createElement("div");
     d.textContent = s;
@@ -1884,7 +1916,7 @@
           }
           const gate = softCapGateForEvent(ev);
           if (!gate.ok) {
-            toast(gate.message || "請填 Remark／Reason");
+            notifyGateFailure_(gate);
             return;
           }
           applyReasonPrefixIfNeeded_(ev, gate.needsReason);
@@ -2022,12 +2054,12 @@
     }
     const early = softCapGateForEvent(probe);
     if (!early.ok) {
-      toast(early.message || "請填 Remark／Reason");
+      notifyGateFailure_(early);
       const ta =
         formSource === "manual"
           ? document.getElementById("manualRemark")
           : document.getElementById("quickRemark");
-      if (ta) {
+      if (!early.hardBlock && ta) {
         try {
           ta.focus();
         } catch (e) {}
@@ -2051,10 +2083,10 @@
   }
 
   /**
-   * Place 自動建議：偏重「最近用過」同「近七日頻率」，時段只係加分。
-   * （舊邏輯淨係同鐘點先計分 → 旅行地點成日輸畀舊家）
+   * Place 排名：偏重最近用過／近七日；回傳由高至低（最多 limit 個）。
    */
-  function mostLikelyPlaceByTime(hour, minute) {
+  function rankPlacesByLikelihood(hour, minute, limit) {
+    const lim = Math.max(1, limit || 3);
     const now = Date.now();
     const monthAgo = now - 30 * DAY_MS;
     const weekAgo = now - 7 * DAY_MS;
@@ -2089,48 +2121,61 @@
     if (latestPlace) {
       score.set(latestPlace, (score.get(latestPlace) || 0) + 12);
     }
-    let best = "";
-    let bestScore = -1;
-    score.forEach((v, k) => {
-      if (v > bestScore) {
-        bestScore = v;
-        best = k;
-      }
-    });
-    return best;
+    return [...score.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-Hant"))
+      .slice(0, lim)
+      .map((e) => e[0]);
   }
 
-  function mostLikelyActivityByTime(hour, minute) {
+  function mostLikelyPlaceByTime(hour, minute) {
+    return rankPlacesByLikelihood(hour, minute, 1)[0] || "";
+  }
+
+  /** Activity 排名：近七日 + 時段；回傳最多 limit 個 */
+  function rankActivitiesByLikelihood(hour, minute, limit) {
+    const lim = Math.max(1, limit || 3);
     const now = Date.now();
     const monthAgo = now - 30 * DAY_MS;
+    const weekAgo = now - 7 * DAY_MS;
     const score = new Map();
+    let latestAct = "";
+    let latestT = -1;
+    const targetMins = hour * 60 + minute;
     for (let i = 0; i < state.events.length; i++) {
       const ev = state.events[i];
       const a = String(activityDisplayName(ev.activityId) || "").trim();
       if (!a || a === "（已刪 Activity）") continue;
       const t = new Date(ev.start).getTime();
       if (Number.isNaN(t) || t < monthAgo) continue;
+      if (t > latestT) {
+        latestT = t;
+        latestAct = a;
+      }
       const d = new Date(t);
-      const eh = d.getHours();
-      const em = d.getMinutes();
-      const diff = Math.abs(eh * 60 + em - (hour * 60 + minute));
-      let w = 0;
-      if (diff === 0) w = 5;
-      else if (eh === hour && diff <= 5) w = 3;
-      else if (eh === hour) w = 2;
-      else if (diff <= 30) w = 1;
-      if (!w) continue;
+      const diff = Math.abs(d.getHours() * 60 + d.getMinutes() - targetMins);
+      const daysAgo = (now - t) / DAY_MS;
+      let w = 1;
+      if (t >= weekAgo) w += 5;
+      if (daysAgo <= 1) w += 6;
+      else if (daysAgo <= 3) w += 3;
+      else if (daysAgo <= 7) w += 1;
+      if (diff === 0) w += 4;
+      else if (diff <= 5) w += 3;
+      else if (diff <= 30) w += 2;
+      else if (diff <= 90) w += 1;
       score.set(a, (score.get(a) || 0) + w);
     }
-    let best = "";
-    let bestScore = -1;
-    score.forEach((v, k) => {
-      if (v > bestScore) {
-        bestScore = v;
-        best = k;
-      }
-    });
-    return best;
+    if (latestAct) {
+      score.set(latestAct, (score.get(latestAct) || 0) + 8);
+    }
+    return [...score.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-Hant"))
+      .slice(0, lim)
+      .map((e) => e[0]);
+  }
+
+  function mostLikelyActivityByTime(hour, minute) {
+    return rankActivitiesByLikelihood(hour, minute, 1)[0] || "";
   }
 
   function applyAutoSuggestion(inputId, suggestedValue) {
@@ -2145,10 +2190,61 @@
     inp.dataset.userEdited = "0";
   }
 
+  function closeAllSuggestMenus_() {
+    document.querySelectorAll(".suggest-menu").forEach((m) => m.classList.add("hidden"));
+  }
+
+  function openSuggestMenu_(inputId, options) {
+    const menu = document.getElementById(inputId + "Menu");
+    const inp = document.getElementById(inputId);
+    if (!menu || !inp) return;
+    closeAllSuggestMenus_();
+    const opts = (options || []).map((x) => String(x || "").trim()).filter(Boolean);
+    menu.innerHTML = "";
+    if (!opts.length) {
+      const empty = document.createElement("div");
+      empty.className = "suggest-menu-empty muted";
+      empty.textContent = "No suggestions yet";
+      menu.appendChild(empty);
+    } else {
+      opts.forEach((label, idx) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "suggest-menu-item";
+        btn.textContent = idx + 1 + ". " + label;
+        btn.addEventListener("mousedown", (e) => e.preventDefault());
+        btn.addEventListener("click", () => {
+          inp.value = label;
+          inp.dataset.userEdited = "1";
+          inp.dataset.autoSuggestedValue = label;
+          menu.classList.add("hidden");
+        });
+        menu.appendChild(btn);
+      });
+    }
+    menu.classList.remove("hidden");
+  }
+
+  function bindSuggestChevron_(inputId, getTopOptions) {
+    const btn = document.querySelector('[data-suggest-for="' + inputId + '"]');
+    const menu = document.getElementById(inputId + "Menu");
+    if (!btn || !menu) return;
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!menu.classList.contains("hidden")) {
+        menu.classList.add("hidden");
+        return;
+      }
+      openSuggestMenu_(inputId, getTopOptions());
+    });
+  }
+
   function bindSmartInput(inputId, getSuggestedValue) {
     const inp = document.getElementById(inputId);
     if (!inp) return;
     inp.addEventListener("focus", () => {
+      closeAllSuggestMenus_();
       const auto = String(inp.dataset.autoSuggestedValue || "").trim();
       const cur = String(inp.value || "").trim();
       const edited = inp.dataset.userEdited === "1";
@@ -2210,6 +2306,27 @@
     bindSmartInput("manualActivity", () => {
       const hm = manualSelectedHM();
       return mostLikelyActivityByTime(hm.h, hm.m);
+    });
+    bindSuggestChevron_("quickPlace", () => {
+      const d = new Date();
+      return rankPlacesByLikelihood(d.getHours(), d.getMinutes(), 3);
+    });
+    bindSuggestChevron_("manualPlace", () => {
+      const hm = manualSelectedHM();
+      return rankPlacesByLikelihood(hm.h, hm.m, 3);
+    });
+    bindSuggestChevron_("quickActivity", () => {
+      const d = new Date();
+      return rankActivitiesByLikelihood(d.getHours(), d.getMinutes(), 3);
+    });
+    bindSuggestChevron_("manualActivity", () => {
+      const hm = manualSelectedHM();
+      return rankActivitiesByLikelihood(hm.h, hm.m, 3);
+    });
+    document.addEventListener("click", (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest(".suggest-field")) return;
+      closeAllSuggestMenus_();
     });
   }
 
