@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=134" />
+  <link rel="stylesheet" href="styles.css?v=135" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -40,6 +40,7 @@
     <button type="button" data-tab="report">Report</button>
   </div>
   <div class="auth-bar">
+    <span id="remoteSyncHint" class="auth-sync muted"></span>
     <span id="authEmailLabel" class="auth-email muted"></span>
     <button type="button" class="ghost auth-signout hidden" id="btnSignOut">Sign out</button>
   </div>
@@ -187,6 +188,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=134"></script>
+  <script src="app.js?v=135"></script>
 </body>
 </html>

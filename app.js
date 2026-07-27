@@ -196,6 +196,9 @@
       });
       const projectsRegistry = Array.isArray(o.projectsRegistry) ? o.projectsRegistry : [];
       const out = { version: o.version || 3, activities, events, structure: [], projectsRegistry };
+      if (o.updatedAt != null && Number.isFinite(Number(o.updatedAt))) {
+        out.updatedAt = Number(o.updatedAt);
+      }
       return { out, anyIdFixed };
     } catch (e) {
       return null;
@@ -303,27 +306,152 @@
     if (state.events.length < b) save();
   })();
 
+  let _remotePushInflight = null;
+  let _remotePushAgain = false;
+  let _remoteSyncStatus = ""; // "", "ok", "pending", "error"
+
+  function setRemoteSyncStatus_(status, detail) {
+    _remoteSyncStatus = status || "";
+    const el = document.getElementById("remoteSyncHint");
+    if (!el) return;
+    if (!useRemoteSync()) {
+      el.textContent = "";
+      return;
+    }
+    if (!isSignedIn()) {
+      el.textContent = "Cloud: signed out";
+      return;
+    }
+    if (status === "pending") el.textContent = "Cloud: syncing…";
+    else if (status === "ok")
+      el.textContent = "Cloud: synced · " + state.events.length + " events";
+    else if (status === "error")
+      el.textContent = "Cloud: sync failed" + (detail ? " · " + detail : "");
+    else el.textContent = "Cloud: ready";
+  }
+
+  async function pushRemoteStateOnce_() {
+    const url = getRemotePostUrl();
+    if (!url || !canRemoteSync()) return { ok: false, error: "not_ready" };
+    // 確保每次寫入有單調時間戳，避免並行／多裝置舊寫覆蓋新寫
+    if (state.updatedAt == null || !Number.isFinite(Number(state.updatedAt))) {
+      state.updatedAt = Date.now();
+    }
+    const payloadState = JSON.parse(JSON.stringify(state));
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(remoteAuthBody({ state: payloadState })),
+      mode: "cors",
+      cache: "no-store",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (j && j.ok === false) {
+      if (String(j.error || "") === "stale_write" && j.state) {
+        return { ok: false, error: "stale_write", serverState: j.state };
+      }
+      handleRemoteUnauthorized_(j.error);
+      return { ok: false, error: (j && j.error) || "push_failed" };
+    }
+    if (!j || j.ok !== true) return { ok: false, error: (j && j.error) || "push_failed" };
+    return { ok: true };
+  }
+
+  function mergeRemoteStateIntoLocal_(remoteObj) {
+    const parsed = normalizeStateFromParsed(remoteObj);
+    if (!parsed) return false;
+    const remote = parsed.out;
+    const byKey = new Map();
+    for (const ev of remote.events || []) byKey.set(eventImportDedupeKey(ev), ev);
+    for (const ev of state.events || []) {
+      const k = eventImportDedupeKey(ev);
+      if (!byKey.has(k)) byKey.set(k, ev);
+    }
+    const actById = new Map();
+    for (const a of remote.activities || []) actById.set(a.id, a);
+    for (const a of state.activities || []) {
+      if (!actById.has(a.id)) actById.set(a.id, a);
+    }
+    const reg = new Set(
+      []
+        .concat(remote.projectsRegistry || [], state.projectsRegistry || [])
+        .map((x) => String(x || "").trim())
+        .filter(Boolean)
+    );
+    const remoteTs = Number(remoteObj && remoteObj.updatedAt);
+    const localTs = Number(state.updatedAt);
+    state = {
+      version: remote.version || state.version || 3,
+      activities: Array.from(actById.values()),
+      events: Array.from(byKey.values()),
+      structure: [],
+      projectsRegistry: Array.from(reg),
+      updatedAt: Math.max(
+        Date.now(),
+        Number.isFinite(remoteTs) ? remoteTs : 0,
+        Number.isFinite(localTs) ? localTs : 0
+      ),
+    };
+    bumpEventsMutationGen();
+    dedupeStateEventsByImportKey();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    } catch (e) {}
+    return true;
+  }
+
   async function pushRemoteStateQuiet() {
     if (!canRemoteSync()) return;
-    const url = getRemotePostUrl();
-    if (!url) return;
-    try {
-      const r = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify(remoteAuthBody({ state: state })),
-        mode: "cors",
-        cache: "no-store",
-      });
-      const j = await r.json().catch(() => ({}));
-      if (j && j.ok === false) handleRemoteUnauthorized_(j.error);
-    } catch (e) {
-      /* ignore network */
-    }
+    _remotePushAgain = true;
+    setRemoteSyncStatus_("pending");
+    if (_remotePushInflight) return _remotePushInflight;
+    _remotePushInflight = (async () => {
+      let lastErr = "";
+      try {
+        while (_remotePushAgain) {
+          _remotePushAgain = false;
+          try {
+            const res = await pushRemoteStateOnce_();
+            if (res.ok) {
+              lastErr = "";
+              continue;
+            }
+            if (res.error === "stale_write" && res.serverState) {
+              mergeRemoteStateIntoLocal_(res.serverState);
+              state.updatedAt = Date.now();
+              try {
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+              } catch (e) {}
+              _remotePushAgain = true;
+              continue;
+            }
+            lastErr = res.error || "push_failed";
+          } catch (e) {
+            lastErr = (e && e.message) || "network";
+          }
+        }
+      } finally {
+        _remotePushInflight = null;
+        if (_remotePushAgain) {
+          void pushRemoteStateQuiet();
+          return;
+        }
+        if (lastErr) {
+          setRemoteSyncStatus_("error", lastErr);
+          try {
+            toast("Cloud sync failed: " + lastErr);
+          } catch (e2) {}
+        } else {
+          setRemoteSyncStatus_("ok");
+        }
+      }
+    })();
+    return _remotePushInflight;
   }
 
   function save() {
     state.structure = [];
+    state.updatedAt = Date.now();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     void pushRemoteStateQuiet();
   }
@@ -3660,52 +3788,29 @@
     const prevEvCount = state.events.length;
     const nextEvCount = (parsed.out.events || []).length;
     if (nextEvCount === 0 && prevEvCount > 0) {
-      toast("遠端 0 筆紀錄，已保留本機 " + prevEvCount + " 筆。");
+      toast("遠端 0 筆紀錄，已保留本機 " + prevEvCount + " 筆，並寫上雲端。");
+      state.updatedAt = Date.now();
+      await pushRemoteStateQuiet();
       return;
     }
-    // 遠端明顯少過本機：合併保留，避免 truncated／錯部署覆蓋掉資料
-    if (prevEvCount > 0 && nextEvCount > 0 && nextEvCount < prevEvCount) {
-      const remote = parsed.out;
-      const byKey = new Map();
-      for (const ev of remote.events || []) byKey.set(eventImportDedupeKey(ev), ev);
-      for (const ev of state.events || []) {
-        const k = eventImportDedupeKey(ev);
-        if (!byKey.has(k)) byKey.set(k, ev);
+    // 兩邊都有資料：永遠做 union merge，避免「雲端較多但缺本機幾筆」時覆蓋掉 log
+    if (prevEvCount > 0 && nextEvCount > 0) {
+      const remoteOnly = nextEvCount;
+      mergeRemoteStateIntoLocal_(j.state);
+      state.updatedAt = Date.now();
+      if (state.events.length > remoteOnly) {
+        toast(
+          "已合併本機＋雲端：" +
+            state.events.length +
+            " 筆（雲端原 " +
+            remoteOnly +
+            "，本機有多出嘅會寫返上）。"
+        );
       }
-      const actById = new Map();
-      for (const a of remote.activities || []) actById.set(a.id, a);
-      for (const a of state.activities || []) {
-        if (!actById.has(a.id)) actById.set(a.id, a);
-      }
-      const reg = new Set(
-        []
-          .concat(remote.projectsRegistry || [], state.projectsRegistry || [])
-          .map((x) => String(x || "").trim())
-          .filter(Boolean)
-      );
-      state = {
-        version: remote.version || state.version || 3,
-        activities: Array.from(actById.values()),
-        events: Array.from(byKey.values()),
-        structure: [],
-        projectsRegistry: Array.from(reg),
-      };
-      toast(
-        "遠端 " +
-          nextEvCount +
-          " 筆 < 本機 " +
-          prevEvCount +
-          " 筆，已合併為 " +
-          state.events.length +
-          " 筆（唔覆蓋刪減）。"
-      );
-      bumpEventsMutationGen();
-      dedupeStateEventsByImportKey();
-      state.structure = [];
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
       } catch (e) {}
-      void pushRemoteStateQuiet();
+      await pushRemoteStateQuiet();
       refreshActivityDatalist();
       refreshProjectPickers();
       fillMergeSelects();
@@ -3720,12 +3825,15 @@
       return;
     }
     state = parsed.out;
+    if (state.updatedAt == null) state.updatedAt = Date.now();
     bumpEventsMutationGen();
     dedupeStateEventsByImportKey();
     state.structure = [];
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch (e) {}
+    // 登入後再 push 一次，確保本機有而雲端缺嘅筆寫返上（排隊、唔並行）
+    void pushRemoteStateQuiet();
     refreshActivityDatalist();
     refreshProjectPickers();
     fillMergeSelects();
@@ -3762,6 +3870,7 @@
     const email = getAuthEmail();
     if (emailEl) emailEl.textContent = email || "";
     if (btnOut) btnOut.classList.toggle("hidden", !isSignedIn());
+    setRemoteSyncStatus_(_remoteSyncStatus || (isSignedIn() ? "ok" : ""));
   }
 
   function parseJwtEmail_(credential) {
@@ -3914,6 +4023,17 @@
     }
     tick();
   })();
+
+  try {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden" && canRemoteSync()) {
+        void pushRemoteStateQuiet();
+      }
+    });
+    window.addEventListener("pagehide", () => {
+      if (canRemoteSync()) void pushRemoteStateQuiet();
+    });
+  } catch (eVis) {}
 
   refreshActivityDatalist();
   refreshProjectPickers();

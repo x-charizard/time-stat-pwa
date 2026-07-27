@@ -981,8 +981,28 @@ function doPost(e) {
 
   if (!body.state || typeof body.state !== "object") return authFail_("missing_state");
   try {
-    writeStateToSheet_(body.state);
-    return jsonOut_(authOkFields_({}));
+    var incoming = body.state;
+    var prev = readStateFromSheet_();
+    var inTs = incoming && incoming.updatedAt != null ? Number(incoming.updatedAt) : NaN;
+    var prevTs = prev && prev.updatedAt != null ? Number(prev.updatedAt) : NaN;
+    if (
+      prev &&
+      isFinite(prevTs) &&
+      isFinite(inTs) &&
+      inTs > 0 &&
+      prevTs > 0 &&
+      inTs < prevTs
+    ) {
+      return jsonOut_({
+        ok: false,
+        error: "stale_write",
+        authApi: AUTH_API,
+        state: prev,
+        serverUpdatedAt: prevTs,
+      });
+    }
+    writeStateToSheet_(incoming);
+    return jsonOut_(authOkFields_({ events: Array.isArray(incoming.events) ? incoming.events.length : 0 }));
   } catch (err2) {
     return authFail_(String(err2 && err2.message ? err2.message : err2));
   }

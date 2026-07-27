@@ -1512,13 +1512,22 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   gap: 10px;
   margin: -6px 0 12px;
   min-height: 36px;
+  flex-wrap: wrap;
+}
+.auth-sync {
+  font-size: 0.78rem;
+  margin-right: auto;
+  max-width: 55vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .auth-email {
   font-size: 0.82rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 60vw;
+  max-width: 40vw;
 }
 .auth-signout {
   width: auto;
