@@ -322,12 +322,12 @@
       el.textContent = "Cloud: signed out";
       return;
     }
-    if (status === "pending") el.textContent = "Cloud: syncing… · local " + state.events.length;
-    else if (status === "ok")
-      el.textContent = "Cloud: synced · " + state.events.length + " events";
+    // 成功／就緒唔顯示（避免「Cloud: synced · N events」佔位）；只顯示同步中／失敗／未登入
+    if (status === "pending") el.textContent = "Cloud: syncing…";
+    else if (status === "ok") el.textContent = "";
     else if (status === "error")
-      el.textContent = "Cloud: sync failed" + (detail ? " · " + detail : "") + " · local " + state.events.length;
-    else el.textContent = "Cloud: ready · local " + state.events.length;
+      el.textContent = "Cloud: sync failed" + (detail ? " · " + detail : "");
+    else el.textContent = "";
   }
 
   async function pushRemoteStateOnce_() {
