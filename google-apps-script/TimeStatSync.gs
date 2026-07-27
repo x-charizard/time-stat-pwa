@@ -333,7 +333,7 @@ function writeReadableLogSheet_(obj) {
       String(ev.id || ""),
     ]);
   }
-  sh.getRange(2, 1, rows.length + 1, headers.length).setValues(rows);
+  sh.getRange(2, 1, rows.length, headers.length).setValues(rows);
   sh.setFrozenRows(1);
   try {
     sh.autoResizeColumns(1, headers.length);
