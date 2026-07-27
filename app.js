@@ -1525,18 +1525,10 @@
     if (remark) return { ok: true, needsReason: true, workOver, tradingOver };
     const bits = [];
     if (isWork && workOver) {
-      bits.push(
-        "Today's Work: " +
-          formatCapClock_(workPack.ms) +
-          "（已過 4h）。仍入 Work 請喺 Remark 填 Reason。"
-      );
+      bits.push("Today's Work: " + formatCapClock_(workPack.ms) + " — please fill Reasons in Remark.");
     }
     if (isTrading && tradingOver) {
-      bits.push(
-        "Today's Trading: " +
-          formatCapClock_(tradePack.ms) +
-          "（已過 2h）。仍入 Trading 請喺 Remark 填 Reason。"
-      );
+      bits.push("Today's Trading: " + formatCapClock_(tradePack.ms) + " — please fill Reasons in Remark.");
     }
     return { ok: false, message: bits.join(" "), needsReason: true, workOver, tradingOver };
   }
@@ -1549,6 +1541,24 @@
     else ev.remark = "Reason: " + r;
   }
 
+  function syncRemarkFieldLabels_(needReasons) {
+    const title = needReasons ? "Reasons" : "Remark";
+    const qLab = document.querySelector("label[for=quickRemark]");
+    const mLab = document.querySelector("label[for=manualRemark]");
+    if (qLab) qLab.textContent = title;
+    if (mLab) mLab.textContent = title;
+    const q = document.getElementById("quickRemark");
+    const m = document.getElementById("manualRemark");
+    if (q) {
+      q.placeholder = "";
+      q.removeAttribute("placeholder");
+    }
+    if (m) {
+      m.placeholder = "";
+      m.removeAttribute("placeholder");
+    }
+  }
+
   function refreshSoftCapBanner() {
     const el = document.getElementById("softCapBanner");
     if (!el) return;
@@ -1559,18 +1569,15 @@
     const tradeCap = getTradingCapMs_();
     const workOver = workPack.ms > workCap;
     const tradingOver = tradePack.ms > tradeCap;
-    const afterHours = isInWorkHardBlockWindow_(now);
-    const qLab = document.querySelector("label[for=quickRemark]");
-    const mLab = document.querySelector("label[for=manualRemark]");
-    if (qLab) qLab.textContent = "Remark";
-    if (mLab) mLab.textContent = "Remark";
-    if (!workOver && !tradingOver && !afterHours) {
+    // 17:00 唔做常駐 banner；只喺嘗試入 Work 時 toast + 硬擋
+    // Reasons 標籤：只喺已超 Work／Trading 上限（入庫可能要填 reason）先顯示
+    syncRemarkFieldLabels_(workOver || tradingOver);
+    if (!workOver && !tradingOver) {
       el.classList.add("hidden");
       el.textContent = "";
       return;
     }
     const lines = [];
-    if (afterHours) lines.push(MSG_GET_REST_AFTER_17);
     if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
     if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
     el.textContent = lines.join(" · ");
