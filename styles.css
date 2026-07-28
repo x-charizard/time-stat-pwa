@@ -1552,6 +1552,15 @@ body.auth-locked [data-panel] {
   font-size: 0.9rem;
   line-height: 1.45;
 }
+.soft-cap-banner--warn {
+  border-color: #c45c1a;
+  background: rgba(238, 131, 38, 0.18);
+}
+.soft-cap-banner--danger {
+  border-color: #c62828;
+  background: rgba(198, 40, 40, 0.28);
+  color: #ffe8e8;
+}
 .soft-cap-banner.hidden {
   display: none !important;
 }

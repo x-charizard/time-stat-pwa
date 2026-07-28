@@ -1416,17 +1416,27 @@
     }
   }
 
+  /** Work soft-cap（超限要填 Reasons）；預設 6h */
   function getWorkCapMs_() {
     try {
-      const n = Number(localStorage.getItem(WORK_CAP_HOURS_KEY));
+      const raw = localStorage.getItem(WORK_CAP_HOURS_KEY);
+      if (raw == null || raw === "") return 6 * 3600000;
+      const n = Number(raw);
       if (Number.isFinite(n) && n > 0) return n * 3600000;
     } catch (e) {}
+    return 6 * 3600000;
+  }
+
+  /** Banner 由呢個時數開始顯示（未到 soft-cap 亦可提醒） */
+  function getWorkWarnMs_() {
     return 4 * 3600000;
   }
 
   function getTradingCapMs_() {
     try {
-      const n = Number(localStorage.getItem(TRADING_CAP_HOURS_KEY));
+      const raw = localStorage.getItem(TRADING_CAP_HOURS_KEY);
+      if (raw == null || raw === "") return 2 * 3600000;
+      const n = Number(raw);
       if (Number.isFinite(n) && n > 0) return n * 3600000;
     } catch (e) {}
     return 2 * 3600000;
@@ -1435,7 +1445,10 @@
   /** 本地鐘：17:00（含）至翌日 wake 之前 = 硬擋 Work 時段 */
   function getWorkCutoffHour_() {
     try {
-      const n = Number(localStorage.getItem(WORK_CUTOFF_HOUR_KEY));
+      // 注意：Number(null)===0，唔可以當有效 cutoff（否則全日硬擋）
+      const raw = localStorage.getItem(WORK_CUTOFF_HOUR_KEY);
+      if (raw == null || String(raw).trim() === "") return 17;
+      const n = Number(raw);
       if (Number.isFinite(n) && n >= 0 && n <= 23) return Math.floor(n);
     } catch (e) {}
     return 17;
@@ -1448,6 +1461,7 @@
     const cutoffMins = getWorkCutoffHour_() * 60;
     const wake = getWakeTimeHm_();
     const wakeMins = wake.h * 60 + wake.mi;
+    // [cutoff, 24:00) ∪ [00:00, wake)
     if (mins >= cutoffMins) return true;
     if (mins < wakeMins) return true;
     return false;
@@ -1587,22 +1601,28 @@
     const workPack = sumWorkMsInWakeDay(now);
     const tradePack = sumTradingMsInWakeDay(now);
     const workCap = getWorkCapMs_();
+    const workWarn = getWorkWarnMs_();
     const tradeCap = getTradingCapMs_();
     const workOver = workPack.ms > workCap;
+    const workWarnShow = workPack.ms >= workWarn;
     const tradingOver = tradePack.ms > tradeCap;
-    // 17:00 唔做常駐 banner；只喺嘗試入 Work 時 toast + 硬擋
-    // Reasons 標籤：只喺已超 Work／Trading 上限（入庫可能要填 reason）先顯示
+    // 17:00 唔做常駐 banner；只喺嘗試入 Work 時 modal + 硬擋
+    // Reasons 標籤：只喺已超 Work／Trading soft-cap（入庫可能要填 reason）先顯示
     syncRemarkFieldLabels_(workOver || tradingOver);
-    if (!workOver && !tradingOver) {
+    if (!workWarnShow && !tradingOver) {
       el.classList.add("hidden");
+      el.classList.remove("soft-cap-banner--warn", "soft-cap-banner--danger");
       el.textContent = "";
       return;
     }
     const lines = [];
-    if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
+    if (workWarnShow) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
     if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
     el.textContent = lines.join(" · ");
-    el.classList.remove("hidden");
+    el.classList.remove("hidden", "soft-cap-banner--warn", "soft-cap-banner--danger");
+    // Work：≥4h 顯示；≥6h（soft-cap）變紅。Trading 超限亦用紅。
+    if (workPack.ms >= workCap || tradingOver) el.classList.add("soft-cap-banner--danger");
+    else el.classList.add("soft-cap-banner--warn");
   }
 
   /**
@@ -2040,15 +2060,24 @@
   /**
    * 過濾極少出現／疑似錯字：次數 < minCount 唔入榜；
    * 若短字串係另一個更長、更常用字串嘅 prefix（Ubu ⊂ Ubud），剔走短嗰個。
+   * @param {{ sortByScore?: boolean, minCount?: number }} [opts]
    */
-  function finalizeSuggestRanking_(scoredEntries, countMap, limit) {
+  function finalizeSuggestRanking_(scoredEntries, countMap, limit, opts) {
     const lim = Math.max(1, limit || 3);
-    const minCount = 2;
+    const minCount = opts && opts.minCount != null ? opts.minCount : 2;
+    const sortByScore = !!(opts && opts.sortByScore);
     let entries = scoredEntries.slice().sort((a, b) => {
-      const ca = countMap.get(a[0]) || 0;
-      const cb = countMap.get(b[0]) || 0;
-      if (cb !== ca) return cb - ca;
-      if (b[1] !== a[1]) return b[1] - a[1];
+      if (sortByScore) {
+        if (b[1] !== a[1]) return b[1] - a[1];
+        const ca = countMap.get(a[0]) || 0;
+        const cb = countMap.get(b[0]) || 0;
+        if (cb !== ca) return cb - ca;
+      } else {
+        const ca = countMap.get(a[0]) || 0;
+        const cb = countMap.get(b[0]) || 0;
+        if (cb !== ca) return cb - ca;
+        if (b[1] !== a[1]) return b[1] - a[1];
+      }
       return a[0].localeCompare(b[0], "zh-Hant");
     });
     const solid = entries.filter((e) => (countMap.get(e[0]) || 0) >= minCount);
@@ -2117,49 +2146,84 @@
     return rankPlacesByLikelihood(hour, minute, 1)[0] || "";
   }
 
-  /** Activity 排名：頻率優先；單次錯字／罕用名唔入 Top */
-  function rankActivitiesByLikelihood(hour, minute, limit) {
+  function clockDiffMins_(aMins, bMins) {
+    const diff = Math.abs(aMins - bMins);
+    return Math.min(diff, 1440 - diff);
+  }
+
+  function timeProximityWeight_(clockDiff) {
+    if (clockDiff === 0) return 24;
+    if (clockDiff <= 5) return 18;
+    if (clockDiff <= 15) return 12;
+    if (clockDiff <= 30) return 7;
+    if (clockDiff <= 60) return 3;
+    if (clockDiff <= 90) return 1;
+    return 0;
+  }
+
+  /**
+   * Activity 排名：以「目標時：分」為主；
+   * 加分來源 = 近幾日同時段 + 過去數星期同一個 weekday 同時段。
+   * 分數優先（唔再用總頻率壓過時段命中）。
+   */
+  function rankActivitiesByLikelihood(hour, minute, limit, refDate) {
     const lim = Math.max(1, limit || 3);
-    const now = Date.now();
-    const monthAgo = now - 30 * DAY_MS;
-    const weekAgo = now - 7 * DAY_MS;
-    const score = new Map();
-    const count = new Map();
-    let latestAct = "";
-    let latestT = -1;
+    const ref =
+      refDate instanceof Date && !Number.isNaN(refDate.getTime()) ? refDate : new Date();
+    const refMs = ref.getTime();
+    const targetDow = ref.getDay();
     const targetMins = hour * 60 + minute;
+    const recentCut = refMs - 7 * DAY_MS;
+    const dowLookback = refMs - 56 * DAY_MS; // ~8 個同一個 weekday
+    const score = new Map();
+    const hitCount = new Map();
+    const rawCount = new Map();
+
     for (let i = 0; i < state.events.length; i++) {
       const ev = state.events[i];
       const a = String(activityDisplayName(ev.activityId) || "").trim();
       if (!a || a === "（已刪 Activity）") continue;
       const t = new Date(ev.start).getTime();
-      if (Number.isNaN(t) || t < monthAgo) continue;
-      count.set(a, (count.get(a) || 0) + 1);
-      if (t > latestT) {
-        latestT = t;
-        latestAct = a;
-      }
+      if (Number.isNaN(t) || t > refMs || t < dowLookback) continue;
+      rawCount.set(a, (rawCount.get(a) || 0) + 1);
+
       const d = new Date(t);
-      const diff = Math.abs(d.getHours() * 60 + d.getMinutes() - targetMins);
-      const daysAgo = (now - t) / DAY_MS;
-      let w = 1;
-      if (t >= weekAgo) w += 5;
-      if (daysAgo <= 1) w += 5;
-      else if (daysAgo <= 3) w += 3;
-      else if (daysAgo <= 7) w += 1;
-      if (diff === 0) w += 3;
-      else if (diff <= 5) w += 2;
-      else if (diff <= 30) w += 1;
+      const clockDiff = clockDiffMins_(d.getHours() * 60 + d.getMinutes(), targetMins);
+      const prox = timeProximityWeight_(clockDiff);
+      if (prox <= 0) continue;
+
+      const daysAgo = (refMs - t) / DAY_MS;
+      const sameDow = d.getDay() === targetDow;
+      let w = 0;
+
+      // 近 7 日（任何 weekday）：同時段
+      if (t >= recentCut) {
+        const dayDecay = daysAgo <= 1 ? 1.25 : daysAgo <= 3 ? 1 : 0.75;
+        w += prox * dayDecay;
+      }
+
+      // 過去數星期同一個 weekday：同時段（含今日／近七日，可疊加）
+      if (sameDow) {
+        const weeksAgo = daysAgo / 7;
+        const weekDecay =
+          weeksAgo <= 1 ? 1.15 : weeksAgo <= 2 ? 1 : weeksAgo <= 4 ? 0.8 : 0.55;
+        w += prox * 1.35 * weekDecay;
+      }
+
+      if (w <= 0) continue;
+      hitCount.set(a, (hitCount.get(a) || 0) + 1);
       score.set(a, (score.get(a) || 0) + w);
     }
-    if (latestAct && (count.get(latestAct) || 0) >= 2) {
-      score.set(latestAct, (score.get(latestAct) || 0) + 5);
-    }
-    return finalizeSuggestRanking_([...score.entries()], count, lim);
+
+    // 分數優先；rawCount 只用作剔錯字（Ubu 類）
+    return finalizeSuggestRanking_([...score.entries()], rawCount, lim, {
+      sortByScore: true,
+      minCount: 1,
+    });
   }
 
-  function mostLikelyActivityByTime(hour, minute) {
-    return rankActivitiesByLikelihood(hour, minute, 1)[0] || "";
+  function mostLikelyActivityByTime(hour, minute, refDate) {
+    return rankActivitiesByLikelihood(hour, minute, 1, refDate)[0] || "";
   }
 
   function applyAutoSuggestion(inputId, suggestedValue) {
@@ -2262,16 +2326,31 @@
     return { h: d.getHours(), m: d.getMinutes() };
   }
 
+  /** Manual 表單目標時間（含日期 → weekday）；缺欄就用而家 */
+  function manualSelectedRefDate() {
+    const dateNorm = String(document.getElementById("manualDateSelected")?.value || "").trim();
+    const hm = manualSelectedHM();
+    if (dateNorm) {
+      const d = new Date(
+        `${dateNorm}T${String(hm.h).padStart(2, "0")}:${String(hm.m).padStart(2, "0")}:00`
+      );
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), hm.h, hm.m, 0, 0);
+  }
+
   function refreshQuickAutoSuggestions() {
     const d = new Date();
     applyAutoSuggestion("quickPlace", mostLikelyPlaceByTime(d.getHours(), d.getMinutes()));
-    applyAutoSuggestion("quickActivity", mostLikelyActivityByTime(d.getHours(), d.getMinutes()));
+    applyAutoSuggestion("quickActivity", mostLikelyActivityByTime(d.getHours(), d.getMinutes(), d));
   }
 
   function refreshManualAutoSuggestions() {
     const hm = manualSelectedHM();
+    const ref = manualSelectedRefDate();
     applyAutoSuggestion("manualPlace", mostLikelyPlaceByTime(hm.h, hm.m));
-    applyAutoSuggestion("manualActivity", mostLikelyActivityByTime(hm.h, hm.m));
+    applyAutoSuggestion("manualActivity", mostLikelyActivityByTime(hm.h, hm.m, ref));
   }
 
   function bindPlaceAutoSuggest() {
@@ -2285,11 +2364,11 @@
     });
     bindSmartInput("quickActivity", () => {
       const d = new Date();
-      return mostLikelyActivityByTime(d.getHours(), d.getMinutes());
+      return mostLikelyActivityByTime(d.getHours(), d.getMinutes(), d);
     });
     bindSmartInput("manualActivity", () => {
       const hm = manualSelectedHM();
-      return mostLikelyActivityByTime(hm.h, hm.m);
+      return mostLikelyActivityByTime(hm.h, hm.m, manualSelectedRefDate());
     });
     bindSuggestChevron_("quickPlace", () => {
       const d = new Date();
@@ -2301,11 +2380,11 @@
     });
     bindSuggestChevron_("quickActivity", () => {
       const d = new Date();
-      return rankActivitiesByLikelihood(d.getHours(), d.getMinutes(), 3);
+      return rankActivitiesByLikelihood(d.getHours(), d.getMinutes(), 3, d);
     });
     bindSuggestChevron_("manualActivity", () => {
       const hm = manualSelectedHM();
-      return rankActivitiesByLikelihood(hm.h, hm.m, 3);
+      return rankActivitiesByLikelihood(hm.h, hm.m, 3, manualSelectedRefDate());
     });
     document.addEventListener("click", (e) => {
       const t = e.target;
