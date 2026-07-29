@@ -43,24 +43,24 @@
    * 亦可由 config.remote.json 的 execUrl／googleClientId 覆寫。
    */
   const REMOTE_SYNC_BASE_DEFAULT =
-    "https://script.google.com/macros/s/AKfycbychnH7RHqxJbfRmbjdKjE2ejRRGWxLhZZkgyCJW0a_6_G_Aqk3lcLHP1ZqTN2f6Bp9fA/exec";
+    "https://script.google.com/macros/s/AKfycbx-FXrKsSY8lAFEQJHKHAaT2PPRZCW7B01UvpVtVEWf34eFijBLdnXltCfeFNGYYS_eIA/exec";
   /** 填入你嘅 OAuth Web Client ID，例如 123456789-xxxx.apps.googleusercontent.com */
   const GOOGLE_CLIENT_ID_DEFAULT =
     "348329876798-nhvl3ppsckle1lv1r7u3vs2tb6pm3al0.apps.googleusercontent.com";
 
   function getRemoteSyncBase() {
-    const baked = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
-    if (baked) return baked;
-    try {
-      const u = localStorage.getItem(REMOTE_LS_BASE_KEY);
-      if (u && String(u).trim()) return String(u).trim();
-    } catch (e) {}
     try {
       if (typeof window !== "undefined" && window.__TIME_STAT_REMOTE_BASE__) {
         const w = String(window.__TIME_STAT_REMOTE_BASE__).trim();
         if (w) return w;
       }
     } catch (e2) {}
+    const baked = String(REMOTE_SYNC_BASE_DEFAULT || "").trim();
+    if (baked) return baked;
+    try {
+      const u = localStorage.getItem(REMOTE_LS_BASE_KEY);
+      if (u && String(u).trim()) return String(u).trim();
+    } catch (e) {}
     return "";
   }
 
