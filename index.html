@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=155" />
+  <link rel="stylesheet" href="styles.css?v=156" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -218,11 +218,11 @@
           </div>
           <div id="aiReportManualBox" class="ai-report-manual hidden" aria-live="polite">
             <div class="ai-report-manual-toolbar">
-              <strong>AI Report（人手 · 唔入歷史）</strong>
+              <strong id="aiReportManualTitle">AI Report（人手 · 唔入歷史）</strong>
               <button type="button" class="ghost" id="btnAiReportEmail">Email me</button>
               <button type="button" class="ghost" id="btnAiReportClose">Close</button>
             </div>
-            <pre id="aiReportManualBody" class="ai-report-md"></pre>
+            <div id="aiReportManualBody" class="ai-report-md"></div>
           </div>
           <div class="report-results" id="reportSummary"></div>
         </div>
@@ -235,48 +235,31 @@
       <div class="ai-reports-toolbar">
         <h2 class="report-h" style="margin:0;">AI Reports</h2>
         <div class="row" style="gap:8px;">
-          <button type="button" class="ghost" id="btnAiApiCheck">檢查 AI API</button>
           <button type="button" class="ghost" id="btnAiReportsRefresh">Refresh</button>
         </div>
       </div>
-      <p class="muted" style="margin:8px 0 12px;">自動月／季／年報告歷史（人手 Generate 唔會出現喺度）。</p>
-      <div id="aiReportsList" class="ai-reports-list"></div>
+      <div id="aiReportsList" class="ai-reports-list" style="margin-top:12px;"></div>
       <div id="aiReportDetail" class="ai-report-detail hidden">
         <div class="ai-reports-toolbar">
           <button type="button" class="ghost" id="btnAiReportBack">← Back</button>
           <span id="aiReportDetailTitle" class="muted"></span>
         </div>
-        <pre id="aiReportDetailBody" class="ai-report-md"></pre>
+        <div id="aiReportDetailBody" class="ai-report-md"></div>
       </div>
     </div>
     <div class="card" style="margin-top:12px;">
       <h2 class="report-h" style="margin:0 0 8px;">AI Settings</h2>
-      <p class="muted" style="margin:0 0 12px;">
-        呢度設定會存上雲端，之後<strong>自動月／季／年報告</strong>同<strong>人手 AI Report</strong>都會跟住用。
-      </p>
 
-      <label for="aiSettingSystem">點樣同 AI 溝通（system）</label>
-      <p class="muted ai-setting-help">
-        等於俾 AI 嘅「角色同規矩」：佢係邊個、用咩語言、可唔可以喊單、點樣講證據。改呢度會改變成篇報告嘅語氣同底線。
-      </p>
+      <label for="aiSettingSystem">Roles and Rules</label>
       <textarea id="aiSettingSystem" class="ai-setting-ta" rows="8"></textarea>
 
-      <label for="aiSettingOutline" style="margin-top:10px;">我想要嘅 report 結構／大綱</label>
-      <p class="muted ai-setting-help">
-        等於「報告目錄」：要有邊啲章節、次序、每章寫咩。例如一定要有執行摘要、交易時間質素、下期 3 個實驗。AI 會按呢個大綱砌 Markdown。
-      </p>
+      <label for="aiSettingOutline" style="margin-top:10px;">Structure</label>
       <textarea id="aiSettingOutline" class="ai-setting-ta" rows="8"></textarea>
 
-      <label for="aiSettingExtra" style="margin-top:10px;">額外要求（可空）</label>
-      <p class="muted ai-setting-help">
-        臨時／補充指示，例如「今季重點講 reviewing」「短啲、每章最多 5 點」。唔想加就留空。
-      </p>
+      <label for="aiSettingExtra" style="margin-top:10px;">Topic of the Period</label>
       <textarea id="aiSettingExtra" class="ai-setting-ta" rows="4"></textarea>
 
       <label for="aiSettingTemp" style="margin-top:10px;">Temperature（0–1）</label>
-      <p class="muted ai-setting-help">
-        控制「發揮幾大膽」：<strong>接近 0</strong>＝更穩、更跟數據同大綱；<strong>接近 1</strong>＝更多變化同創意（但易離題）。建議 <strong>0.2–0.4</strong> 寫專業報告。
-      </p>
       <input type="number" id="aiSettingTemp" class="input-xl" min="0" max="1" step="0.1" value="0.3" />
       <div class="row" style="margin-top:12px;gap:8px;">
         <button type="button" class="primary" id="btnAiSettingsSave">Save settings</button>
@@ -287,6 +270,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=154"></script>
+  <script src="app.js?v=156"></script>
 </body>
 </html>

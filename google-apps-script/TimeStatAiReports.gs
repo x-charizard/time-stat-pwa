@@ -1,5 +1,5 @@
 /**
- * Time Stat — Gemini 年／季／月 AI 報告
+ * Time Stat — Gemini 週／月／季／年 AI 報告
  *
  * 同 TimeStatSync.gs 放喺同一個 Apps Script 專案（多個 .gs 會自動合併）。
  * Script properties 加：GEMINI_API_KEY
@@ -58,6 +58,29 @@ function aiWakeDayStartMs_(refMs) {
   return wakeToday.getTime();
 }
 
+function aiIsoWeekKeyFromDate_(d) {
+  var date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  var dayNr = (date.getDay() + 6) % 7; // Mon=0
+  date.setDate(date.getDate() - dayNr + 3); // Thursday
+  var weekYear = date.getFullYear();
+  var week1 = new Date(weekYear, 0, 4);
+  var day1 = (week1.getDay() + 6) % 7;
+  week1.setDate(week1.getDate() - day1); // Monday of ISO week 1
+  var weekNo = 1 + Math.round((date.getTime() - week1.getTime()) / 604800000);
+  return weekYear + "-W" + ("0" + weekNo).slice(-2);
+}
+
+function aiMondayOfIsoWeek_(weekKey) {
+  var m = String(weekKey || "").match(/^(\d{4})-W(\d{2})$/i);
+  if (!m) throw new Error("bad_period_key_week");
+  var y = parseInt(m[1], 10);
+  var w = parseInt(m[2], 10);
+  var week1 = new Date(y, 0, 4);
+  var day1 = (week1.getDay() + 6) % 7;
+  week1.setDate(week1.getDate() - day1);
+  return new Date(week1.getFullYear(), week1.getMonth(), week1.getDate() + (w - 1) * 7);
+}
+
 function aiPeriodRange_(periodType, periodKey) {
   var type = String(periodType || "").toLowerCase();
   var key = String(periodKey || "").trim();
@@ -88,6 +111,12 @@ function aiPeriodRange_(periodType, periodKey) {
     if (!yy) throw new Error("bad_period_key_year");
     fromYmd = key + "-01-01";
     toYmd = key + "-12-31";
+  } else if (type === "week") {
+    // ISO week YYYY-Www (Mon–Sun)
+    var mon = aiMondayOfIsoWeek_(key);
+    fromYmd = aiYmdLocal_(mon.getTime());
+    var sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+    toYmd = aiYmdLocal_(sun.getTime());
   } else if (type === "custom") {
     var parts = key.split("/");
     if (parts.length !== 2) throw new Error("bad_period_key_custom");
@@ -99,6 +128,73 @@ function aiPeriodRange_(periodType, periodKey) {
   var fromMs = new Date(fromYmd + "T00:00:00").getTime();
   var toMs = new Date(toYmd + "T23:59:59.999").getTime();
   return { fromYmd: fromYmd, toYmd: toYmd, fromMs: fromMs, toMs: toMs, periodType: type, periodKey: key };
+}
+
+/** delta = -1 → 上一個同類型週期 key */
+function aiShiftPeriodKey_(periodType, periodKey, delta) {
+  var type = String(periodType || "").toLowerCase();
+  var key = String(periodKey || "").trim();
+  var dlt = Number(delta) || 0;
+  if (type === "month") {
+    var ym = key.match(/^(\d{4})-(\d{2})$/);
+    if (!ym) return null;
+    var dm = new Date(parseInt(ym[1], 10), parseInt(ym[2], 10) - 1 + dlt, 1);
+    return dm.getFullYear() + "-" + ("0" + (dm.getMonth() + 1)).slice(-2);
+  }
+  if (type === "quarter") {
+    var q = key.match(/^(\d{4})-Q([1-4])$/i);
+    if (!q) return null;
+    var total = parseInt(q[1], 10) * 4 + (parseInt(q[2], 10) - 1) + dlt;
+    var ny = Math.floor(total / 4);
+    var nq = total - ny * 4 + 1;
+    return ny + "-Q" + nq;
+  }
+  if (type === "year") {
+    var yy = key.match(/^(\d{4})$/);
+    if (!yy) return null;
+    return String(parseInt(yy[1], 10) + dlt);
+  }
+  if (type === "week") {
+    try {
+      var mon = aiMondayOfIsoWeek_(key);
+      mon.setDate(mon.getDate() + dlt * 7);
+      return aiIsoWeekKeyFromDate_(mon);
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+
+function attachAiComparisons_(state, stats) {
+  if (!stats) return stats;
+  var type = String(stats.periodType || "").toLowerCase();
+  if (type === "custom") {
+    stats.comparisons = [];
+    stats.comparisonNote = "自訂範圍唔附帶連續週期對比。";
+    return stats;
+  }
+  var count = type === "week" ? 3 : 2;
+  var comparisons = [];
+  for (var i = 1; i <= count; i++) {
+    var pk = aiShiftPeriodKey_(type, stats.periodKey, -i);
+    if (!pk) continue;
+    try {
+      var s = aggregatePeriodStatsForAi_(state, type, pk);
+      comparisons.push({
+        periodKey: s.periodKey,
+        range: s.range,
+        totals: s.totals,
+        focusMetrics: s.focusMetrics,
+        byGroup: s.byGroup,
+        wakeDayFlags: s.wakeDayFlags,
+      });
+    } catch (e) {}
+  }
+  stats.comparisons = comparisons;
+  stats.comparisonNote =
+    "comparisons[] 係同類型連續上一／幾個週期摘要。請寫「週期對比」章節（趨勢／差異），只能用呢啲數字，唔好虛構。";
+  return stats;
 }
 
 function aiSortedEvents_(state) {
@@ -288,12 +384,14 @@ function aiDefaultReportOutline_() {
   return [
     "報告必須包含以下章節（可用繁中標題）：",
     "1. 執行摘要",
-    "2. 時間配置儀表板",
-    "3. 交易相關時間質素",
-    "4. 恢復與干擾",
-    "5. 規則遵守分數卡",
-    "6. 下期 3 個可執行實驗（細、可量度）",
-    "月報偏操作；季報加趨勢；年報加主題回顧。",
+    "2. 週期對比（對照 DATA_JSON.comparisons；用 Markdown table 列出本期 vs 上期重點指標）",
+    "3. 時間配置儀表板",
+    "4. 交易相關時間質素",
+    "5. 恢復與干擾",
+    "6. 規則遵守分數卡",
+    "7. 下期 3 個可執行實驗（細、可量度）",
+    "週報偏本週節奏；月報偏操作；季報加趨勢；年報加主題回顧。",
+    "表格請用 GFM：| col | … | 下一行 | --- |。粗體用 **文字**。",
   ].join("\n");
 }
 
@@ -357,15 +455,30 @@ function aiUserPrompt_(stats) {
         ? stats.periodKey + " Time Stat 專業報告"
         : type === "month"
           ? stats.periodKey + " 月 Time Stat 專業報告"
-          : "Time Stat 報告 " + stats.range.from + "～" + stats.range.to;
+          : type === "week"
+            ? stats.periodKey + " 週 Time Stat 專業報告"
+            : "Time Stat 報告 " + stats.range.from + "～" + stats.range.to;
   var spanNote =
-    type === "year" ? "期別：年報。" : type === "quarter" ? "期別：季報。" : type === "month" ? "期別：月報。" : "期別：自訂範圍。";
+    type === "year"
+      ? "期別：年報。"
+      : type === "quarter"
+        ? "期別：季報。"
+        : type === "month"
+          ? "期別：月報。"
+          : type === "week"
+            ? "期別：週報（ISO 週 Mon–Sun）。"
+            : "期別：自訂範圍。";
   var extra = cfg.extraInstructions ? "\n\n用戶額外要求：\n" + cfg.extraInstructions : "";
+  var cmpNote =
+    stats.comparisons && stats.comparisons.length
+      ? "\nDATA_JSON.comparisons 已附連續上期摘要，必須有「週期對比」章節（建議用 table）。"
+      : "";
   return (
     "請根據以下 JSON 撰寫「" +
     title +
     "」。\n" +
     spanNote +
+    cmpNote +
     "\n請嚴格遵守 system 入面嘅溝通方式同報告大綱。" +
     extra +
     "\n\nDATA_JSON:\n" +
@@ -608,6 +721,7 @@ function generatePeriodAiReport_(periodType, periodKey, opts) {
   var state = readStateFromSheet_();
   if (!state || !state.events) throw new Error("no_state");
   var stats = aggregatePeriodStatsForAi_(state, periodType, periodKey);
+  attachAiComparisons_(state, stats);
   var gem = callGeminiForAiReport_(stats);
   var subject = "[Time Stat AI] " + stats.periodType + " " + stats.periodKey;
   var id = Utilities.getUuid();
@@ -667,6 +781,14 @@ function previousYearKey_() {
   return String(new Date().getFullYear() - 1);
 }
 
+/** 上一個已完結 ISO 週（Mon–Sun）；星期六朝早排程用 */
+function previousWeekKey_() {
+  var d = new Date();
+  var dayNr = (d.getDay() + 6) % 7; // Mon=0
+  d.setDate(d.getDate() - dayNr - 7); // Monday of previous ISO week
+  return aiIsoWeekKeyFromDate_(d);
+}
+
 function runScheduledAiReportMonth_() {
   var d = new Date();
   // 每月 1 號先跑上一個曆月（其餘日子靠 dedupe 短路）
@@ -689,6 +811,11 @@ function runScheduledAiReportYear_() {
   generatePeriodAiReport_("year", previousYearKey_(), { persist: true, email: true });
 }
 
+function runScheduledAiReportWeek_() {
+  // Trigger 本身已限定星期六；呢度直接出上一個 ISO 週
+  generatePeriodAiReport_("week", previousWeekKey_(), { persist: true, email: true });
+}
+
 /** 部署後跑一次，安裝 Asia/Hong_Kong 時間觸發 */
 function installAiReportTriggers() {
   var triggers = ScriptApp.getProjectTriggers();
@@ -697,7 +824,8 @@ function installAiReportTriggers() {
     if (
       fn === "runScheduledAiReportMonth_" ||
       fn === "runScheduledAiReportQuarter_" ||
-      fn === "runScheduledAiReportYear_"
+      fn === "runScheduledAiReportYear_" ||
+      fn === "runScheduledAiReportWeek_"
     ) {
       ScriptApp.deleteTrigger(triggers[i]);
     }
@@ -724,13 +852,36 @@ function installAiReportTriggers() {
     .everyDays(1)
     .inTimezone("Asia/Hong_Kong")
     .create();
-  Logger.log("AI report triggers installed (daily 03:10/20/30 HKT; month/quarter/year gated inside).");
+  ScriptApp.newTrigger("runScheduledAiReportWeek_")
+    .timeBased()
+    .onWeekDay(ScriptApp.WeekDay.SATURDAY)
+    .atHour(7)
+    .nearMinute(0)
+    .inTimezone("Asia/Hong_Kong")
+    .create();
+  Logger.log(
+    "AI report triggers installed (daily 03:10/20/30 HKT month/quarter/year; Saturday 07:00 HKT week)."
+  );
 }
 
 function testGenerateAiReportMonth() {
   var key = previousMonthKey_();
   var r = generatePeriodAiReport_("month", key, { persist: true, email: true, skipDedupe: true });
   Logger.log(JSON.stringify({ ok: r.ok, periodKey: r.periodKey, via: r.via, len: (r.markdown || "").length }));
+}
+
+function testGenerateAiReportWeek() {
+  var key = previousWeekKey_();
+  var r = generatePeriodAiReport_("week", key, { persist: true, email: true, skipDedupe: true });
+  Logger.log(
+    JSON.stringify({
+      ok: r.ok,
+      periodKey: r.periodKey,
+      via: r.via,
+      comparisons: (r.stats && r.stats.comparisons && r.stats.comparisons.length) || 0,
+      len: (r.markdown || "").length,
+    })
+  );
 }
 
 function handleListAiReports_(body) {

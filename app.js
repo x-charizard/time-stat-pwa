@@ -4262,6 +4262,173 @@
 
   let _lastManualAiReport_ = null;
 
+  function splitAiMdTableRow_(line) {
+    let s = String(line || "").trim();
+    if (s.startsWith("|")) s = s.slice(1);
+    if (s.endsWith("|")) s = s.slice(0, -1);
+    return s.split("|").map((c) => c.trim());
+  }
+
+  function formatAiMdInline_(text) {
+    let s = escapeHtml(text);
+    s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+    s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+    s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    return s;
+  }
+
+  /** Lightweight Markdown → safe HTML（粗體、標題、列表、GFM table） */
+  function renderAiMarkdownToHtml_(md) {
+    const raw = String(md || "").replace(/\r\n/g, "\n");
+    const lines = raw.split("\n");
+    const html = [];
+    let i = 0;
+    let inUl = false;
+    let inOl = false;
+
+    function closeLists() {
+      if (inUl) {
+        html.push("</ul>");
+        inUl = false;
+      }
+      if (inOl) {
+        html.push("</ol>");
+        inOl = false;
+      }
+    }
+
+    function isTableSep_(line) {
+      return /^\s*\|?[\s|:/-]+\|[\s|:|/-]*$/.test(String(line || ""));
+    }
+
+    while (i < lines.length) {
+      const line = lines[i];
+      if (/^\s*\|/.test(line) && i + 1 < lines.length && isTableSep_(lines[i + 1])) {
+        closeLists();
+        const rows = [];
+        while (i < lines.length && /^\s*\|/.test(lines[i])) {
+          rows.push(lines[i]);
+          i++;
+        }
+        html.push('<table class="ai-md-table"><thead><tr>');
+        splitAiMdTableRow_(rows[0]).forEach((h) => {
+          html.push("<th>" + formatAiMdInline_(h) + "</th>");
+        });
+        html.push("</tr></thead><tbody>");
+        for (let r = 1; r < rows.length; r++) {
+          if (isTableSep_(rows[r])) continue;
+          html.push("<tr>");
+          splitAiMdTableRow_(rows[r]).forEach((c) => {
+            html.push("<td>" + formatAiMdInline_(c) + "</td>");
+          });
+          html.push("</tr>");
+        }
+        html.push("</tbody></table>");
+        continue;
+      }
+
+      const hm = line.match(/^(#{1,3})\s+(.+)$/);
+      if (hm) {
+        closeLists();
+        const level = hm[1].length;
+        html.push("<h" + level + ">" + formatAiMdInline_(hm[2]) + "</h" + level + ">");
+        i++;
+        continue;
+      }
+
+      if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+        closeLists();
+        html.push("<hr>");
+        i++;
+        continue;
+      }
+
+      const ulm = line.match(/^\s*[-*+]\s+(.+)$/);
+      if (ulm) {
+        if (inOl) {
+          html.push("</ol>");
+          inOl = false;
+        }
+        if (!inUl) {
+          html.push("<ul>");
+          inUl = true;
+        }
+        html.push("<li>" + formatAiMdInline_(ulm[1]) + "</li>");
+        i++;
+        continue;
+      }
+
+      const olm = line.match(/^\s*\d+\.\s+(.+)$/);
+      if (olm) {
+        if (inUl) {
+          html.push("</ul>");
+          inUl = false;
+        }
+        if (!inOl) {
+          html.push("<ol>");
+          inOl = true;
+        }
+        html.push("<li>" + formatAiMdInline_(olm[1]) + "</li>");
+        i++;
+        continue;
+      }
+
+      if (/^\s*$/.test(line)) {
+        closeLists();
+        i++;
+        continue;
+      }
+
+      closeLists();
+      const paras = [];
+      while (
+        i < lines.length &&
+        !/^\s*$/.test(lines[i]) &&
+        !/^\s*\|/.test(lines[i]) &&
+        !/^#{1,3}\s/.test(lines[i]) &&
+        !/^\s*[-*+]\s/.test(lines[i]) &&
+        !/^\s*\d+\.\s/.test(lines[i]) &&
+        !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i])
+      ) {
+        paras.push(lines[i]);
+        i++;
+      }
+      html.push("<p>" + formatAiMdInline_(paras.join(" ")) + "</p>");
+    }
+    closeLists();
+    return html.join("\n") || '<p class="muted">（空白報告）</p>';
+  }
+
+  function setAiReportBodyHtml_(el, markdown, opts) {
+    if (!el) return;
+    const o = opts || {};
+    if (o.loading) {
+      el.classList.add("loading");
+      el.innerHTML =
+        '<p class="ai-report-loading">Generating AI Report… 請稍候，報告完成前會一直顯示喺呢度。</p>';
+      return;
+    }
+    el.classList.remove("loading");
+    if (o.error) {
+      el.innerHTML = '<p class="ai-report-loading">' + escapeHtml(String(o.error)) + "</p>";
+      return;
+    }
+    el.innerHTML = renderAiMarkdownToHtml_(markdown);
+  }
+
+  function isoWeekKeyFromDateLocal_(d) {
+    const date = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const dayNr = (date.getDay() + 6) % 7;
+    date.setDate(date.getDate() - dayNr + 3);
+    const weekYear = date.getFullYear();
+    const week1 = new Date(weekYear, 0, 4);
+    const day1 = (week1.getDay() + 6) % 7;
+    week1.setDate(week1.getDate() - day1);
+    const weekNo = 1 + Math.round((date.getTime() - week1.getTime()) / 604800000);
+    return weekYear + "-W" + String(weekNo).padStart(2, "0");
+  }
+
   function periodKeyFromReportDates_() {
     const from = String(document.getElementById("reportFromStr")?.value || "").trim();
     const to = String(document.getElementById("reportToStr")?.value || "").trim();
@@ -4292,6 +4459,13 @@
       if (from === fm[1] + "-" + q[0] && to === fm[1] + "-" + q[1] && fm[1] === tm[1]) {
         return { periodType: "quarter", periodKey: fm[1] + "-" + q[2] };
       }
+    }
+    // ISO week Mon–Sun
+    const fromD = new Date(parseInt(fm[1], 10), parseInt(fm[2], 10) - 1, parseInt(fm[3], 10));
+    const toD = new Date(parseInt(tm[1], 10), parseInt(tm[2], 10) - 1, parseInt(tm[3], 10));
+    const diffDays = Math.round((toD.getTime() - fromD.getTime()) / 86400000);
+    if (diffDays === 6 && fromD.getDay() === 1 && toD.getDay() === 0) {
+      return { periodType: "week", periodKey: isoWeekKeyFromDateLocal_(fromD) };
     }
     return { periodType: "custom", periodKey: from + "/" + to };
   }
@@ -4333,42 +4507,6 @@
     return j;
   }
 
-  async function diagnoseAiApi_() {
-    if (!canRemoteSync()) {
-      toast("請先 Google 登入。");
-      return;
-    }
-    const url = getRemotePostUrl();
-    try {
-      const j = await postAiAction_({ action: "aiPing" });
-      const h = (j && j.handlers) || {};
-      const ok =
-        j.aiApi === "ai-v1" &&
-        h.getAiSettings &&
-        h.generateAiReport &&
-        h.listAiReports;
-      toast(
-        (ok ? "AI API OK · " : "AI API 未齊 · ") +
-          "aiApi=" +
-          (j.aiApi || "?") +
-          " key=" +
-          (j.geminiKeySet ? "yes" : "NO") +
-          " settings=" +
-          (h.getAiSettings ? "yes" : "no") +
-          " generate=" +
-          (h.generateAiReport ? "yes" : "no") +
-          " · " +
-          String(url).replace(/^https:\/\/script\.google\.com\/macros\/s\//, "…/")
-      );
-      if (ok) {
-        void loadAiSettingsForm_();
-        void loadAiReportsList_();
-      }
-    } catch (e) {
-      toast("檢查失敗：" + (e && e.message ? e.message : String(e)));
-    }
-  }
-
   async function generateManualAiReport_(wantEmail) {
     if (!canRemoteSync()) {
       toast("請先 Google 登入先可以 Generate AI Report。");
@@ -4380,8 +4518,16 @@
       return;
     }
     const btn = document.getElementById("btnAiReportGenerate");
+    const box = document.getElementById("aiReportManualBox");
+    const body = document.getElementById("aiReportManualBody");
+    const title = document.getElementById("aiReportManualTitle");
     if (btn) btn.disabled = true;
-    toast("Generating AI Report…");
+    if (title) {
+      title.textContent =
+        "AI Report（人手 · 唔入歷史）· " + pk.periodType + " " + pk.periodKey + " · Generating…";
+    }
+    if (box) box.classList.remove("hidden");
+    setAiReportBodyHtml_(body, "", { loading: true });
     try {
       const j = await postAiAction_({
         action: "generateAiReport",
@@ -4395,13 +4541,21 @@
         periodType: j.periodType,
         periodKey: j.periodKey,
       };
-      const box = document.getElementById("aiReportManualBox");
-      const body = document.getElementById("aiReportManualBody");
-      if (body) body.textContent = _lastManualAiReport_.markdown;
+      if (title) {
+        title.textContent =
+          "AI Report（人手 · 唔入歷史）· " +
+          (_lastManualAiReport_.periodType || "") +
+          " " +
+          (_lastManualAiReport_.periodKey || "");
+      }
+      setAiReportBodyHtml_(body, _lastManualAiReport_.markdown);
       if (box) box.classList.remove("hidden");
       toast(wantEmail ? "AI Report 已寄出（唔入歷史）" : "AI Report 已生成（唔入歷史）");
     } catch (e) {
-      toast("AI Report 失敗：" + (e && e.message ? e.message : String(e)));
+      const msg = e && e.message ? e.message : String(e);
+      setAiReportBodyHtml_(body, "", { error: "AI Report 失敗：" + msg });
+      if (title) title.textContent = "AI Report（失敗）";
+      toast("AI Report 失敗：" + msg);
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -4457,7 +4611,7 @@
       if (listEl) listEl.classList.add("hidden");
       detail.classList.remove("hidden");
       if (title) title.textContent = (rep.subject || rep.periodKey || id) + "";
-      body.textContent = rep.markdown || "";
+      setAiReportBodyHtml_(body, rep.markdown || "");
     } catch (e) {
       toast("開啟報告失敗：" + (e && e.message ? e.message : String(e)));
     }
@@ -4567,11 +4721,6 @@
         void loadAiReportsList_();
         void loadAiSettingsForm_();
       });
-    }
-    const checkBtn = document.getElementById("btnAiApiCheck");
-    if (checkBtn && !checkBtn.dataset.bound) {
-      checkBtn.dataset.bound = "1";
-      checkBtn.addEventListener("click", () => void diagnoseAiApi_());
     }
     const back = document.getElementById("btnAiReportBack");
     if (back && !back.dataset.bound) {
@@ -5073,10 +5222,11 @@
       if (!j || typeof j !== "object") return;
       const bu = j.execUrl != null ? String(j.execUrl).trim() : "";
       const cid = j.googleClientId != null ? String(j.googleClientId).trim() : "";
-      if (bu && typeof window !== "undefined" && !String(REMOTE_SYNC_BASE_DEFAULT || "").trim()) {
+      // config.remote.json 可覆寫內建 default（換咗部署 URL 時只改 json 都得）
+      if (bu && typeof window !== "undefined") {
         window.__TIME_STAT_REMOTE_BASE__ = bu;
       }
-      if (cid && typeof window !== "undefined" && !String(GOOGLE_CLIENT_ID_DEFAULT || "").trim()) {
+      if (cid && typeof window !== "undefined") {
         window.__TIME_STAT_GOOGLE_CLIENT_ID__ = cid;
       }
     } catch (e) {
