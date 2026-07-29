@@ -4406,7 +4406,7 @@
     if (o.loading) {
       el.classList.add("loading");
       el.innerHTML =
-        '<p class="ai-report-loading">Generating AI Report… 請稍候，報告完成前會一直顯示喺呢度。</p>';
+        '<p class="ai-report-loading">Generating…</p>';
       return;
     }
     el.classList.remove("loading");
@@ -4520,12 +4520,7 @@
     const btn = document.getElementById("btnAiReportGenerate");
     const box = document.getElementById("aiReportManualBox");
     const body = document.getElementById("aiReportManualBody");
-    const title = document.getElementById("aiReportManualTitle");
     if (btn) btn.disabled = true;
-    if (title) {
-      title.textContent =
-        "AI Report（人手 · 唔入歷史）· " + pk.periodType + " " + pk.periodKey + " · Generating…";
-    }
     if (box) box.classList.remove("hidden");
     setAiReportBodyHtml_(body, "", { loading: true });
     try {
@@ -4541,20 +4536,12 @@
         periodType: j.periodType,
         periodKey: j.periodKey,
       };
-      if (title) {
-        title.textContent =
-          "AI Report（人手 · 唔入歷史）· " +
-          (_lastManualAiReport_.periodType || "") +
-          " " +
-          (_lastManualAiReport_.periodKey || "");
-      }
       setAiReportBodyHtml_(body, _lastManualAiReport_.markdown);
       if (box) box.classList.remove("hidden");
       toast(wantEmail ? "AI Report 已寄出（唔入歷史）" : "AI Report 已生成（唔入歷史）");
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       setAiReportBodyHtml_(body, "", { error: "AI Report 失敗：" + msg });
-      if (title) title.textContent = "AI Report（失敗）";
       toast("AI Report 失敗：" + msg);
     } finally {
       if (btn) btn.disabled = false;
