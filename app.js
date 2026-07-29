@@ -1416,19 +1416,14 @@
     }
   }
 
-  /** Work soft-cap（超限要填 Reasons）；預設 6h */
+  /** Work soft-cap（超限要填 Reasons）；預設 4h */
   function getWorkCapMs_() {
     try {
       const raw = localStorage.getItem(WORK_CAP_HOURS_KEY);
-      if (raw == null || raw === "") return 6 * 3600000;
+      if (raw == null || raw === "") return 4 * 3600000;
       const n = Number(raw);
       if (Number.isFinite(n) && n > 0) return n * 3600000;
     } catch (e) {}
-    return 6 * 3600000;
-  }
-
-  /** Banner 由呢個時數開始顯示（未到 soft-cap 亦可提醒） */
-  function getWorkWarnMs_() {
     return 4 * 3600000;
   }
 
@@ -1601,28 +1596,24 @@
     const workPack = sumWorkMsInWakeDay(now);
     const tradePack = sumTradingMsInWakeDay(now);
     const workCap = getWorkCapMs_();
-    const workWarn = getWorkWarnMs_();
     const tradeCap = getTradingCapMs_();
     const workOver = workPack.ms > workCap;
-    const workWarnShow = workPack.ms >= workWarn;
     const tradingOver = tradePack.ms > tradeCap;
     // 17:00 唔做常駐 banner；只喺嘗試入 Work 時 modal + 硬擋
-    // Reasons 標籤：只喺已超 Work／Trading soft-cap（入庫可能要填 reason）先顯示
+    // Banner／Reasons：清醒日 Work >4h 或 Trading >2h
     syncRemarkFieldLabels_(workOver || tradingOver);
-    if (!workWarnShow && !tradingOver) {
+    if (!workOver && !tradingOver) {
       el.classList.add("hidden");
       el.classList.remove("soft-cap-banner--warn", "soft-cap-banner--danger");
       el.textContent = "";
       return;
     }
     const lines = [];
-    if (workWarnShow) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
+    if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
     if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
     el.textContent = lines.join(" · ");
-    el.classList.remove("hidden", "soft-cap-banner--warn", "soft-cap-banner--danger");
-    // Work：≥4h 顯示；≥6h（soft-cap）變紅。Trading 超限亦用紅。
-    if (workPack.ms >= workCap || tradingOver) el.classList.add("soft-cap-banner--danger");
-    else el.classList.add("soft-cap-banner--warn");
+    el.classList.remove("hidden", "soft-cap-banner--warn");
+    el.classList.add("soft-cap-banner--danger");
   }
 
   /**
