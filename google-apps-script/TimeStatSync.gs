@@ -21,6 +21,8 @@
  * - { idToken, action:"load" }           → { ok:true, state:object, authApi:"gis-v1" }
  * - { idToken, action:"whoami" }         → { ok:true, email, authApi:"gis-v1" }
  * - { idToken, action:"migrateFormToDb" } → Form 合併寫入 TimeStatDB
+ * - { idToken, action:"notifyCap", rule, wakeDayKey, durationMs, thresholdLabel }
+ *       → MailApp 寄去登入 email；每個清醒日每條規則最多一次
  * - { idToken, state }                  → 寫入 TimeStatDB
  * 可選：{ token: API_TOKEN, ... } 作緊急後門（唔經前端）。
  *
@@ -42,6 +44,55 @@ function jsonOut_(obj) {
 
 function authFail_(error) {
   return jsonOut_({ ok: false, error: String(error || "unauthorized"), authApi: AUTH_API });
+}
+
+/**
+ * Cap email：每個清醒日（wakeDayKey）每條規則最多寄一次去登入 email。
+ * rule: "reviewing" | "trading"
+ */
+function handleNotifyCap_(body, email) {
+  var to = String(email || "").trim().toLowerCase();
+  var rule = String(body && body.rule ? body.rule : "").trim().toLowerCase();
+  var wakeDayKey = String(body && body.wakeDayKey ? body.wakeDayKey : "").trim();
+  if (!to) return authFail_("missing_email");
+  if (!wakeDayKey) return authFail_("missing_wake_day");
+  if (rule !== "reviewing" && rule !== "trading") return authFail_("bad_rule");
+
+  var props = PropertiesService.getScriptProperties();
+  var dedupeKey = "capAlert:" + to + ":" + wakeDayKey + ":" + rule;
+  if (props.getProperty(dedupeKey)) {
+    return jsonOut_(authOkFields_({ sent: false, already: true, rule: rule, wakeDayKey: wakeDayKey }));
+  }
+
+  var durationMs = Number(body && body.durationMs != null ? body.durationMs : 0);
+  var mins = isFinite(durationMs) ? Math.round(durationMs / 60000) : 0;
+  var thresholdLabel = String(body && body.thresholdLabel ? body.thresholdLabel : "");
+  var subject =
+    rule === "reviewing"
+      ? "[Time Stat] Reviewing over 30 minutes (" + wakeDayKey + ")"
+      : "[Time Stat] Trading over 2 hours (" + wakeDayKey + ")";
+  var text =
+    "Time Stat cap alert\n\n" +
+    "Wake day: " +
+    wakeDayKey +
+    "\n" +
+    "Rule: " +
+    rule +
+    "\n" +
+    "Duration: " +
+    mins +
+    " minutes\n" +
+    "Threshold: " +
+    thresholdLabel +
+    "\n";
+
+  MailApp.sendEmail({
+    to: to,
+    subject: subject,
+    body: text,
+  });
+  props.setProperty(dedupeKey, String(Date.now()));
+  return jsonOut_(authOkFields_({ sent: true, rule: rule, wakeDayKey: wakeDayKey, to: to }));
 }
 
 function authOkFields_(extra) {
@@ -1102,6 +1153,14 @@ function doPost(e) {
       return jsonOut_(outMg);
     } catch (errMg) {
       return authFail_(String(errMg && errMg.message ? errMg.message : errMg));
+    }
+  }
+
+  if (String(body.action || "") === "notifyCap") {
+    try {
+      return handleNotifyCap_(body, auth.email || "");
+    } catch (errN) {
+      return authFail_(String(errN && errN.message ? errN.message : errN));
     }
   }
 

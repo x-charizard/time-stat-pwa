@@ -15,7 +15,7 @@
 
   /** @typedef {{ id: string, name: string, aliases: string[] }} Activity */
   /** @typedef {{ projectId: string, project: string }} ProjectRegistryItem */
-  /** @typedef {{ id: string, start: string, activityId: string, remark?: string, people?: string[], place?: string, category?: string, group?: string, layer?: string, cat?: string, subCat?: string, structureItem?: string, project?: string, projectId?: string, objective?: string, activityQuestion?: string, achievement?: string, improveLast?: string, importantElement?: string, detailsBetter?: string, action?: string, longTermGoals?: string, shortTermGoals?: string, miniGoals?: string, groupFromForm?: string, layersFromForm?: string, projectsFromForm?: string, categoriesFromForm?: string }} Event */
+  /** @typedef {{ id: string, start: string, activityId: string, remark?: string, people?: string[], place?: string, distractionSec?: number, category?: string, group?: string, layer?: string, cat?: string, subCat?: string, structureItem?: string, project?: string, projectId?: string, objective?: string, activityQuestion?: string, achievement?: string, improveLast?: string, importantElement?: string, detailsBetter?: string, action?: string, longTermGoals?: string, shortTermGoals?: string, miniGoals?: string, groupFromForm?: string, layersFromForm?: string, projectsFromForm?: string, categoriesFromForm?: string }} Event */
 
   function defaultState() {
     return {
@@ -733,6 +733,14 @@
     const lines = [];
     lines.push(`${formatHmLocal(ev.start)} ~ ${formatHmLocal(tEnd)}`);
     lines.push(`${Math.round(segMs / 60000)} mins`);
+    const dist = Number(ev.distractionSec) || 0;
+    if (dist > 0) {
+      const dm = Math.floor(dist / 60);
+      const ds = dist % 60;
+      lines.push(
+        `Distraction：${String(dm).padStart(2, "0")}:${String(ds).padStart(2, "0")}`
+      );
+    }
     const rm = displayRemarkForRawRecord(ev);
     if (rm) lines.push(`Remark：${rm}`);
     return lines.join("\n");
@@ -1401,20 +1409,36 @@
   const TRADING_CAP_HOURS_KEY = "timeStatTradingCapHours";
   const WORK_CUTOFF_HOUR_KEY = "timeStatWorkCutoffHour";
   const TRADING_ACTIVITY_KEYS = new Set(["trading", "trading practice", "trading planning"]);
+  const REVIEWING_ACTIVITY_KEYS = new Set(["reviewing"]);
+  const TRANSPORTING_ACTIVITY_KEYS = new Set(["transporting"]);
+  const SOCIAL_NO_TRADE_KEYS = new Set(["friending", "familying", "socialing"]);
+  const NO_TRADES_BANNER_MS = 2 * 3600000;
+  const REVIEWING_EMAIL_MS = 30 * 60000;
   const MSG_GET_REST_AFTER_17 = "Get REST after 17:00.";
+  const MSG_NO_TRADES_TODAY = "no Trades today";
 
   function getWakeTimeHm_() {
     try {
-      const raw = String(localStorage.getItem(WAKE_TIME_KEY) || "06:30").trim();
+      const raw = String(localStorage.getItem(WAKE_TIME_KEY) || "03:00").trim();
       const m = raw.match(/^(\d{1,2}):(\d{2})$/);
-      if (!m) return { h: 6, mi: 30, label: "06:30" };
+      if (!m) return { h: 3, mi: 0, label: "03:00" };
       const h = Math.min(23, Math.max(0, parseInt(m[1], 10)));
       const mi = Math.min(59, Math.max(0, parseInt(m[2], 10)));
       return { h, mi, label: String(h).padStart(2, "0") + ":" + String(mi).padStart(2, "0") };
     } catch (e) {
-      return { h: 6, mi: 30, label: "06:30" };
+      return { h: 3, mi: 0, label: "03:00" };
     }
   }
+
+  /** 舊預設 06:30 → 03:00（只遷移明顯舊預設，唔改用戶自訂） */
+  (function migrateWakeDefaultTo0300_() {
+    try {
+      const raw = localStorage.getItem(WAKE_TIME_KEY);
+      if (raw == null || String(raw).trim() === "" || String(raw).trim() === "06:30") {
+        localStorage.setItem(WAKE_TIME_KEY, "03:00");
+      }
+    } catch (e) {}
+  })();
 
   /** Work soft-cap（超限要填 Reasons）；預設 4h */
   function getWorkCapMs_() {
@@ -1518,6 +1542,26 @@
     return sumWakeDayMs_(refMs, (ev) => isTradingActivityEv_(ev));
   }
 
+  function activityKeyOfEv_(ev) {
+    return normalizeActivityKey(activityDisplayName(ev.activityId));
+  }
+
+  function sumActivityKeysMsInWakeDay(refMs, keySet) {
+    return sumWakeDayMs_(refMs, (ev) => keySet.has(activityKeyOfEv_(ev)));
+  }
+
+  function wakeDayKey_(refMs) {
+    const b = wakeDayBounds(refMs);
+    const d = new Date(b.startMs);
+    return (
+      d.getFullYear() +
+      "-" +
+      String(d.getMonth() + 1).padStart(2, "0") +
+      "-" +
+      String(d.getDate()).padStart(2, "0")
+    );
+  }
+
   function formatCapClock_(ms) {
     const totalMin = Math.max(0, Math.floor(ms / 60000));
     const h = Math.floor(totalMin / 60);
@@ -1595,25 +1639,86 @@
     const now = Date.now();
     const workPack = sumWorkMsInWakeDay(now);
     const tradePack = sumTradingMsInWakeDay(now);
+    const transportPack = sumActivityKeysMsInWakeDay(now, TRANSPORTING_ACTIVITY_KEYS);
+    const socialPack = sumActivityKeysMsInWakeDay(now, SOCIAL_NO_TRADE_KEYS);
     const workCap = getWorkCapMs_();
     const tradeCap = getTradingCapMs_();
     const workOver = workPack.ms > workCap;
     const tradingOver = tradePack.ms > tradeCap;
+    const noTradesToday =
+      transportPack.ms > NO_TRADES_BANNER_MS || socialPack.ms > NO_TRADES_BANNER_MS;
     // 17:00 唔做常駐 banner；只喺嘗試入 Work 時 modal + 硬擋
-    // Banner／Reasons：清醒日 Work >4h 或 Trading >2h
+    // Banner／Reasons：清醒日 Work >4h 或 Trading >2h；Transport／Social >2h → no Trades today（唔擋入）
     syncRemarkFieldLabels_(workOver || tradingOver);
-    if (!workOver && !tradingOver) {
+    if (!workOver && !tradingOver && !noTradesToday) {
       el.classList.add("hidden");
       el.classList.remove("soft-cap-banner--warn", "soft-cap-banner--danger");
       el.textContent = "";
-      return;
+    } else {
+      const lines = [];
+      if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
+      if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
+      if (noTradesToday) lines.push(MSG_NO_TRADES_TODAY);
+      el.textContent = lines.join(" · ");
+      el.classList.remove("hidden", "soft-cap-banner--warn");
+      el.classList.add("soft-cap-banner--danger");
     }
-    const lines = [];
-    if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
-    if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
-    el.textContent = lines.join(" · ");
-    el.classList.remove("hidden", "soft-cap-banner--warn");
-    el.classList.add("soft-cap-banner--danger");
+    // Email 唔依賴 banner 顯示（例如净 Reviewing 超 30m）
+    void maybeNotifyCapEmails_();
+  }
+
+  let _capEmailInflight = false;
+  async function maybeNotifyCapEmails_() {
+    if (!canRemoteSync() || _capEmailInflight) return;
+    const url = getRemotePostUrl();
+    if (!url) return;
+    const now = Date.now();
+    const wakeDayKey = wakeDayKey_(now);
+    const reviewing = sumActivityKeysMsInWakeDay(now, REVIEWING_ACTIVITY_KEYS);
+    const trading = sumTradingMsInWakeDay(now);
+    const jobs = [];
+    if (reviewing.ms > REVIEWING_EMAIL_MS) {
+      jobs.push({
+        rule: "reviewing",
+        durationMs: reviewing.ms,
+        thresholdLabel: "30 minutes",
+      });
+    }
+    if (trading.ms > getTradingCapMs_()) {
+      jobs.push({
+        rule: "trading",
+        durationMs: trading.ms,
+        thresholdLabel: "2 hours",
+      });
+    }
+    if (!jobs.length) return;
+    _capEmailInflight = true;
+    try {
+      for (let i = 0; i < jobs.length; i++) {
+        const job = jobs[i];
+        try {
+          const r = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "text/plain;charset=utf-8" },
+            body: JSON.stringify(
+              remoteAuthBody({
+                action: "notifyCap",
+                rule: job.rule,
+                wakeDayKey,
+                durationMs: job.durationMs,
+                thresholdLabel: job.thresholdLabel,
+              })
+            ),
+            mode: "cors",
+            cache: "no-store",
+          });
+          const j = await r.json().catch(() => ({}));
+          if (j && j.ok === false) handleRemoteUnauthorized_(j.error);
+        } catch (eJob) {}
+      }
+    } finally {
+      _capEmailInflight = false;
+    }
   }
 
   /**
@@ -1746,12 +1851,63 @@
     }
   }
 
+  /**
+   * 連續同一個 activity：合入時間上前一筆（保留較早 start；remark 用 ", " 串）。
+   * @returns {{ merged: boolean, ev: object }}
+   */
+  function mergeIntoPreviousIfSameActivity_(ev) {
+    const list = sortedEventsUniqueById();
+    const tNew = new Date(ev.start).getTime();
+    if (Number.isNaN(tNew)) return { merged: false, ev };
+    let prev = null;
+    for (let i = 0; i < list.length; i++) {
+      const t = new Date(list[i].start).getTime();
+      if (Number.isNaN(t)) continue;
+      if (t <= tNew) prev = list[i];
+      else break;
+    }
+    if (!prev) return { merged: false, ev };
+    const kPrev = activityKeyOfEv_(prev);
+    const kNew = activityKeyOfEv_(ev);
+    if (!kPrev || !kNew || kPrev !== kNew) return { merged: false, ev };
+
+    const target = state.events.find((e) => e && e.id === prev.id) || prev;
+    const parts = [];
+    const r1 = String(target.remark || "").trim();
+    const r2 = String(ev.remark || "").trim();
+    if (r1) parts.push(r1);
+    if (r2) parts.push(r2);
+    if (parts.length) target.remark = parts.join(", ");
+    else delete target.remark;
+
+    if (!String(target.place || "").trim() && ev.place) target.place = ev.place;
+    if ((!target.people || !target.people.length) && Array.isArray(ev.people) && ev.people.length) {
+      target.people = ev.people.slice();
+    }
+    if (!target.group && ev.group) target.group = ev.group;
+    if (!target.layer && ev.layer) target.layer = ev.layer;
+    if (!target.cat && ev.cat) target.cat = ev.cat;
+    if (!target.subCat && ev.subCat) target.subCat = ev.subCat;
+    if (!target.projectId && ev.projectId) target.projectId = ev.projectId;
+    if (!String(target.projectsFromForm || "").trim() && ev.projectsFromForm) {
+      target.projectsFromForm = ev.projectsFromForm;
+    }
+    const d1 = Number(target.distractionSec) || 0;
+    const d2 = Number(ev.distractionSec) || 0;
+    if (d1 + d2 > 0) target.distractionSec = d1 + d2;
+
+    return { merged: true, ev: target };
+  }
+
   function pushEventAndRefresh(ev, msg, opts) {
     const silent = opts && opts.silent;
     const formSource = opts && opts.formSource;
-    state.events.push(ev);
+    const merged = mergeIntoPreviousIfSameActivity_(ev);
+    if (!merged.merged) state.events.push(ev);
+    const savedEv = merged.ev;
     bumpEventsMutationGen();
     save();
+    resetDistractionWatch_();
     refreshActivityDatalist();
     renderTimeline();
     refreshSoftCapBanner();
@@ -1766,8 +1922,8 @@
     } else {
       refreshQuickAutoSuggestions();
       refreshManualAutoSuggestions();
-      updateLastSavedHint(ev);
-      toast(`${msg} · 總筆數 ${state.events.length}`);
+      updateLastSavedHint(savedEv);
+      toast(`${msg}${merged.merged ? " · merged" : ""} · 總筆數 ${state.events.length}`);
     }
     requestAnimationFrame(() => {
       fillMergeSelects();
@@ -1901,6 +2057,92 @@
     card.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // —— Distraction stopwatch（入庫成功先清零；失敗／取消保留）——
+  let _distractAccumMs = 0;
+  let _distractRunning = false;
+  let _distractStartedAt = 0;
+  let _distractTickTimer = null;
+
+  function formatDistractClock_(ms) {
+    const totalSec = Math.max(0, Math.floor(ms / 1000));
+    const m = Math.floor(totalSec / 60);
+    const s = totalSec % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
+  function currentDistractionMs_() {
+    let ms = _distractAccumMs;
+    if (_distractRunning && _distractStartedAt) ms += Date.now() - _distractStartedAt;
+    return ms;
+  }
+
+  function currentDistractionSec_() {
+    return Math.floor(currentDistractionMs_() / 1000);
+  }
+
+  function attachDistractionToEv_(ev) {
+    if (!ev) return;
+    const sec = currentDistractionSec_();
+    if (sec > 0) ev.distractionSec = sec;
+    else delete ev.distractionSec;
+  }
+
+  function refreshDistractionDisplay_() {
+    const el = document.getElementById("distractionDisplay");
+    if (el) el.textContent = formatDistractClock_(currentDistractionMs_());
+    const startBtn = document.getElementById("btnDistractStart");
+    const stopBtn = document.getElementById("btnDistractStop");
+    if (startBtn) startBtn.disabled = _distractRunning;
+    if (stopBtn) stopBtn.disabled = !_distractRunning;
+  }
+
+  function stopDistractTick_() {
+    if (_distractTickTimer) {
+      clearInterval(_distractTickTimer);
+      _distractTickTimer = null;
+    }
+  }
+
+  function startDistractTick_() {
+    stopDistractTick_();
+    _distractTickTimer = setInterval(refreshDistractionDisplay_, 250);
+  }
+
+  function resetDistractionWatch_() {
+    stopDistractTick_();
+    _distractAccumMs = 0;
+    _distractRunning = false;
+    _distractStartedAt = 0;
+    refreshDistractionDisplay_();
+  }
+
+  function bindDistractionWatch_() {
+    const startBtn = document.getElementById("btnDistractStart");
+    const stopBtn = document.getElementById("btnDistractStop");
+    const resetBtn = document.getElementById("btnDistractReset");
+    if (!startBtn || startBtn.dataset.bound) return;
+    startBtn.dataset.bound = "1";
+    startBtn.addEventListener("click", () => {
+      if (_distractRunning) return;
+      _distractRunning = true;
+      _distractStartedAt = Date.now();
+      startDistractTick_();
+      refreshDistractionDisplay_();
+    });
+    stopBtn.addEventListener("click", () => {
+      if (!_distractRunning) return;
+      _distractAccumMs += Date.now() - _distractStartedAt;
+      _distractRunning = false;
+      _distractStartedAt = 0;
+      stopDistractTick_();
+      refreshDistractionDisplay_();
+    });
+    resetBtn.addEventListener("click", () => {
+      resetDistractionWatch_();
+    });
+    refreshDistractionDisplay_();
+  }
+
   document.getElementById("btnLogNow").addEventListener("click", () => {
     const nowD = new Date();
     const quickActivityEl = document.getElementById("quickActivity");
@@ -1937,6 +2179,7 @@
     const remark = quickRemarkEl.value.trim();
     if (remark) ev.remark = remark;
     if (place) ev.place = place;
+    attachDistractionToEv_(ev);
     handleEventClassificationFlow({
       ev: ev,
       activityLabel: label,
@@ -1985,6 +2228,7 @@
     const remark = manualRemarkEl.value.trim();
     if (remark) ev.remark = remark;
     if (place) ev.place = place;
+    attachDistractionToEv_(ev);
     handleEventClassificationFlow({
       ev: ev,
       activityLabel: label,
@@ -4501,6 +4745,7 @@
   refreshActivityDatalist();
   refreshProjectPickers();
   bindPlaceAutoSuggest();
+  bindDistractionWatch_();
   refreshQuickAutoSuggestions();
   fillMergeSelects();
   renderActivityList();

@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=145" />
+  <link rel="stylesheet" href="styles.css?v=146" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -71,6 +71,17 @@
       <input type="text" id="quickPeople" autocomplete="off" />
       <label for="quickRemark" style="margin-top:10px;">Remark</label>
       <textarea id="quickRemark"></textarea>
+      <div class="distraction-watch" id="distractionWatch">
+        <div class="distraction-watch-row">
+          <span class="muted">Distraction</span>
+          <span id="distractionDisplay" class="distraction-display">00:00</span>
+        </div>
+        <div class="distraction-watch-actions">
+          <button type="button" class="ghost" id="btnDistractStart">Start</button>
+          <button type="button" class="ghost" id="btnDistractStop">Stop</button>
+          <button type="button" class="ghost" id="btnDistractReset">Reset</button>
+        </div>
+      </div>
       <button type="button" class="primary" id="btnLogNow" style="margin-top:12px;width:100%;">Log Now</button>
     </div>
     <div class="card">
@@ -211,6 +222,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=145"></script>
+  <script src="app.js?v=146"></script>
 </body>
 </html>

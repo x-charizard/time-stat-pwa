@@ -1565,6 +1565,35 @@ body.auth-locked [data-panel] {
   display: none !important;
 }
 
+.distraction-watch {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 10px);
+  background: rgba(255, 255, 255, 0.03);
+}
+.distraction-watch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.distraction-display {
+  font-variant-numeric: tabular-nums;
+  font-size: 1.25rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.distraction-watch-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.distraction-watch-actions .ghost {
+  flex: 1 1 0;
+  min-height: 40px;
+}
+
 .blocking-alert {
   position: fixed;
   inset: 0;
