@@ -109,8 +109,34 @@
     setAuthSession("", "");
   }
 
+  /** GIS id_token 通常 ~1 小時；過期就當未登入（避免一直用 stale token 打 sync） */
+  function isIdTokenExpired_(token) {
+    try {
+      const parts = String(token || "").split(".");
+      if (parts.length < 2) return true;
+      const json = atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"));
+      const payload = JSON.parse(json);
+      const exp = Number(payload.exp);
+      if (!Number.isFinite(exp)) return true;
+      // 60s 緩衝，避免邊界剛好過期
+      return exp * 1000 <= Date.now() + 60000;
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function getFreshGoogleIdToken_() {
+    const t = getGoogleIdToken();
+    if (!t) return "";
+    if (isIdTokenExpired_(t)) {
+      clearAuthSession();
+      return "";
+    }
+    return t;
+  }
+
   function isSignedIn() {
-    return Boolean(getGoogleIdToken());
+    return Boolean(getFreshGoogleIdToken_());
   }
 
   /** 有 exec 網址就視為啟用遠端；實際請求要已 Google 登入。 */
@@ -119,7 +145,7 @@
   }
 
   function canRemoteSync() {
-    return Boolean(getRemoteSyncBase() && getGoogleIdToken());
+    return Boolean(getRemoteSyncBase() && getFreshGoogleIdToken_());
   }
 
   try {
@@ -151,7 +177,7 @@
 
   function remoteAuthBody(extra) {
     const body = Object.assign({}, extra || {});
-    const idToken = getGoogleIdToken();
+    const idToken = getFreshGoogleIdToken_();
     if (idToken) body.idToken = idToken;
     return body;
   }
@@ -161,13 +187,18 @@
     if (
       m === "unauthorized" ||
       m === "invalid_id_token" ||
+      m === "id_token_expired" ||
       m === "email_not_allowed" ||
       m === "aud_mismatch" ||
       m === "email_not_verified" ||
       m === "missing_id_token"
     ) {
       clearAuthSession();
-      showAuthOverlay_("Session expired or not allowed. Please sign in again.");
+      showAuthOverlay_(
+        m === "id_token_expired" || m === "invalid_id_token"
+          ? "Session expired. Please sign in again."
+          : "Session expired or not allowed. Please sign in again."
+      );
       return true;
     }
     return false;
@@ -1713,7 +1744,18 @@
             cache: "no-store",
           });
           const j = await r.json().catch(() => ({}));
-          if (j && j.ok === false) handleRemoteUnauthorized_(j.error);
+          // Cap email 係 best-effort：token 過期／失敗唔好鎖成個 app
+          if (j && j.ok === false) {
+            const err = String(j.error || "");
+            if (
+              err === "id_token_expired" ||
+              err === "invalid_id_token" ||
+              err === "missing_id_token" ||
+              err === "unauthorized"
+            ) {
+              break;
+            }
+          }
         } catch (eJob) {}
       }
     } finally {
@@ -4706,9 +4748,16 @@
         try {
           await runRemoteHydrate();
         } catch (e) {
-          if (!handleRemoteUnauthorized_(e && e.message)) {
-            showAuthOverlay_("Could not load data: " + (e.message || String(e)));
+          const err = String((e && e.message) || e || "");
+          const bare = err.replace(/\s*\[gis-v1\]\s*$/i, "").trim();
+          if (handleRemoteUnauthorized_(bare) || /id_token_expired/i.test(err)) {
+            if (!document.body.classList.contains("auth-locked")) {
+              clearAuthSession();
+              showAuthOverlay_("Session expired. Please sign in again.");
+            }
+            return;
           }
+          showAuthOverlay_("Could not load data: " + err);
         }
         return;
       }
