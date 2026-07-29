@@ -44,6 +44,7 @@ var LOG_SHEET = "TimeStatLog";
 var CHUNK_MARK = "TIME_STAT_CHUNKED_V1";
 var CHUNK_SIZE = 45000;
 var AUTH_API = "gis-v1";
+var AI_API = "ai-v1";
 var __FORM_IMPORT_DEBUG__ = null;
 
 function jsonOut_(obj) {
@@ -51,7 +52,35 @@ function jsonOut_(obj) {
 }
 
 function authFail_(error) {
-  return jsonOut_({ ok: false, error: String(error || "unauthorized"), authApi: AUTH_API });
+  return jsonOut_({ ok: false, error: String(error || "unauthorized"), authApi: AUTH_API, aiApi: AI_API });
+}
+
+function authOkFields_(extra) {
+  var o = { ok: true, authApi: AUTH_API, aiApi: AI_API };
+  if (extra) {
+    for (var k in extra) {
+      if (Object.prototype.hasOwnProperty.call(extra, k)) o[k] = extra[k];
+    }
+  }
+  return o;
+}
+
+/** 診斷：確認呢個 /exec 部署有冇 AI handlers + GEMINI key */
+function handleAiPing_() {
+  return jsonOut_(
+    authOkFields_({
+      ping: true,
+      handlers: {
+        getAiSettings: typeof handleGetAiSettings_ === "function",
+        saveAiSettings: typeof handleSaveAiSettings_ === "function",
+        generateAiReport: typeof handleGenerateAiReport_ === "function",
+        listAiReports: typeof handleListAiReports_ === "function",
+      },
+      geminiKeySet: Boolean(
+        String(PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY") || "").trim()
+      ),
+    })
+  );
 }
 
 /**
@@ -101,16 +130,6 @@ function handleNotifyCap_(body, email) {
   });
   props.setProperty(dedupeKey, String(Date.now()));
   return jsonOut_(authOkFields_({ sent: true, rule: rule, wakeDayKey: wakeDayKey, to: to }));
-}
-
-function authOkFields_(extra) {
-  var o = { ok: true, authApi: AUTH_API };
-  if (extra) {
-    for (var k in extra) {
-      if (Object.prototype.hasOwnProperty.call(extra, k)) o[k] = extra[k];
-    }
-  }
-  return o;
 }
 
 /** 喺 Apps Script 編輯器按 ▶ 跑呢個，睇 Logger。 */
@@ -1126,6 +1145,14 @@ function doPost(e) {
 
   if (String(body.action || "") === "whoami") {
     return jsonOut_(authOkFields_({ email: auth.email || "", via: auth.via || "" }));
+  }
+
+  if (String(body.action || "") === "aiPing") {
+    try {
+      return handleAiPing_();
+    } catch (errPing) {
+      return authFail_(String(errPing && errPing.message ? errPing.message : errPing));
+    }
   }
 
   if (String(body.action || "") === "load") {

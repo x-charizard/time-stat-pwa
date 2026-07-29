@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=153" />
+  <link rel="stylesheet" href="styles.css?v=154" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -234,7 +234,10 @@
     <div class="card">
       <div class="ai-reports-toolbar">
         <h2 class="report-h" style="margin:0;">AI Reports</h2>
-        <button type="button" class="ghost" id="btnAiReportsRefresh">Refresh</button>
+        <div class="row" style="gap:8px;">
+          <button type="button" class="ghost" id="btnAiApiCheck">檢查 AI API</button>
+          <button type="button" class="ghost" id="btnAiReportsRefresh">Refresh</button>
+        </div>
       </div>
       <p class="muted" style="margin:8px 0 12px;">自動月／季／年報告歷史（人手 Generate 唔會出現喺度）。</p>
       <div id="aiReportsList" class="ai-reports-list"></div>
@@ -284,6 +287,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=153"></script>
+  <script src="app.js?v=154"></script>
 </body>
 </html>

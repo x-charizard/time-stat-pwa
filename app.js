@@ -4310,19 +4310,63 @@
     if (!j || j.ok === false) {
       const err = (j && j.error) || "request_failed";
       if (handleRemoteUnauthorized_(err)) throw new Error(err);
+      // 舊部署常見：唔識 action → missing_state / unknown_action
+      if (err === "missing_state" || String(err).indexOf("unknown_action:") === 0) {
+        throw new Error(
+          "呢個 /exec 仲係舊部署（server: " +
+            err +
+            "）。請喺 Apps Script「部署→管理部署」編輯而家呢個 Web app，版本選「新版本」再部署。URL: " +
+            url.slice(0, 60) +
+            "…"
+        );
+      }
       if (
-        err === "missing_state" ||
-        String(err).indexOf("unknown_action:") === 0 ||
         err === "handleGetAiSettings_ is not defined" ||
         /handle\w+Ai\w+ is not defined/.test(String(err))
       ) {
         throw new Error(
-          "Apps Script 未更新 AI API。請喺專案貼上最新 TimeStatSync.gs + TimeStatAiReports.gs，然後「部署→管理部署→新版本」。"
+          "有 TimeStatSync 但欠 TimeStatAiReports.gs（server: " + err + "）。請加第二個檔再新版本部署。"
         );
       }
       throw new Error(err);
     }
     return j;
+  }
+
+  async function diagnoseAiApi_() {
+    if (!canRemoteSync()) {
+      toast("請先 Google 登入。");
+      return;
+    }
+    const url = getRemotePostUrl();
+    try {
+      const j = await postAiAction_({ action: "aiPing" });
+      const h = (j && j.handlers) || {};
+      const ok =
+        j.aiApi === "ai-v1" &&
+        h.getAiSettings &&
+        h.generateAiReport &&
+        h.listAiReports;
+      toast(
+        (ok ? "AI API OK · " : "AI API 未齊 · ") +
+          "aiApi=" +
+          (j.aiApi || "?") +
+          " key=" +
+          (j.geminiKeySet ? "yes" : "NO") +
+          " settings=" +
+          (h.getAiSettings ? "yes" : "no") +
+          " generate=" +
+          (h.generateAiReport ? "yes" : "no") +
+          " · " +
+          String(url).replace(/^https:\/\/script\.google\.com\/macros\/s\//, "…/")
+      );
+      if (ok) {
+        void loadAiSettingsForm_();
+        void loadAiReportsList_();
+      }
+    } catch (e) {
+      toast("檢查失敗：" + (e && e.message ? e.message : String(e)));
+    }
   }
 
   async function generateManualAiReport_(wantEmail) {
@@ -4523,6 +4567,11 @@
         void loadAiReportsList_();
         void loadAiSettingsForm_();
       });
+    }
+    const checkBtn = document.getElementById("btnAiApiCheck");
+    if (checkBtn && !checkBtn.dataset.bound) {
+      checkBtn.dataset.bound = "1";
+      checkBtn.addEventListener("click", () => void diagnoseAiApi_());
     }
     const back = document.getElementById("btnAiReportBack");
     if (back && !back.dataset.bound) {
