@@ -1721,6 +1721,11 @@ body.auth-locked [data-panel] {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.85rem;
   line-height: 1.45;
+}
+.ai-setting-help {
+  margin: 4px 0 0;
+  font-size: 0.8rem;
+  line-height: 1.4;
 }.suggest-menu {
   position: absolute;
   left: 0;

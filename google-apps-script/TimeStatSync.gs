@@ -1228,6 +1228,11 @@ function doPost(e) {
     }
   }
 
+  // 有 action 但唔認識 → 唔好回 missing_state（易誤會成資料問題；多數係未部署新版）
+  if (body.action) {
+    return authFail_("unknown_action:" + String(body.action));
+  }
+
   if (!body.state || typeof body.state !== "object") return authFail_("missing_state");
   try {
     var incoming = body.state;

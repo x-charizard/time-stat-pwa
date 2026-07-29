@@ -4310,6 +4310,16 @@
     if (!j || j.ok === false) {
       const err = (j && j.error) || "request_failed";
       if (handleRemoteUnauthorized_(err)) throw new Error(err);
+      if (
+        err === "missing_state" ||
+        String(err).indexOf("unknown_action:") === 0 ||
+        err === "handleGetAiSettings_ is not defined" ||
+        /handle\w+Ai\w+ is not defined/.test(String(err))
+      ) {
+        throw new Error(
+          "Apps Script 未更新 AI API。請喺專案貼上最新 TimeStatSync.gs + TimeStatAiReports.gs，然後「部署→管理部署→新版本」。"
+        );
+      }
       throw new Error(err);
     }
     return j;
