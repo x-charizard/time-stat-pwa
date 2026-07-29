@@ -1578,11 +1578,6 @@ body.auth-locked [data-panel] {
   justify-content: space-between;
   gap: 12px;
 }
-.distraction-watch-hint {
-  margin: 6px 0 0;
-  font-size: 0.8rem;
-  line-height: 1.35;
-}
 .distraction-display {
   font-variant-numeric: tabular-nums;
   font-size: 1.25rem;
