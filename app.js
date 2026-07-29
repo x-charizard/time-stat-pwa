@@ -753,6 +753,14 @@
     return `${act} (${hmStart} ~ ${hmNow})`;
   }
 
+  /** Distraction 顯示：MM:SS（0 都顯示 00:00） */
+  function formatDistractionMmSs_(sec) {
+    const n = Math.max(0, Math.floor(Number(sec) || 0));
+    const m = Math.floor(n / 60);
+    const s = n % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
   /** Timeline 浮層：顯示成段 activity（與報表同一 segment 計法），跨日亦係完整一段嘅時間／分鐘。 */
   function timelineBlockDetailText(ev, fullAsc) {
     const idx = fullAsc.indexOf(ev);
@@ -764,14 +772,7 @@
     const lines = [];
     lines.push(`${formatHmLocal(ev.start)} ~ ${formatHmLocal(tEnd)}`);
     lines.push(`${Math.round(segMs / 60000)} mins`);
-    const dist = Number(ev.distractionSec) || 0;
-    if (dist > 0) {
-      const dm = Math.floor(dist / 60);
-      const ds = dist % 60;
-      lines.push(
-        `Distraction：${String(dm).padStart(2, "0")}:${String(ds).padStart(2, "0")}`
-      );
-    }
+    lines.push(`Distraction：${formatDistractionMmSs_(ev.distractionSec)}`);
     const rm = displayRemarkForRawRecord(ev);
     if (rm) lines.push(`Remark：${rm}`);
     return lines.join("\n");
@@ -3588,6 +3589,7 @@
   const REPORT_DATA_CSV_HEADERS = [
     "Start",
     "Duration",
+    "Distraction",
     "Group",
     "Layers",
     "Cat",
@@ -3602,6 +3604,7 @@
   function reportDataCsvRowCells(ev, ms, nextGlobal) {
     const startStr = ymdHmFromEventStart(ev.start);
     const durStr = durationMinutesLabel(ms);
+    const distractStr = formatDistractionMmSs_(ev.distractionSec);
     const nextEv = nextGlobal.get(ev.id) || null;
     const mapped = inferTimeStatMappingForRaw(ev, nextEv);
     const g = String(mapped.group || "").trim() || "\u2014";
@@ -3613,7 +3616,7 @@
     const place = String(ev.place || "").trim() || "\u2014";
     const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
     const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
-    return [startStr, durStr, g, ly, cj, sj, act, pj, place, remark, withStr];
+    return [startStr, durStr, distractStr, g, ly, cj, sj, act, pj, place, remark, withStr];
   }
 
   function buildReportDataCsvText(list, fromYmd, toYmd, f, showByDay) {
@@ -4179,13 +4182,14 @@
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
     html += `<h2 class="report-h">Data</h2>`;
 
-    html += `<div class="report-records-wrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
+    html += `<div class="report-records-wrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Distraction</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
     for (let ri = 0; ri < sortedRaw.length; ri++) {
       const row = sortedRaw[ri];
       const ev = row.ev;
       const ms = row.ms;
       const startStr = ymdHmFromEventStart(ev.start);
       const durStr = durationMinutesLabel(ms);
+      const distractStr = formatDistractionMmSs_(ev.distractionSec);
       const mapped = reportCtx.inferred.get(ev.id);
       const g = mapped ? String(mapped.group || "").trim() || "\u2014" : "\u2014";
       const ly = mapped ? String(mapped.layer || "").trim() || "\u2014" : "\u2014";
@@ -4198,6 +4202,7 @@
       const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
       html +=
         `<tr><td class="mono">${escapeHtml(startStr)}</td><td class="mono">${escapeHtml(durStr)}</td>` +
+        `<td class="mono">${escapeHtml(distractStr)}</td>` +
         `<td>${escapeHtml(g)}</td><td>${escapeHtml(ly)}</td><td>${escapeHtml(cj)}</td><td>${escapeHtml(sj)}</td>` +
         `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
     }
