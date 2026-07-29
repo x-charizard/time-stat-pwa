@@ -10,10 +10,12 @@
  * 2) Project settings → Script properties：
  *    - ALLOWED_EMAILS = xavierlichitau@gmail.com,xavierlichitau1995@gmail.com
  *    - GOOGLE_CLIENT_ID = 348329876798-nhvl3ppsckle1lv1r7u3vs2tb6pm3al0.apps.googleusercontent.com
+ *    - GEMINI_API_KEY（AI 年／季／月報告；見 TimeStatAiReports.gs）
  *    - API_TOKEN（可選緊急後門；唔好放公開前端）
  * 3) 部署 → 管理部署 → 編輯 → 版本「新版本」→ 部署（執行身分=我；存取權=任何人）。
  * 4) 編輯器跑 testAuthSetup()，Logger 應見 authApi=gis-v1 同 properties OK。
  * 5) 可跑 rebuildTimeStatLog()：由 TimeStatDB 重建可讀表 TimeStatLog（Start／Activity／…）。
+ * 6) AI 報告：專案同時保留 TimeStatAiReports.gs；跑 installAiReportTriggers()；乾跑 testGenerateAiReportMonth()。
  *
  * 瀏覽器 POST：Content-Type: text/plain（body 仍然係 JSON），避免 CORS preflight。
  *
@@ -22,13 +24,19 @@
  * - { idToken, action:"whoami" }         → { ok:true, email, authApi:"gis-v1" }
  * - { idToken, action:"migrateFormToDb" } → Form 合併寫入 TimeStatDB
  * - { idToken, action:"notifyCap", rule, wakeDayKey, durationMs, thresholdLabel }
- *       → MailApp 寄去登入 email；每個清醒日每條規則最多一次
+ * - { idToken, action:"listAiReports" }
+ * - { idToken, action:"getAiReport", id }
+ * - { idToken, action:"generateAiReport", periodType, periodKey, email? }  // persist:false
+ * - { idToken, action:"getAiSettings" }
+ * - { idToken, action:"saveAiSettings", settings:{ systemInstruction, reportOutline, extraInstructions, temperature } }
  * - { idToken, state }                  → 寫入 TimeStatDB
  * 可選：{ token: API_TOKEN, ... } 作緊急後門（唔經前端）。
  *
  * 資料：
  * - 工作表 "TimeStatDB"：一格 JSON（超長自動 CHUNK）— App 用
  * - 工作表 "TimeStatLog"：可讀表（Start／Activity／Place／Group／Remark…）— 你用嚟 check；每次 save 自動重寫
+ * - 工作表 "TimeStatAIReports"：AI 報告歷史（persist=true）
+ * - Script property AI_REPORT_PROMPT_CONFIG：AI 溝通／報告大綱（PWA 可改）
  */
 
 var DB_SHEET = "TimeStatDB";
@@ -1161,6 +1169,62 @@ function doPost(e) {
       return handleNotifyCap_(body, auth.email || "");
     } catch (errN) {
       return authFail_(String(errN && errN.message ? errN.message : errN));
+    }
+  }
+
+  if (String(body.action || "") === "listAiReports") {
+    try {
+      return handleListAiReports_(body);
+    } catch (errLa) {
+      return authFail_(String(errLa && errLa.message ? errLa.message : errLa));
+    }
+  }
+
+  if (String(body.action || "") === "getAiReport") {
+    try {
+      return handleGetAiReport_(body);
+    } catch (errGa) {
+      return authFail_(String(errGa && errGa.message ? errGa.message : errGa));
+    }
+  }
+
+  if (String(body.action || "") === "generateAiReport") {
+    try {
+      return handleGenerateAiReport_(body);
+    } catch (errGen) {
+      return authFail_(String(errGen && errGen.message ? errGen.message : errGen));
+    }
+  }
+
+  if (String(body.action || "") === "getAiSettings") {
+    try {
+      return handleGetAiSettings_(body);
+    } catch (errGs) {
+      return authFail_(String(errGs && errGs.message ? errGs.message : errGs));
+    }
+  }
+
+  if (String(body.action || "") === "saveAiSettings") {
+    try {
+      return handleSaveAiSettings_(body);
+    } catch (errSs) {
+      return authFail_(String(errSs && errSs.message ? errSs.message : errSs));
+    }
+  }
+
+  if (String(body.action || "") === "listAiReportsForVault") {
+    try {
+      return handleListAiReportsForVault_(body);
+    } catch (errLv) {
+      return authFail_(String(errLv && errLv.message ? errLv.message : errLv));
+    }
+  }
+
+  if (String(body.action || "") === "markAiReportSynced") {
+    try {
+      return handleMarkAiReportSynced_(body);
+    } catch (errMs) {
+      return authFail_(String(errMs && errMs.message ? errMs.message : errMs));
     }
   }
 

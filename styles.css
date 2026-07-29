@@ -1658,7 +1658,70 @@ body.auth-locked [data-panel] {
 .suggest-chevron:active {
   color: var(--text);
 }
-.suggest-menu {
+
+.ai-reports-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.ai-reports-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ai-reports-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 12px 14px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 10px);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  cursor: pointer;
+}
+.ai-reports-item:active {
+  background: rgba(255, 255, 255, 0.08);
+}
+.ai-report-md {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 12px 0 0;
+  padding: 12px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 10px);
+  background: rgba(0, 0, 0, 0.2);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  max-height: 70vh;
+  overflow: auto;
+}
+.ai-report-manual {
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 10px);
+}
+.ai-report-manual-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ai-report-manual.hidden,
+.ai-report-detail.hidden {
+  display: none !important;
+}
+.ai-setting-ta {
+  width: 100%;
+  min-height: 120px;
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.45;
+}.suggest-menu {
   position: absolute;
   left: 0;
   right: 0;

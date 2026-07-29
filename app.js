@@ -4252,9 +4252,289 @@
       });
       if (tab === "report") renderReport();
       if (tab === "timeline") renderTimeline();
+      if (tab === "ai-reports") {
+        void loadAiReportsList_();
+        void loadAiSettingsForm_();
+      }
       refreshSoftCapBanner();
     });
   });
+
+  let _lastManualAiReport_ = null;
+
+  function periodKeyFromReportDates_() {
+    const from = String(document.getElementById("reportFromStr")?.value || "").trim();
+    const to = String(document.getElementById("reportToStr")?.value || "").trim();
+    if (!from || !to) return null;
+    const fm = from.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const tm = to.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!fm || !tm) return { periodType: "custom", periodKey: from + "/" + to };
+    // exact calendar month
+    if (fm[1] === tm[1] && fm[2] === tm[2] && fm[3] === "01") {
+      const last = new Date(parseInt(fm[1], 10), parseInt(fm[2], 10), 0).getDate();
+      if (parseInt(tm[3], 10) === last) {
+        return { periodType: "month", periodKey: fm[1] + "-" + fm[2] };
+      }
+    }
+    // exact calendar year
+    if (from === fm[1] + "-01-01" && to === fm[1] + "-12-31" && fm[1] === tm[1]) {
+      return { periodType: "year", periodKey: fm[1] };
+    }
+    // quarters
+    const quarters = [
+      ["01-01", "03-31", "Q1"],
+      ["04-01", "06-30", "Q2"],
+      ["07-01", "09-30", "Q3"],
+      ["10-01", "12-31", "Q4"],
+    ];
+    for (let i = 0; i < quarters.length; i++) {
+      const q = quarters[i];
+      if (from === fm[1] + "-" + q[0] && to === fm[1] + "-" + q[1] && fm[1] === tm[1]) {
+        return { periodType: "quarter", periodKey: fm[1] + "-" + q[2] };
+      }
+    }
+    return { periodType: "custom", periodKey: from + "/" + to };
+  }
+
+  async function postAiAction_(payload) {
+    const url = getRemotePostUrl();
+    if (!url || !canRemoteSync()) throw new Error("not_signed_in");
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(remoteAuthBody(payload)),
+      mode: "cors",
+      cache: "no-store",
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!j || j.ok === false) {
+      const err = (j && j.error) || "request_failed";
+      if (handleRemoteUnauthorized_(err)) throw new Error(err);
+      throw new Error(err);
+    }
+    return j;
+  }
+
+  async function generateManualAiReport_(wantEmail) {
+    if (!canRemoteSync()) {
+      toast("請先 Google 登入先可以 Generate AI Report。");
+      return;
+    }
+    const pk = periodKeyFromReportDates_();
+    if (!pk) {
+      toast("請先揀 Report 日期範圍。");
+      return;
+    }
+    const btn = document.getElementById("btnAiReportGenerate");
+    if (btn) btn.disabled = true;
+    toast("Generating AI Report…");
+    try {
+      const j = await postAiAction_({
+        action: "generateAiReport",
+        periodType: pk.periodType,
+        periodKey: pk.periodKey,
+        email: !!wantEmail,
+      });
+      _lastManualAiReport_ = {
+        markdown: j.markdown || "",
+        subject: j.subject || "",
+        periodType: j.periodType,
+        periodKey: j.periodKey,
+      };
+      const box = document.getElementById("aiReportManualBox");
+      const body = document.getElementById("aiReportManualBody");
+      if (body) body.textContent = _lastManualAiReport_.markdown;
+      if (box) box.classList.remove("hidden");
+      toast(wantEmail ? "AI Report 已寄出（唔入歷史）" : "AI Report 已生成（唔入歷史）");
+    } catch (e) {
+      toast("AI Report 失敗：" + (e && e.message ? e.message : String(e)));
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function loadAiReportsList_() {
+    const listEl = document.getElementById("aiReportsList");
+    const detail = document.getElementById("aiReportDetail");
+    if (detail) detail.classList.add("hidden");
+    if (listEl) listEl.classList.remove("hidden");
+    if (!listEl) return;
+    if (!canRemoteSync()) {
+      listEl.innerHTML = '<p class="muted">請先 Google 登入。</p>';
+      return;
+    }
+    listEl.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const j = await postAiAction_({ action: "listAiReports", limit: 80 });
+      const reports = Array.isArray(j.reports) ? j.reports : [];
+      if (!reports.length) {
+        listEl.innerHTML = '<p class="muted">尚未有自動 AI 報告。</p>';
+        return;
+      }
+      listEl.innerHTML = "";
+      reports.forEach((rep) => {
+        const row = document.createElement("button");
+        row.type = "button";
+        row.className = "ai-reports-item";
+        row.textContent =
+          (rep.periodType || "") +
+          " " +
+          (rep.periodKey || "") +
+          " · " +
+          String(rep.generatedAt || "").slice(0, 19).replace("T", " ");
+        row.addEventListener("click", () => void openAiReportDetail_(rep.id));
+        listEl.appendChild(row);
+      });
+    } catch (e) {
+      listEl.innerHTML =
+        '<p class="muted">載入失敗：' + escapeHtml(e && e.message ? e.message : String(e)) + "</p>";
+    }
+  }
+
+  async function openAiReportDetail_(id) {
+    const listEl = document.getElementById("aiReportsList");
+    const detail = document.getElementById("aiReportDetail");
+    const title = document.getElementById("aiReportDetailTitle");
+    const body = document.getElementById("aiReportDetailBody");
+    if (!detail || !body) return;
+    try {
+      const j = await postAiAction_({ action: "getAiReport", id: id });
+      const rep = j.report || {};
+      if (listEl) listEl.classList.add("hidden");
+      detail.classList.remove("hidden");
+      if (title) title.textContent = (rep.subject || rep.periodKey || id) + "";
+      body.textContent = rep.markdown || "";
+    } catch (e) {
+      toast("開啟報告失敗：" + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  async function loadAiSettingsForm_() {
+    const sys = document.getElementById("aiSettingSystem");
+    const outline = document.getElementById("aiSettingOutline");
+    const extra = document.getElementById("aiSettingExtra");
+    const temp = document.getElementById("aiSettingTemp");
+    if (!sys || !outline) return;
+    if (!canRemoteSync()) {
+      sys.value = "";
+      outline.value = "";
+      if (extra) extra.value = "";
+      return;
+    }
+    try {
+      const j = await postAiAction_({ action: "getAiSettings" });
+      const s = j.settings || {};
+      sys.value = s.systemInstruction || "";
+      outline.value = s.reportOutline || "";
+      if (extra) extra.value = s.extraInstructions || "";
+      if (temp) temp.value = s.temperature != null ? String(s.temperature) : "0.3";
+      window.__AI_SETTINGS_DEFAULTS__ = j.defaults || null;
+    } catch (e) {
+      toast("載入 AI Settings 失敗：" + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  async function saveAiSettingsForm_() {
+    if (!canRemoteSync()) {
+      toast("請先 Google 登入。");
+      return;
+    }
+    const sys = document.getElementById("aiSettingSystem");
+    const outline = document.getElementById("aiSettingOutline");
+    const extra = document.getElementById("aiSettingExtra");
+    const temp = document.getElementById("aiSettingTemp");
+    try {
+      await postAiAction_({
+        action: "saveAiSettings",
+        settings: {
+          systemInstruction: sys ? sys.value : "",
+          reportOutline: outline ? outline.value : "",
+          extraInstructions: extra ? extra.value : "",
+          temperature: temp ? Number(temp.value) : 0.3,
+        },
+      });
+      toast("AI Settings 已儲存（自動／人手報告都會用）。");
+    } catch (e) {
+      toast("儲存失敗：" + (e && e.message ? e.message : String(e)));
+    }
+  }
+
+  function resetAiSettingsFormToDefaults_() {
+    const d = window.__AI_SETTINGS_DEFAULTS__;
+    if (!d) {
+      void loadAiSettingsForm_().then(() => {
+        const d2 = window.__AI_SETTINGS_DEFAULTS__;
+        if (!d2) {
+          toast("未有預設；請先 Refresh／登入。");
+          return;
+        }
+        applyAiDefaultsToForm_(d2);
+      });
+      return;
+    }
+    applyAiDefaultsToForm_(d);
+  }
+
+  function applyAiDefaultsToForm_(d) {
+    const sys = document.getElementById("aiSettingSystem");
+    const outline = document.getElementById("aiSettingOutline");
+    const extra = document.getElementById("aiSettingExtra");
+    const temp = document.getElementById("aiSettingTemp");
+    if (sys) sys.value = d.systemInstruction || "";
+    if (outline) outline.value = d.reportOutline || "";
+    if (extra) extra.value = d.extraInstructions || "";
+    if (temp) temp.value = d.temperature != null ? String(d.temperature) : "0.3";
+    toast("已填入預設（未儲存；記得 Save）。");
+  }
+
+  (function bindAiReportUi_() {
+    const gen = document.getElementById("btnAiReportGenerate");
+    if (gen && !gen.dataset.bound) {
+      gen.dataset.bound = "1";
+      gen.addEventListener("click", () => void generateManualAiReport_(false));
+    }
+    const em = document.getElementById("btnAiReportEmail");
+    if (em && !em.dataset.bound) {
+      em.dataset.bound = "1";
+      em.addEventListener("click", () => void generateManualAiReport_(true));
+    }
+    const close = document.getElementById("btnAiReportClose");
+    if (close && !close.dataset.bound) {
+      close.dataset.bound = "1";
+      close.addEventListener("click", () => {
+        const box = document.getElementById("aiReportManualBox");
+        if (box) box.classList.add("hidden");
+      });
+    }
+    const refresh = document.getElementById("btnAiReportsRefresh");
+    if (refresh && !refresh.dataset.bound) {
+      refresh.dataset.bound = "1";
+      refresh.addEventListener("click", () => {
+        void loadAiReportsList_();
+        void loadAiSettingsForm_();
+      });
+    }
+    const back = document.getElementById("btnAiReportBack");
+    if (back && !back.dataset.bound) {
+      back.dataset.bound = "1";
+      back.addEventListener("click", () => {
+        const detail = document.getElementById("aiReportDetail");
+        const listEl = document.getElementById("aiReportsList");
+        if (detail) detail.classList.add("hidden");
+        if (listEl) listEl.classList.remove("hidden");
+      });
+    }
+    const saveBtn = document.getElementById("btnAiSettingsSave");
+    if (saveBtn && !saveBtn.dataset.bound) {
+      saveBtn.dataset.bound = "1";
+      saveBtn.addEventListener("click", () => void saveAiSettingsForm_());
+    }
+    const resetBtn = document.getElementById("btnAiSettingsReset");
+    if (resetBtn && !resetBtn.dataset.bound) {
+      resetBtn.dataset.bound = "1";
+      resetBtn.addEventListener("click", () => resetAiSettingsFormToDefaults_());
+    }
+  })();
 
   (function bindTimelineDatePicker() {
     const pick = document.getElementById("timelinePickDate");
