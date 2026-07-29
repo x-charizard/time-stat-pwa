@@ -1895,6 +1895,29 @@
   }
 
   /**
+   * Distraction 掛喺「而家進行中」= 時間上上一筆 activity（唔跟新入庫嗰筆）。
+   * @returns {{ applied: boolean, target?: object, sec: number }}
+   */
+  function applyDistractionToOngoingPrevious_(newEv) {
+    const sec = currentDistractionSec_();
+    if (sec <= 0) return { applied: false, sec: 0 };
+    const list = sortedEventsUniqueById();
+    const tNew = new Date(newEv && newEv.start).getTime();
+    if (Number.isNaN(tNew)) return { applied: false, sec };
+    let prev = null;
+    for (let i = 0; i < list.length; i++) {
+      const t = new Date(list[i].start).getTime();
+      if (Number.isNaN(t)) continue;
+      if (t <= tNew) prev = list[i];
+      else break;
+    }
+    if (!prev) return { applied: false, sec };
+    const target = state.events.find((e) => e && e.id === prev.id) || prev;
+    target.distractionSec = (Number(target.distractionSec) || 0) + sec;
+    return { applied: true, target, sec };
+  }
+
+  /**
    * 連續同一個 activity：合入時間上前一筆（保留較早 start；remark 用 ", " 串）。
    * @returns {{ merged: boolean, ev: object }}
    */
@@ -1935,9 +1958,7 @@
     if (!String(target.projectsFromForm || "").trim() && ev.projectsFromForm) {
       target.projectsFromForm = ev.projectsFromForm;
     }
-    const d1 = Number(target.distractionSec) || 0;
-    const d2 = Number(ev.distractionSec) || 0;
-    if (d1 + d2 > 0) target.distractionSec = d1 + d2;
+    // distraction 已喺 push 前掛去上一筆；唔再跟新筆合併
 
     return { merged: true, ev: target };
   }
@@ -1945,12 +1966,20 @@
   function pushEventAndRefresh(ev, msg, opts) {
     const silent = opts && opts.silent;
     const formSource = opts && opts.formSource;
+    // 新筆唔帶 distraction；累計掛去上一筆（進行中）activity
+    if (ev) delete ev.distractionSec;
+    const dist = applyDistractionToOngoingPrevious_(ev);
+    if (dist.sec > 0 && dist.applied) resetDistractionWatch_();
+    else if (dist.sec > 0 && !dist.applied) {
+      toast("Distraction kept — no previous activity to attach.");
+    } else {
+      resetDistractionWatch_();
+    }
     const merged = mergeIntoPreviousIfSameActivity_(ev);
     if (!merged.merged) state.events.push(ev);
     const savedEv = merged.ev;
     bumpEventsMutationGen();
     save();
-    resetDistractionWatch_();
     refreshActivityDatalist();
     renderTimeline();
     refreshSoftCapBanner();
@@ -2123,13 +2152,6 @@
     return Math.floor(currentDistractionMs_() / 1000);
   }
 
-  function attachDistractionToEv_(ev) {
-    if (!ev) return;
-    const sec = currentDistractionSec_();
-    if (sec > 0) ev.distractionSec = sec;
-    else delete ev.distractionSec;
-  }
-
   function refreshDistractionDisplay_() {
     const el = document.getElementById("distractionDisplay");
     if (el) el.textContent = formatDistractClock_(currentDistractionMs_());
@@ -2222,7 +2244,6 @@
     const remark = quickRemarkEl.value.trim();
     if (remark) ev.remark = remark;
     if (place) ev.place = place;
-    attachDistractionToEv_(ev);
     handleEventClassificationFlow({
       ev: ev,
       activityLabel: label,
@@ -2271,7 +2292,6 @@
     const remark = manualRemarkEl.value.trim();
     if (remark) ev.remark = remark;
     if (place) ev.place = place;
-    attachDistractionToEv_(ev);
     handleEventClassificationFlow({
       ev: ev,
       activityLabel: label,
