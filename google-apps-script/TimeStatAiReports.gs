@@ -9,7 +9,10 @@
  */
 
 var AI_REPORTS_SHEET = "TimeStatAIReports";
-var GEMINI_MODEL = "gemini-3.6-flash";
+/** 優先：Pro + thinking high；無 quota／唔支援 → 免費 Flash-Lite */
+var GEMINI_MODEL_PRIMARY = "gemini-3.1-pro-preview";
+var GEMINI_MODEL_FREE_LITE = "gemini-3.5-flash-lite";
+var GEMINI_MODEL = GEMINI_MODEL_PRIMARY;
 var AI_WAKE_H = 3;
 var AI_WAKE_MI = 0;
 var AI_WORK_CAP_MS = 4 * 3600000;
@@ -1273,27 +1276,42 @@ function aiUserPrompt_(stats) {
 }
 
 /**
- * Gemini Interactions API；失敗則 fallback generateContent。
+ * 模型鏈：Pro + High → 免費 Lite（撞 RPD／quota／唔支援就下一檔）
  */
-function callGeminiForAiReport_(stats) {
-  var props = PropertiesService.getScriptProperties();
-  var apiKey = String(props.getProperty("GEMINI_API_KEY") || "").trim();
-  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+function aiGeminiModelChain_() {
+  return [
+    { model: GEMINI_MODEL_PRIMARY, thinkingLevel: "high", tier: "pro" },
+    { model: GEMINI_MODEL_FREE_LITE, thinkingLevel: "minimal", tier: "free-lite" },
+  ];
+}
 
-  var cfg = getAiPromptConfig_();
-  var system = aiSystemInstruction_();
-  var user = aiUserPrompt_(stats);
-  var temperature = cfg.temperature;
+function aiIsGeminiQuotaOrUnavailable_(code, text) {
+  var c = Number(code) || 0;
+  var t = String(text || "").toLowerCase();
+  if (c === 429) return true;
+  if (c === 403 || c === 404) return true;
+  return /resource_exhausted|quota|rate.?limit|rpd|requests per day|exceeded your current quota|permission.?denied|not found|not supported|billing|free.?tier|not.?available|limit:\s*0/i.test(
+    t,
+  );
+}
 
-  // Try Interactions API
+/**
+ * 單次呼叫：Interactions 優先，再 generateContent。
+ * @returns {{ok:boolean, markdown?:string, via?:string, code?:number, body?:string, quota?:boolean}}
+ */
+function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user) {
+  var think = String(thinkingLevel || "high").toLowerCase();
+  var urlI = "https://generativelanguage.googleapis.com/v1beta/interactions";
+  var bodyI = {
+    model: model,
+    system_instruction: system,
+    input: user,
+    generation_config: {
+      temperature: temperature,
+      thinking_level: think,
+    },
+  };
   try {
-    var urlI = "https://generativelanguage.googleapis.com/v1beta/interactions";
-    var bodyI = {
-      model: GEMINI_MODEL,
-      system_instruction: system,
-      input: user,
-      generation_config: { temperature: temperature },
-    };
     var resI = UrlFetchApp.fetch(urlI, {
       method: "post",
       contentType: "application/json",
@@ -1309,20 +1327,25 @@ function callGeminiForAiReport_(stats) {
         jI.output_text ||
         (jI.output && jI.output.text) ||
         extractGeminiTextFallback_(jI);
-      if (out) return { markdown: String(out), model: GEMINI_MODEL, via: "interactions" };
+      if (out) return { ok: true, markdown: String(out), via: "interactions", code: codeI };
+    }
+    if (aiIsGeminiQuotaOrUnavailable_(codeI, textI)) {
+      return { ok: false, quota: true, code: codeI, body: String(textI).slice(0, 400) };
     }
   } catch (eI) {}
 
-  // Fallback: generateContent
   var urlG =
     "https://generativelanguage.googleapis.com/v1beta/models/" +
-    GEMINI_MODEL +
+    model +
     ":generateContent?key=" +
     encodeURIComponent(apiKey);
   var bodyG = {
     systemInstruction: { parts: [{ text: system }] },
     contents: [{ role: "user", parts: [{ text: user }] }],
-    generationConfig: { temperature: temperature },
+    generationConfig: {
+      temperature: temperature,
+      thinkingConfig: { thinkingLevel: think.toUpperCase() },
+    },
   };
   var resG = UrlFetchApp.fetch(urlG, {
     method: "post",
@@ -1332,13 +1355,69 @@ function callGeminiForAiReport_(stats) {
   });
   var codeG = resG.getResponseCode();
   var textG = resG.getContentText();
-  if (codeG < 200 || codeG >= 300) {
-    throw new Error("gemini_http_" + codeG + ":" + String(textG).slice(0, 300));
+  if (codeG >= 200 && codeG < 300) {
+    var jG = JSON.parse(textG);
+    var outG = extractGeminiTextFallback_(jG);
+    if (outG) return { ok: true, markdown: String(outG), via: "generateContent", code: codeG };
+    return { ok: false, code: codeG, body: "empty_output" };
   }
-  var jG = JSON.parse(textG);
-  var outG = extractGeminiTextFallback_(jG);
-  if (!outG) throw new Error("gemini_empty_output");
-  return { markdown: String(outG), model: GEMINI_MODEL, via: "generateContent" };
+  return {
+    ok: false,
+    quota: aiIsGeminiQuotaOrUnavailable_(codeG, textG),
+    code: codeG,
+    body: String(textG).slice(0, 400),
+  };
+}
+
+/**
+ * Pro+High 優先；無 quota／唔支援 → 免費 Flash-Lite。
+ */
+function callGeminiForAiReport_(stats) {
+  var props = PropertiesService.getScriptProperties();
+  var apiKey = String(props.getProperty("GEMINI_API_KEY") || "").trim();
+  if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
+
+  var cfg = getAiPromptConfig_();
+  var system = aiSystemInstruction_();
+  var user = aiUserPrompt_(stats);
+  var temperature = cfg.temperature;
+  var chain = aiGeminiModelChain_();
+  var last = null;
+  var attempted = [];
+
+  for (var i = 0; i < chain.length; i++) {
+    var step = chain[i];
+    attempted.push(step.model + "@" + step.thinkingLevel);
+    var r = callGeminiOnce_(apiKey, step.model, step.thinkingLevel, temperature, system, user);
+    last = r;
+    if (r && r.ok && r.markdown) {
+      return {
+        markdown: r.markdown,
+        model: step.model,
+        thinkingLevel: step.thinkingLevel,
+        tier: step.tier,
+        via: r.via,
+        fallback: i > 0,
+        attempted: attempted,
+      };
+    }
+    // quota／唔支援 → 試下一檔（免費 lite）；其他錯誤亦試下一檔以保可用
+    if (!(r && (r.quota || r.code >= 400))) break;
+  }
+
+  var detail = last && last.body ? String(last.body).slice(0, 240) : "unknown";
+  var code = last && last.code ? last.code : 0;
+  if (last && last.quota) {
+    throw new Error(
+      "gemini_quota_exhausted: Pro 同 free lite 都無額度（RPD／quota）。通常太平洋午夜重置 ≈ 香港下午 3–4 點。attempted=" +
+        attempted.join(" → ") +
+        " http_" +
+        code +
+        ":" +
+        detail,
+    );
+  }
+  throw new Error("gemini_http_" + code + ":" + detail + " attempted=" + attempted.join(" → "));
 }
 
 function extractGeminiTextFallback_(j) {
@@ -1524,7 +1603,7 @@ function generatePeriodAiReport_(periodType, periodKey, opts) {
       generatedAt: generatedAt,
       subject: subject,
       markdown: gem.markdown,
-      model: gem.model + "/" + gem.via,
+      model: gem.model + "/" + (gem.thinkingLevel || "") + "/" + gem.via + (gem.fallback ? "/fallback" : ""),
       persist: true,
       syncedToVault: false,
     });
@@ -1540,6 +1619,9 @@ function generatePeriodAiReport_(periodType, periodKey, opts) {
     markdown: gem.markdown,
     model: gem.model,
     via: gem.via,
+    thinkingLevel: gem.thinkingLevel || "",
+    tier: gem.tier || "",
+    fallback: !!gem.fallback,
     persist: persist,
     emailed: doEmail,
     stats: stats,

@@ -4708,7 +4708,17 @@
       };
       setAiReportBodyHtml_(body, _lastManualAiReport_.markdown, { linkDates: true });
       if (box) box.classList.remove("hidden");
-      toast(wantEmail ? "AI Report 已寄出（唔入歷史）" : "AI Report 已生成（唔入歷史）");
+      const modelBit = j.model ? String(j.model) : "";
+      const thinkBit = j.thinkingLevel ? "@" + j.thinkingLevel : "";
+      const fb =
+        j.fallback || j.tier === "free-lite"
+          ? " · fallback free lite（Pro 無 quota／唔支援）"
+          : modelBit
+            ? " · " + modelBit + thinkBit
+            : "";
+      toast(
+        (wantEmail ? "AI Report 已寄出（唔入歷史）" : "AI Report 已生成（唔入歷史）") + fb,
+      );
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       setAiReportBodyHtml_(body, "", { error: "AI Report 失敗：" + msg });
