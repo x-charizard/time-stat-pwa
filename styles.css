@@ -1771,6 +1771,49 @@ body.auth-locked [data-panel] {
   margin: 0;
   text-align: center;
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+}
+.ai-report-loading-spin {
+  width: 0.95rem;
+  height: 0.95rem;
+  border: 2px solid rgba(255, 255, 255, 0.22);
+  border-top-color: rgba(255, 255, 255, 0.85);
+  border-radius: 50%;
+  flex: 0 0 auto;
+  animation: ai-report-spin 0.7s linear infinite;
+}
+@keyframes ai-report-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Generate 期間：暫緩繪製巨型 Raw Data／匯總表，保持捲動順暢 */
+html.ai-report-busy #reportSummary {
+  content-visibility: hidden;
+  contain-intrinsic-size: 0 120px;
+  max-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+html.ai-report-busy .report-sidebar {
+  pointer-events: none;
+  opacity: 0.4;
+}
+html.ai-report-busy .report-main-header-actions {
+  pointer-events: none;
+}
+html.ai-report-busy #btnAiReportGenerate {
+  opacity: 0.55;
+}
+.report-records-table tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 2.6rem;
 }
 .ai-report-md h1,
 .ai-report-md h2,

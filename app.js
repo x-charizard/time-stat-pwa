@@ -264,6 +264,11 @@
   const timelineBlockDetailMap = new WeakMap();
   let _reportFiltersCachedGen = -1;
   let _reportRenderScheduled = false;
+  /** Generate／渲染 AI 報告期間：暫緩重繪大型 Report，避免主線程卡死 */
+  let _aiReportBusy_ = false;
+  let _reportRenderPendingWhileAi_ = false;
+  let _aiReportGenTimer_ = null;
+  let _aiReportGenStartedAt_ = 0;
   let _historyInferCacheGen = -1;
   const _historyInferCache = new Map();
 
@@ -1870,12 +1875,69 @@
   }
 
   function scheduleRenderReport() {
+    if (_aiReportBusy_) {
+      _reportRenderPendingWhileAi_ = true;
+      return;
+    }
     if (_reportRenderScheduled) return;
     _reportRenderScheduled = true;
     requestAnimationFrame(() => {
       _reportRenderScheduled = false;
+      if (_aiReportBusy_) {
+        _reportRenderPendingWhileAi_ = true;
+        return;
+      }
       renderReport();
     });
+  }
+
+  function yieldToMain_() {
+    return new Promise((resolve) => {
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+      } else {
+        setTimeout(resolve, 0);
+      }
+    });
+  }
+
+  function setAiReportBusy_(on) {
+    _aiReportBusy_ = !!on;
+    document.documentElement.classList.toggle("ai-report-busy", _aiReportBusy_);
+    if (!_aiReportBusy_ && _reportRenderPendingWhileAi_) {
+      _reportRenderPendingWhileAi_ = false;
+      scheduleRenderReport();
+    }
+  }
+
+  function stopAiReportGenTimer_() {
+    if (_aiReportGenTimer_) {
+      clearInterval(_aiReportGenTimer_);
+      _aiReportGenTimer_ = null;
+    }
+    _aiReportGenStartedAt_ = 0;
+  }
+
+  function startAiReportGenTimer_(el) {
+    stopAiReportGenTimer_();
+    _aiReportGenStartedAt_ = Date.now();
+    const tick = () => {
+      if (!el || !el.classList.contains("loading")) {
+        stopAiReportGenTimer_();
+        return;
+      }
+      const sec = Math.max(0, Math.floor((Date.now() - _aiReportGenStartedAt_) / 1000));
+      const p = el.querySelector(".ai-report-loading");
+      if (p) {
+        p.innerHTML =
+          '<span class="ai-report-loading-spin" aria-hidden="true"></span>' +
+          "Generating… " +
+          sec +
+          "s";
+      }
+    };
+    tick();
+    _aiReportGenTimer_ = setInterval(tick, 1000);
   }
 
   function scrollPageToTopInstant() {
@@ -4436,6 +4498,7 @@
       input.disabled = true;
     }
     if (askBtn) askBtn.disabled = true;
+    setAiReportBusy_(true);
     const thinkingRow = appendAiFollowUpMessage_("assistant", "", { loading: true });
     try {
       const j = await postAiAction_({
@@ -4464,6 +4527,7 @@
       appendAiFollowUpMessage_("assistant", "", { error: msg });
       toast("追問失敗：" + msg);
     } finally {
+      setAiReportBusy_(false);
       if (input) input.disabled = false;
       if (askBtn) askBtn.disabled = false;
       if (input) input.focus();
@@ -4681,9 +4745,11 @@
     if (o.loading) {
       el.classList.add("loading");
       el.innerHTML =
-        '<p class="ai-report-loading">Generating…</p>';
+        '<p class="ai-report-loading"><span class="ai-report-loading-spin" aria-hidden="true"></span>Generating…</p>';
+      startAiReportGenTimer_(el);
       return;
     }
+    stopAiReportGenTimer_();
     el.classList.remove("loading");
     if (o.error) {
       el.innerHTML = '<p class="ai-report-loading">' + escapeHtml(String(o.error)) + "</p>";
@@ -4691,6 +4757,26 @@
     }
     el.innerHTML = renderAiMarkdownToHtml_(markdown, { linkDates: !!o.linkDates });
     if (o.linkDates) bindAiManualDateJumps_(el);
+  }
+
+  /** 先上屏純 Markdown，再喺 idle 加日期連結（避免一次卡死主線程） */
+  async function paintAiReportMarkdownSmooth_(el, markdown) {
+    if (!el) return;
+    stopAiReportGenTimer_();
+    el.classList.remove("loading");
+    await yieldToMain_();
+    el.innerHTML = renderAiMarkdownToHtml_(markdown, { linkDates: false });
+    await yieldToMain_();
+    const enhance = () => {
+      if (!el.isConnected) return;
+      el.innerHTML = renderAiMarkdownToHtml_(markdown, { linkDates: true });
+      bindAiManualDateJumps_(el);
+    };
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(enhance, { timeout: 600 });
+    } else {
+      setTimeout(enhance, 50);
+    }
   }
 
   function isoWeekKeyFromDateLocal_(d) {
@@ -4825,10 +4911,19 @@
     const box = document.getElementById("aiReportManualBox");
     const body = document.getElementById("aiReportManualBody");
     if (btn) btn.disabled = true;
+    setAiReportBusy_(true);
     if (box) box.classList.remove("hidden");
     resetAiFollowUpUi_();
     setAiReportBodyHtml_(body, "", { loading: true });
+    if (box && typeof box.scrollIntoView === "function") {
+      try {
+        box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      } catch (_) {
+        box.scrollIntoView(true);
+      }
+    }
     try {
+      await yieldToMain_();
       const j = await postAiAction_({
         action: "generateAiReport",
         periodType: pk.periodType,
@@ -4842,25 +4937,32 @@
         periodKey: j.periodKey,
         history: [],
       };
-      // Generate 期間若有 sync 改咗 date pickers，還原返用戶揀嘅範圍
+      // Generate 期間若有 sync 改咗 date pickers，還原返用戶揀嘅範圍（只喺真係被改過先重繪報表）
+      let datesChanged = false;
       if (fromEl && toEl && fromSnap && toSnap) {
-        const pr = document.getElementById("reportPeriodPreset");
-        if (pr) pr.value = "custom";
-        reportPresetSuppress = true;
-        try {
-          fromEl.value = fromSnap;
-          toEl.value = toSnap;
-        } finally {
-          queueMicrotask(() => {
-            reportPresetSuppress = false;
-          });
+        if (fromEl.value !== fromSnap || toEl.value !== toSnap) {
+          const pr = document.getElementById("reportPeriodPreset");
+          if (pr) pr.value = "custom";
+          reportPresetSuppress = true;
+          try {
+            fromEl.value = fromSnap;
+            toEl.value = toSnap;
+          } finally {
+            queueMicrotask(() => {
+              reportPresetSuppress = false;
+            });
+          }
+          datesChanged = true;
         }
-        renderReport();
       }
-      setAiReportBodyHtml_(body, _lastManualAiReport_.markdown, { linkDates: true });
       if (box) box.classList.remove("hidden");
+      await paintAiReportMarkdownSmooth_(body, _lastManualAiReport_.markdown);
       showAiFollowUpUi_();
       updateAiReportPeriodBadge_();
+      if (datesChanged) {
+        await yieldToMain_();
+        renderReport();
+      }
       const modelBit = j.model ? String(j.model) : "";
       const thinkBit = j.thinkingLevel ? "@" + j.thinkingLevel : "";
       const fb =
@@ -4878,6 +4980,8 @@
       resetAiFollowUpUi_();
       toast("AI Report 失敗：" + msg);
     } finally {
+      stopAiReportGenTimer_();
+      setAiReportBusy_(false);
       if (btn) btn.disabled = false;
     }
   }
