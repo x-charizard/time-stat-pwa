@@ -4132,7 +4132,7 @@
       return;
     }
 
-    const { byEnt, byGroup, byLayer, byProject, byCatDim, bySubDim, byDay, byPerson, rawSegmentRows } = agg;
+    const { byEnt, byGroup, byLayer, byProject, byCatDim, bySubDim, byPerson, rawSegmentRows } = agg;
     const rows = Object.entries(byEnt).sort((a, b) => b[1] - a[1]);
     const aggTotalMs = agg.totalKept || 0;
     const fmtAggCell = (ms) => {
@@ -4185,24 +4185,35 @@
     }
     html += `</tbody></table>`;
     html += tbl("Project", byProject);
-    {
-      const dayKeys = Object.keys(byDay).sort();
-      if (dayKeys.length) {
-        html += `<h2 class="report-h">Daily Subtotal</h2><table><thead><tr><th>Date</th><th>${unitTh}</th></tr></thead><tbody>`;
-        for (let di = 0; di < dayKeys.length; di++) {
-          const d = dayKeys[di];
-          const ms = byDay[d];
-          html +=
-            `<tr><td class="mono"><button type="button" class="report-day-jump" data-jump-ymd="${escapeHtml(d)}">${escapeHtml(d)}</button></td>` +
-            `<td class="mono">${fmtAggCell(ms)}</td></tr>`;
-        }
-        html += `</tbody></table>`;
-      }
-    }
     html += tbl("People", byPerson);
 
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
+    const rawDayKeys = [];
+    const rawDaySeen = Object.create(null);
+    for (let ri0 = 0; ri0 < sortedRaw.length; ri0++) {
+      const y = ymdFromLocalDate(new Date(sortedRaw[ri0].ev.start));
+      if (!rawDaySeen[y]) {
+        rawDaySeen[y] = 1;
+        rawDayKeys.push(y);
+      }
+    }
+    rawDayKeys.sort();
+    if (_reportRawDayFilter_ && !rawDaySeen[_reportRawDayFilter_]) {
+      _reportRawDayFilter_ = "";
+    }
+
     html += `<h2 class="report-h" id="reportRawDataHeading">Data</h2>`;
+    html +=
+      `<div class="report-raw-toolbar">` +
+      `<label for="reportRawDayFilter" class="report-raw-day-label">Day</label>` +
+      `<select id="reportRawDayFilter" class="input-xl report-raw-day-select" aria-label="Filter raw data by day">` +
+      `<option value="">All days</option>`;
+    for (let di = 0; di < rawDayKeys.length; di++) {
+      const d = rawDayKeys[di];
+      const sel = d === _reportRawDayFilter_ ? " selected" : "";
+      html += `<option value="${escapeHtml(d)}"${sel}>${escapeHtml(d)}</option>`;
+    }
+    html += `</select></div>`;
 
     html += `<div class="report-records-wrap" id="reportRecordsWrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Distraction</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
     for (let ri = 0; ri < sortedRaw.length; ri++) {
@@ -4223,8 +4234,10 @@
       const place = String(ev.place || "").trim() || "\u2014";
       const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
       const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
+      const hide =
+        _reportRawDayFilter_ && rowYmd !== _reportRawDayFilter_ ? " hidden" : "";
       html +=
-        `<tr data-ymd="${escapeHtml(rowYmd)}"><td class="mono">${escapeHtml(startStr)}</td><td class="mono">${escapeHtml(durStr)}</td>` +
+        `<tr data-ymd="${escapeHtml(rowYmd)}"${hide}><td class="mono">${escapeHtml(startStr)}</td><td class="mono">${escapeHtml(durStr)}</td>` +
         `<td class="mono">${escapeHtml(distractStr)}</td>` +
         `<td>${escapeHtml(g)}</td><td>${escapeHtml(ly)}</td><td>${escapeHtml(cj)}</td><td>${escapeHtml(sj)}</td>` +
         `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
@@ -4232,23 +4245,57 @@
     html += `</tbody></table></div>`;
 
     box.innerHTML = html;
-    bindReportDayJump_();
+    bindReportRawDayFilter_();
     } finally {
       syncReportUnitToggleButtons();
     }
   }
 
-  function bindReportDayJump_() {
-    const box = document.getElementById("reportSummary");
-    if (!box || box.dataset.dayJumpBound === "1") return;
-    box.dataset.dayJumpBound = "1";
-    box.addEventListener("click", (ev) => {
-      const btn = ev.target && ev.target.closest ? ev.target.closest("[data-jump-ymd]") : null;
-      if (!btn || !box.contains(btn)) return;
-      const ymd = String(btn.getAttribute("data-jump-ymd") || "").trim();
-      if (!ymd) return;
-      scrollReportRawToYmd_(ymd);
+  let _reportRawDayFilter_ = "";
+
+  function bindReportRawDayFilter_() {
+    const sel = document.getElementById("reportRawDayFilter");
+    if (!sel || sel.dataset.bound === "1") return;
+    sel.dataset.bound = "1";
+    sel.addEventListener("change", () => {
+      applyReportRawDayFilter_(sel.value || "", { scroll: !!sel.value });
     });
+  }
+
+  function applyReportRawDayFilter_(ymd, opts) {
+    const o = opts || {};
+    const next = String(ymd || "").trim();
+    _reportRawDayFilter_ = next;
+    const sel = document.getElementById("reportRawDayFilter");
+    if (sel && sel.value !== next) {
+      const hasOpt = !next || [...sel.options].some((op) => op.value === next);
+      if (hasOpt) sel.value = next;
+      else {
+        toast("No raw rows for " + next);
+        _reportRawDayFilter_ = "";
+        sel.value = "";
+        return;
+      }
+    }
+    const wrap = document.getElementById("reportRecordsWrap");
+    if (!wrap) return;
+    wrap.querySelectorAll("tbody tr[data-ymd]").forEach((tr) => {
+      const rowYmd = tr.getAttribute("data-ymd") || "";
+      tr.hidden = !!(next && rowYmd !== next);
+      tr.classList.remove("report-raw-day-hl");
+    });
+    if (o.scroll && next) scrollReportRawToYmd_(next);
+  }
+
+  function jumpReportRawToYmd_(ymd) {
+    const target = String(ymd || "").trim();
+    if (!target) return;
+    const wrap = document.getElementById("reportRecordsWrap");
+    if (!wrap) {
+      toast("Open Report Data first.");
+      return;
+    }
+    applyReportRawDayFilter_(target, { scroll: true });
   }
 
   function scrollReportRawToYmd_(ymd) {
@@ -4256,7 +4303,7 @@
     const box = document.getElementById("reportSummary");
     if (!wrap) return;
     wrap.querySelectorAll("tr.report-raw-day-hl").forEach((tr) => tr.classList.remove("report-raw-day-hl"));
-    const row = wrap.querySelector('tr[data-ymd="' + ymd.replace(/"/g, "") + '"]');
+    const row = wrap.querySelector('tr[data-ymd="' + ymd.replace(/"/g, "") + '"]:not([hidden])');
     if (!row) {
       toast("No raw rows for " + ymd);
       return;
@@ -4266,8 +4313,8 @@
     if (heading && typeof heading.scrollIntoView === "function") {
       heading.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
-    const results = box && box.closest ? box.closest(".report-results") : null;
-    if (results) {
+    const results = document.querySelector(".report-results");
+    if (results && box && results.contains(box)) {
       const top =
         wrap.getBoundingClientRect().top - results.getBoundingClientRect().top + results.scrollTop - 8;
       results.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
@@ -4311,17 +4358,62 @@
     return s.split("|").map((c) => c.trim());
   }
 
-  function formatAiMdInline_(text) {
+  function formatAiMdInline_(text, opts) {
+    const o = opts || {};
     let s = escapeHtml(text);
     s = s.replace(/`([^`\n]+)`/g, "<code>$1</code>");
     s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
     s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
     s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+    if (o.linkDates) s = linkifyAiReportDates_(s);
+    return s;
+  }
+
+  function resolveAiJumpYmd_(year, month, day) {
+    const mo = String(month).padStart(2, "0");
+    const da = String(day).padStart(2, "0");
+    const yFrom = String(document.getElementById("reportFromStr")?.value || "").slice(0, 4);
+    const yTo = String(document.getElementById("reportToStr")?.value || "").slice(0, 4);
+    let y = String(year || yFrom || yTo || new Date().getFullYear());
+    if (!year && yFrom && yTo && yFrom !== yTo) {
+      const candFrom = yFrom + "-" + mo + "-" + da;
+      const candTo = yTo + "-" + mo + "-" + da;
+      const from = String(document.getElementById("reportFromStr")?.value || "");
+      const to = String(document.getElementById("reportToStr")?.value || "");
+      if (candFrom >= from && candFrom <= to) y = yFrom;
+      else if (candTo >= from && candTo <= to) y = yTo;
+    }
+    return y + "-" + mo + "-" + da;
+  }
+
+  function aiDateJumpBtn_(ymd, label) {
+    return (
+      '<button type="button" class="ai-date-jump" data-jump-ymd="' +
+      escapeHtml(ymd) +
+      '">' +
+      escapeHtml(label) +
+      "</button>"
+    );
+  }
+
+  function linkifyAiReportDates_(escapedText) {
+    let s = String(escapedText || "");
+    s = s.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (m, y, mo, d) => {
+      return aiDateJumpBtn_(y + "-" + mo + "-" + d, m);
+    });
+    s = s.replace(/(\d{1,2})月(\d{1,2})日/g, (m, mo, d) => {
+      return aiDateJumpBtn_(resolveAiJumpYmd_("", mo, d), m);
+    });
+    // MM-DD（避免吃到 YYYY-MM-DD 尾段：前面唔係 digit 或 -）
+    s = s.replace(/(^|[^0-9-])(\d{2})-(\d{2})(?![0-9])/g, (m, pre, mo, d) => {
+      return pre + aiDateJumpBtn_(resolveAiJumpYmd_("", mo, d), mo + "-" + d);
+    });
     return s;
   }
 
   /** Lightweight Markdown → safe HTML（粗體、標題、列表、GFM table） */
-  function renderAiMarkdownToHtml_(md) {
+  function renderAiMarkdownToHtml_(md, opts) {
+    const inlineOpts = { linkDates: !!(opts && opts.linkDates) };
     const raw = String(md || "").replace(/\r\n/g, "\n");
     const lines = raw.split("\n");
     const html = [];
@@ -4355,14 +4447,14 @@
         }
         html.push('<table class="ai-md-table"><thead><tr>');
         splitAiMdTableRow_(rows[0]).forEach((h) => {
-          html.push("<th>" + formatAiMdInline_(h) + "</th>");
+          html.push("<th>" + formatAiMdInline_(h, inlineOpts) + "</th>");
         });
         html.push("</tr></thead><tbody>");
         for (let r = 1; r < rows.length; r++) {
           if (isTableSep_(rows[r])) continue;
           html.push("<tr>");
           splitAiMdTableRow_(rows[r]).forEach((c) => {
-            html.push("<td>" + formatAiMdInline_(c) + "</td>");
+            html.push("<td>" + formatAiMdInline_(c, inlineOpts) + "</td>");
           });
           html.push("</tr>");
         }
@@ -4374,7 +4466,7 @@
       if (hm) {
         closeLists();
         const level = hm[1].length;
-        html.push("<h" + level + ">" + formatAiMdInline_(hm[2]) + "</h" + level + ">");
+        html.push("<h" + level + ">" + formatAiMdInline_(hm[2], inlineOpts) + "</h" + level + ">");
         i++;
         continue;
       }
@@ -4396,7 +4488,7 @@
           html.push("<ul>");
           inUl = true;
         }
-        html.push("<li>" + formatAiMdInline_(ulm[1]) + "</li>");
+        html.push("<li>" + formatAiMdInline_(ulm[1], inlineOpts) + "</li>");
         i++;
         continue;
       }
@@ -4411,7 +4503,7 @@
           html.push("<ol>");
           inOl = true;
         }
-        html.push("<li>" + formatAiMdInline_(olm[1]) + "</li>");
+        html.push("<li>" + formatAiMdInline_(olm[1], inlineOpts) + "</li>");
         i++;
         continue;
       }
@@ -4436,10 +4528,21 @@
         paras.push(lines[i]);
         i++;
       }
-      html.push("<p>" + formatAiMdInline_(paras.join(" ")) + "</p>");
+      html.push("<p>" + formatAiMdInline_(paras.join(" "), inlineOpts) + "</p>");
     }
     closeLists();
     return html.join("\n") || '<p class="muted">（空白報告）</p>';
+  }
+
+  function bindAiManualDateJumps_(el) {
+    if (!el || el.dataset.dateJumpBound === "1") return;
+    el.dataset.dateJumpBound = "1";
+    el.addEventListener("click", (ev) => {
+      const btn = ev.target && ev.target.closest ? ev.target.closest("[data-jump-ymd]") : null;
+      if (!btn || !el.contains(btn)) return;
+      ev.preventDefault();
+      jumpReportRawToYmd_(btn.getAttribute("data-jump-ymd") || "");
+    });
   }
 
   function setAiReportBodyHtml_(el, markdown, opts) {
@@ -4456,7 +4559,8 @@
       el.innerHTML = '<p class="ai-report-loading">' + escapeHtml(String(o.error)) + "</p>";
       return;
     }
-    el.innerHTML = renderAiMarkdownToHtml_(markdown);
+    el.innerHTML = renderAiMarkdownToHtml_(markdown, { linkDates: !!o.linkDates });
+    if (o.linkDates) bindAiManualDateJumps_(el);
   }
 
   function isoWeekKeyFromDateLocal_(d) {
@@ -4602,7 +4706,7 @@
         periodType: j.periodType,
         periodKey: j.periodKey,
       };
-      setAiReportBodyHtml_(body, _lastManualAiReport_.markdown);
+      setAiReportBodyHtml_(body, _lastManualAiReport_.markdown, { linkDates: true });
       if (box) box.classList.remove("hidden");
       toast(wantEmail ? "AI Report 已寄出（唔入歷史）" : "AI Report 已生成（唔入歷史）");
     } catch (e) {
