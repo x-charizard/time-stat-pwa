@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=158" />
+  <link rel="stylesheet" href="styles.css?v=159" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -260,7 +260,6 @@
       <input type="number" id="aiSettingTemp" class="input-xl" min="0" max="1" step="0.1" value="0.3" />
 
       <h3 class="report-h" style="margin:16px 0 8px;font-size:1rem;">Period content</h3>
-      <p class="muted" style="margin:0 0 8px;">勾選要寫入各期報告嘅章節；可加補充文字。</p>
       <div class="ai-period-tabs" id="aiPeriodTabs" role="tablist">
         <button type="button" class="ghost ai-period-tab active" data-period="week">Week</button>
         <button type="button" class="ghost ai-period-tab" data-period="month">Month</button>
@@ -269,9 +268,9 @@
       </div>
       <div id="aiPeriodPanels"></div>
 
-      <label for="aiEmotionNeg" style="margin-top:14px;">Negative emotion keywords（觸發 72h brief email）</label>
+      <label for="aiEmotionNeg" style="margin-top:14px;">Negative emotion keywords</label>
       <textarea id="aiEmotionNeg" class="ai-setting-ta" rows="3"></textarea>
-      <label for="aiEmotionPos" style="margin-top:10px;">Positive emotion keywords（週／月 highlight）</label>
+      <label for="aiEmotionPos" style="margin-top:10px;">Positive emotion keywords</label>
       <textarea id="aiEmotionPos" class="ai-setting-ta" rows="3"></textarea>
 
       <div class="row" style="margin-top:12px;gap:8px;">
@@ -283,6 +282,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=158"></script>
+  <script src="app.js?v=159"></script>
 </body>
 </html>

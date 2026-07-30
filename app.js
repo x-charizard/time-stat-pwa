@@ -4566,7 +4566,7 @@
       const j = await postAiAction_({ action: "listAiReports", limit: 80 });
       const reports = Array.isArray(j.reports) ? j.reports : [];
       if (!reports.length) {
-        listEl.innerHTML = '<p class="muted">尚未有自動 AI 報告。</p>';
+        listEl.innerHTML = '<p class="muted">No automatic AI reports yet.</p>';
         return;
       }
       listEl.innerHTML = "";
@@ -4674,7 +4674,7 @@
       });
       const noteLab = document.createElement("label");
       noteLab.className = "ai-period-note-label";
-      noteLab.textContent = "補充文字（" + pt + "）";
+      noteLab.textContent = "Notes (" + pt + ")";
       noteLab.htmlFor = "aiPeriodNotes_" + pt;
       const ta = document.createElement("textarea");
       ta.id = "aiPeriodNotes_" + pt;
