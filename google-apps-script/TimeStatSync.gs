@@ -15,7 +15,8 @@
  * 3) 部署 → 管理部署 → 編輯 → 版本「新版本」→ 部署（執行身分=我；存取權=任何人）。
  * 4) 編輯器跑 testAuthSetup()，Logger 應見 authApi=gis-v1 同 properties OK。
  * 5) 可跑 rebuildTimeStatLog()：由 TimeStatDB 重建可讀表 TimeStatLog（Start／Activity／…）。
- * 6) AI 報告：專案同時保留 TimeStatAiReports.gs；跑 installAiReportTriggers()；乾跑 testGenerateAiReportMonth()。
+ * 6) AI 報告：同一專案要有 TimeStatAiReports.gs + TimeStatAiPeriodKpis.gs；
+ *    跑 installAiReportTriggers()；乾跑 testGenerateAiReportMonth()。
  *
  * 瀏覽器 POST：Content-Type: text/plain（body 仍然係 JSON），避免 CORS preflight。
  *
@@ -1202,6 +1203,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "listAiReports") {
     try {
+      if (typeof handleListAiReports_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleListAiReports_(body);
     } catch (errLa) {
       return authFail_(String(errLa && errLa.message ? errLa.message : errLa));
@@ -1210,6 +1214,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "getAiReport") {
     try {
+      if (typeof handleGetAiReport_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleGetAiReport_(body);
     } catch (errGa) {
       return authFail_(String(errGa && errGa.message ? errGa.message : errGa));
@@ -1218,6 +1225,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "generateAiReport") {
     try {
+      if (typeof handleGenerateAiReport_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleGenerateAiReport_(body);
     } catch (errGen) {
       return authFail_(String(errGen && errGen.message ? errGen.message : errGen));
@@ -1226,6 +1236,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "getAiSettings") {
     try {
+      if (typeof handleGetAiSettings_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleGetAiSettings_(body);
     } catch (errGs) {
       return authFail_(String(errGs && errGs.message ? errGs.message : errGs));
@@ -1234,6 +1247,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "saveAiSettings") {
     try {
+      if (typeof handleSaveAiSettings_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleSaveAiSettings_(body);
     } catch (errSs) {
       return authFail_(String(errSs && errSs.message ? errSs.message : errSs));
@@ -1242,6 +1258,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "listAiReportsForVault") {
     try {
+      if (typeof handleListAiReportsForVault_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleListAiReportsForVault_(body);
     } catch (errLv) {
       return authFail_(String(errLv && errLv.message ? errLv.message : errLv));
@@ -1250,6 +1269,9 @@ function doPost(e) {
 
   if (String(body.action || "") === "markAiReportSynced") {
     try {
+      if (typeof handleMarkAiReportSynced_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
       return handleMarkAiReportSynced_(body);
     } catch (errMs) {
       return authFail_(String(errMs && errMs.message ? errMs.message : errMs));

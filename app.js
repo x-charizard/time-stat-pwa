@@ -4495,11 +4495,14 @@
         );
       }
       if (
+        err === "missing_TimeStatAiReports_gs" ||
         err === "handleGetAiSettings_ is not defined" ||
         /handle\w+Ai\w+ is not defined/.test(String(err))
       ) {
         throw new Error(
-          "有 TimeStatSync 但欠 TimeStatAiReports.gs（server: " + err + "）。請加第二個檔再新版本部署。"
+          "Apps Script 欠 AI 報告檔（server: " +
+            err +
+            "）。同一專案要有三個檔：TimeStatSync.gs、TimeStatAiReports.gs、TimeStatAiPeriodKpis.gs，然後「管理部署→新版本」。"
         );
       }
       throw new Error(err);
