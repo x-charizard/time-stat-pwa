@@ -4388,24 +4388,28 @@
 
   function aiDateJumpBtn_(ymd, label) {
     return (
-      '<button type="button" class="ai-date-jump" data-jump-ymd="' +
+      '<span role="button" tabindex="0" class="ai-date-jump" data-jump-ymd="' +
       escapeHtml(ymd) +
       '">' +
       escapeHtml(label) +
-      "</button>"
+      "</span>"
     );
   }
 
   function linkifyAiReportDates_(escapedText) {
     let s = String(escapedText || "");
-    s = s.replace(/\b(\d{4})-(\d{2})-(\d{2})\b/g, (m, y, mo, d) => {
-      return aiDateJumpBtn_(y + "-" + mo + "-" + d, m);
-    });
-    s = s.replace(/(\d{1,2})月(\d{1,2})日/g, (m, mo, d) => {
+    // 日期＋可選時間整段一齊（唔好淨包日期令時間跌落下一行）
+    s = s.replace(
+      /\b(\d{4})-(\d{2})-(\d{2})(?:([ T])(\d{2}:\d{2}(?::\d{2})?))?\b/g,
+      (m, y, mo, d) => {
+        return aiDateJumpBtn_(y + "-" + mo + "-" + d, m);
+      },
+    );
+    s = s.replace(/(\d{1,2})月(\d{1,2})日(?:\s*(\d{1,2}:\d{2}(?::\d{2})?))?/g, (m, mo, d) => {
       return aiDateJumpBtn_(resolveAiJumpYmd_("", mo, d), m);
     });
     // MM-DD（避免吃到 YYYY-MM-DD 尾段：前面唔係 digit 或 -）
-    s = s.replace(/(^|[^0-9-])(\d{2})-(\d{2})(?![0-9])/g, (m, pre, mo, d) => {
+    s = s.replace(/(^|[^0-9-])(\d{2})-(\d{2})(?![0-9:])/g, (m, pre, mo, d) => {
       return pre + aiDateJumpBtn_(resolveAiJumpYmd_("", mo, d), mo + "-" + d);
     });
     return s;
@@ -4538,6 +4542,13 @@
     if (!el || el.dataset.dateJumpBound === "1") return;
     el.dataset.dateJumpBound = "1";
     el.addEventListener("click", (ev) => {
+      const btn = ev.target && ev.target.closest ? ev.target.closest("[data-jump-ymd]") : null;
+      if (!btn || !el.contains(btn)) return;
+      ev.preventDefault();
+      jumpReportRawToYmd_(btn.getAttribute("data-jump-ymd") || "");
+    });
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key !== "Enter" && ev.key !== " ") return;
       const btn = ev.target && ev.target.closest ? ev.target.closest("[data-jump-ymd]") : null;
       if (!btn || !el.contains(btn)) return;
       ev.preventDefault();

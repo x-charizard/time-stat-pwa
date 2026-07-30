@@ -1392,9 +1392,15 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   text-underline-offset: 2px;
 }
 
-.ai-date-jump {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 0.95em;
+.ai-report-md .ai-date-jump {
+  display: inline;
+  vertical-align: baseline;
+  white-space: nowrap;
+  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  text-align: inherit;
 }
 
 #reportSummary .report-records-table tr.report-raw-day-hl td {
@@ -1747,6 +1753,7 @@ body.auth-locked [data-panel] {
   line-height: 1.55;
   max-height: 70vh;
   overflow: auto;
+  text-align: left;
 }
 .ai-report-md.loading {
   display: flex;
