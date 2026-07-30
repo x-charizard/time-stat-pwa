@@ -335,14 +335,52 @@ function aiSortedEvents_(state) {
   events.sort(function (a, b) {
     return aiParseStartMs_(a.start) - aiParseStartMs_(b.start);
   });
-  return events;
+  // 同一 id 只留最後一筆
+  var seenId = {};
+  var byId = [];
+  for (var i = events.length - 1; i >= 0; i--) {
+    var id = events[i] && events[i].id != null ? String(events[i].id) : "";
+    if (id) {
+      if (seenId[id]) continue;
+      seenId[id] = 1;
+    }
+    byId.push(events[i]);
+  }
+  byId.reverse();
+  // 匯入指紋去重（同時間／活動／地點／備註等）— 避免重覆入帳令 loggedHours 爆燈
+  if (typeof eventImportDedupeKeyGs_ === "function") {
+    var seenK = {};
+    var out = [];
+    for (var j = byId.length - 1; j >= 0; j--) {
+      var k = eventImportDedupeKeyGs_(byId[j]);
+      if (seenK[k]) continue;
+      seenK[k] = 1;
+      out.push(byId[j]);
+    }
+    out.reverse();
+    return out;
+  }
+  return byId;
+}
+
+/** 同 start timestamp 嘅連續筆 → 攤分時長（對齊 PWA segmentDurationMsForReport） */
+function aiSameStartRunBounds_(list, i) {
+  var t0 = aiParseStartMs_(list[i].start);
+  var lo = i;
+  while (lo > 0 && aiParseStartMs_(list[lo - 1].start) === t0) lo--;
+  var hi = i;
+  while (hi + 1 < list.length && aiParseStartMs_(list[hi + 1].start) === t0) hi++;
+  return { lo: lo, hi: hi, t0: t0 };
 }
 
 function aiSegmentMs_(list, i, nowMs) {
-  var t0 = aiParseStartMs_(list[i].start);
+  var bounds = aiSameStartRunBounds_(list, i);
+  var t0 = bounds.t0;
   if (isNaN(t0)) return 0;
+  var runLen = bounds.hi - bounds.lo + 1;
+  var idxInRun = i - bounds.lo;
   var t1 = NaN;
-  for (var j = i + 1; j < list.length; j++) {
+  for (var j = bounds.hi + 1; j < list.length; j++) {
     var tj = aiParseStartMs_(list[j].start);
     if (!isNaN(tj) && tj > t0) {
       t1 = tj;
@@ -350,7 +388,17 @@ function aiSegmentMs_(list, i, nowMs) {
     }
   }
   if (isNaN(t1)) t1 = nowMs;
-  return Math.max(0, t1 - t0);
+  var span = Math.max(0, t1 - t0);
+  var base = Math.floor(span / runLen);
+  var rem = span - base * runLen;
+  return base + (idxInRun < rem ? 1 : 0);
+}
+
+function aiDaysInRangeInclusive_(fromYmd, toYmd) {
+  var a = new Date(String(fromYmd) + "T00:00:00").getTime();
+  var b = new Date(String(toYmd) + "T00:00:00").getTime();
+  if (isNaN(a) || isNaN(b) || b < a) return 1;
+  return Math.round((b - a) / 86400000) + 1;
 }
 
 function aiHours_(ms) {
@@ -1044,14 +1092,25 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         "唔使高度用腦／專注嘅恢復緩衝（前稱 DMN）。判定原則：需唔需要集中精神。Reading：小說類（如 Harry Potter）=是；成長／用腦類（如原子習慣、Trading in the Zone）=否。Friending：一般社交=是；深談／會議=否。",
       運動日:
         "gyming／hiking／yogaing／running 等合計 ≥ 30 分鐘；Photoing 暫時唔計，除非 remark 注明高強度／重裝／長途拍攝等",
+      loggedHours:
+        "期內打卡段落合計時長（已去重 id／匯入指紋；同 timestamp 多筆會攤分）。理論上限見 totals.loggedHoursCeiling24h（日數×24）；若仍接近或超過上限，先質疑資料品質，唔好當真實活躍時數",
+      loggedHoursCeiling24h: "daysInRange × 24；人唔可能全日打卡超過呢個數（除非重覆入帳／計算錯誤）",
     },
     range: { from: range.fromYmd, to: range.toYmd },
-    totals: {
-      loggedHours: aiHours_(totalMs),
-      distractionHours: aiHours_(distractMs),
-      trueFocusHours: aiHours_(trueFocusMs),
-      trueFocusWorkHours: aiHours_(trueFocusWorkMs),
-    },
+    totals: (function () {
+      var daysInRange = aiDaysInRangeInclusive_(range.fromYmd, range.toYmd);
+      var ceiling = daysInRange * 24;
+      var loggedH = aiHours_(totalMs);
+      return {
+        loggedHours: loggedH,
+        daysInRange: daysInRange,
+        loggedHoursCeiling24h: ceiling,
+        loggedHoursOverCeiling: loggedH > ceiling,
+        distractionHours: aiHours_(distractMs),
+        trueFocusHours: aiHours_(trueFocusMs),
+        trueFocusWorkHours: aiHours_(trueFocusWorkMs),
+      };
+    })(),
     trueFocus: {
       formula: "trueFocusMinutes = max(0, activityMinutes - distractionMinutes)",
       totalHours: aiHours_(trueFocusMs),
@@ -1098,6 +1157,7 @@ function aiDefaultSystemInstruction_() {
     "使用繁體中文；可夾英文專有詞（Trading、MOC、Prop Firm）。",
     "框架：hypothesis → evidence（只能用提供的數字）→ review／下期實驗。",
     "禁止預測市場升跌；禁止虛構未提供的數據。",
+    "若 totals.loggedHoursOverCeiling 為 true，或 loggedHours ≥ loggedHoursCeiling24h：必須指出可能係重覆入帳／計算問題，唔好把超上限 loggedHours 當真實活躍時數。",
     "對齊價值：過程質素、樣本、期望值、少／小／慢；僅在數據支持時點出鬆懈／資訊過載／唔跟 checklist 跡象。",
     "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、認知鎖死、切換失靈、trueFocus、No-Trades、Diffused Mode 等），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
     "日期／週期顯示：唔好用 W29／ISO week 編號；用月-日範圍（例如 07-14 → 07-20）或 DATA_JSON 入面嘅 weekLabel／periodLabel／range。",

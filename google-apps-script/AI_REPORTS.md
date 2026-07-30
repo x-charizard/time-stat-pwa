@@ -27,9 +27,13 @@ PWA 連嘅 URL（`config.remote.json` / app 內 default）必須係呢個部署�
    - `GEMINI_API_KEY` =（你已 set）
    - 已有 `ALLOWED_EMAILS`、`GOOGLE_CLIENT_ID`
 
-**人手追問（Ask about this report）**
+**人手追問（Follow up questions）**
 - Generate 之後可喺報告下方追問；server 會用同一期 `DATA_JSON` + 原報告 + 最近對話答。
 - 要更新：`TimeStatAiReports.gs` + `TimeStatSync.gs` → **新版本**。
+
+**loggedHours 上限**
+- AI 聚合會先按 id／匯入指紋去重，同 timestamp 多筆會攤分（對齊 PWA）。
+- `totals.loggedHoursCeiling24h` = `daysInRange × 24`；若 `loggedHoursOverCeiling`，報告應標資料品質問題，唔好當真實活躍時數。
 
 **Gemini 模型（免費優先 fallback）**
 1. 優先：`gemini-3.1-pro-preview` + `thinking_level: high`
