@@ -18,6 +18,23 @@ var AI_SLEEP_SHORT_MS = 6 * 3600000;
 var AI_SLEEP_LONG_MS = 10 * 3600000;
 var AI_EXERCISE_MIN_MS = 30 * 60000;
 
+/** Photoing 暫時唔計高強度／運動，除非 remark 另有注明 */
+function aiPhotoingCountsAsExercise_(ev) {
+  var blob = "";
+  if (typeof aiEventTextBlob_ === "function") blob = aiEventTextBlob_(ev);
+  else blob = String((ev && ev.remark) || "");
+  blob = blob.toLowerCase();
+  return /(高強度|高强|strenuous|intense\s*shoot|heavy\s*gear|長途拍攝|重裝|體力消耗|hiking\s*shoot)/i.test(
+    blob,
+  );
+}
+
+function aiIsExerciseActivity_(nm, ev) {
+  if (AI_EXERCISE_KEYS[nm]) return true;
+  if (nm === "photoing" || nm === "photography") return aiPhotoingCountsAsExercise_(ev);
+  return false;
+}
+
 function aiDefaultEmotionKeywords_() {
   return {
     negative: [
@@ -130,7 +147,7 @@ function aiPeriodSectionLabels_() {
       cognitiveLock:
         "Cognitive Lock — continuous trusted Work >60m closed by a real rest/non-Work log (ideal <3 / week)",
       switchFail:
-        "Switch Fail — DMN between two trusted Work blocks <15m (ideal <3 / week)",
+        "Switch Fail — Diffused Mode between two trusted Work blocks <15m (ideal <3 / week)",
       socialDays: "Social days — Friending/Familying/Socialing present (ideal <3 / week)",
       negativeRemarks72h:
         "Negative emotion remarks — list hits + what happened in the prior 72h",
@@ -147,7 +164,7 @@ function aiPeriodSectionLabels_() {
       comparisons: "3-week comparison — current + prior 2 weeks",
     },
     month: {
-      switchFailDays: "Switch-fail days — days with DMN gap <15m between Work (ideal ≤4 / month)",
+      switchFailDays: "Switch-fail days — days with Diffused Mode gap <15m between Work (ideal ≤4 / month)",
       overSocialWeeks: "Over-social weeks — socialDays >3; must not be two weeks in a row",
       chaosStreak: "Chaos streak — negative-emotion days must not run ≥3 consecutive",
       sleepAnomalies: "Sleep anomalies — short/long sleep must not be two consecutive days",
@@ -255,6 +272,9 @@ function aiBuildDailySeries_(state, range) {
       if (nm === AI_SLEEP_KEY) sleepMs += seg;
       if (nm === AI_MEDITATE_KEY) meditateMs += seg;
       if (AI_EXERCISE_KEYS[nm]) exerciseMs += seg;
+      if (nm === "photoing" || nm === "photography") {
+        if (aiPhotoingCountsAsExercise_(list[j])) exerciseMs += seg;
+      }
       var pl = String(list[j].place || "").trim();
       if (pl) places[pl] = (places[pl] || 0) + 1;
       var rm = String(list[j].remark || "").trim();
@@ -544,6 +564,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     if (ow > 2) failsW.push("overWorkDays>2");
     weeklyEval.push({
       weekKey: wrow.weekKey,
+      weekLabel: wrow.weekLabel || (typeof aiWeekLabelFromKey_ === "function" ? aiWeekLabelFromKey_(wrow.weekKey) : wrow.weekKey),
       pass: failsW.length === 0,
       fails: failsW,
       socialDays: wrow.socialDays,
@@ -690,7 +711,8 @@ function enrichStatsWithPeriodKpis_(state, stats) {
   stats.termGlossary["睡眠不足"] = "當日 Sleeping 合計 < 6 小時（有打卡先計）";
   stats.termGlossary["睡眠過龍"] = "當日 Sleeping 合計 > 10 小時";
   stats.termGlossary["OverWork"] = "當日 Work Group > 4 小時";
-  stats.termGlossary["運動日"] = "gyming／hiking／yogaing／running 等合計 ≥ 30 分鐘";
+  stats.termGlossary["運動日"] =
+    "gyming／hiking／yogaing／running 等合計 ≥ 30 分鐘；Photoing 暫時唔計，除非 remark 注明高強度";
   return stats;
 }
 

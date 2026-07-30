@@ -1200,10 +1200,12 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 
 
 .report-records-wrap {
-  overflow-x: auto;
-  overflow-y: visible;
   max-width: 100%;
+  max-height: min(52dvh, 560px);
+  overflow: auto;
   -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
 .report-records-table {
@@ -1306,6 +1308,8 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
 #reportSummary .report-records-wrap {
   margin-left: auto;
   margin-right: auto;
+  max-height: min(52dvh, 560px);
+  overflow: auto;
 }
 
 #reportSummary > table,
@@ -1346,8 +1350,28 @@ input[type="number"].input-xl::-webkit-inner-spin-button {
   box-shadow: 0 2px 0 #181b22;
   border-bottom: 2px solid #181b22;
   background-color: #181b22;
+  background-clip: padding-box;
   color: #e9ebf0;
   -webkit-text-fill-color: #e9ebf0;
+}
+
+.report-day-jump {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  color: var(--accent, #7cb7ff);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+#reportSummary .report-records-table tr.report-raw-day-hl td {
+  background: rgba(var(--accent-rgb, 124, 183, 255), 0.12);
 }
 
 #reportSummary table th,
@@ -1697,10 +1721,22 @@ body.auth-locked [data-panel] {
   max-height: 70vh;
   overflow: auto;
 }
+.ai-report-md.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 9rem;
+  text-align: center;
+}
 .ai-report-md.loading,
 .ai-report-loading {
   color: var(--muted, #aaa);
   font-style: italic;
+}
+.ai-report-loading {
+  margin: 0;
+  text-align: center;
+  width: 100%;
 }
 .ai-report-md h1,
 .ai-report-md h2,

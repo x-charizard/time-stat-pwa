@@ -43,7 +43,9 @@ PWA 連嘅 URL（`config.remote.json` / app 內 default）必須係呢個部署�
 ## 3. 期別內容（可調）
 
 AI Settings → **Period content**（Week／Month／Quarter／Year checklist + Notes；section labels 英文 + 定義）。  
-Generate 只輸出已勾選章節；KPI 喺 `DATA_JSON.kpis`（含 `passFail`／targets）。
+Generate 只輸出已勾選章節；KPI 喺 `DATA_JSON.kpis`（含 `passFail`／targets）。  
+Diffused Mode（前稱 DMN）：Reading／Friending 按 remark 判定；Photoing 唔計運動除非 remark 注明高強度。  
+週期顯示用 `periodLabel`／`weekLabel`（月-日），唔用 W29。
 
 人手 Report：日期範圍自動對應 `week`／`month`／`quarter`／`year`（掣旁有 badge）。
 

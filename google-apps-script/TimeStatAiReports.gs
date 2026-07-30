@@ -20,8 +20,11 @@ var AI_TRADING_KEYS = { trading: 1, "trading practice": 1, "trading planning": 1
 var AI_REVIEW_KEYS = { reviewing: 1 };
 var AI_TRANSPORT_KEYS = { transporting: 1 };
 var AI_SOCIAL_KEYS = { friending: 1, familying: 1, socialing: 1 };
-/** DMN／恢復類活動（兩段 Work 之間至少要有 15 分鐘） */
-var AI_DMN_KEYS = {
+/**
+ * Diffused Mode（前稱 DMN）：唔使高度用腦／專注嘅恢復緩衝。
+ * Reading／Friending 要睇 remark（見 aiIsDiffusedModeActivity_）。
+ */
+var AI_DIFFUSED_BASE_KEYS = {
   meditating: 1,
   walking: 1,
   resting: 1,
@@ -36,15 +39,78 @@ var AI_DMN_KEYS = {
   exercise: 1,
   workouting: 1,
 };
+/** @deprecated 用 AI_DIFFUSED_BASE_KEYS；保留別名以免舊碼漏改 */
+var AI_DMN_KEYS = AI_DIFFUSED_BASE_KEYS;
 var AI_WORK_VACATION_MS = 2 * 3600000;
 var AI_WORK_IDEAL_MAX_MS = 4 * 3600000;
 var AI_WORK_OVERLOAD_MAX_MS = 6 * 3600000;
 var AI_REVIEW_IDEAL_MIN_MS = 15 * 60000;
 var AI_REVIEW_IDEAL_MAX_MS = 30 * 60000;
 var AI_COGNITIVE_LOCK_MS = 60 * 60000;
-var AI_DMN_GAP_MIN_MS = 15 * 60000;
+var AI_DIFFUSED_GAP_MIN_MS = 15 * 60000;
+var AI_DMN_GAP_MIN_MS = AI_DIFFUSED_GAP_MIN_MS;
 /** 單一活動開放時段（至下一打卡）>2h → 疑似未打卡休息／睡眠，唔當認知鎖死 */
 var AI_OPEN_SEGMENT_SUSPECT_MS = 2 * 3600000;
+
+function aiEventTextBlob_(ev) {
+  if (!ev) return "";
+  return [
+    ev.remark,
+    ev.activityQuestion,
+    ev.achievement,
+    ev.improveLast,
+    ev.detailsBetter,
+    ev.importantElement,
+    ev.objective,
+    ev.projectsFromForm,
+    ev.project,
+  ]
+    .map(function (x) {
+      return String(x || "");
+    })
+    .join(" ");
+}
+
+/** 小說／故事類 → Diffused Mode */
+function aiReadingIsNovel_(blob) {
+  var t = String(blob || "").toLowerCase();
+  return /(小說|fiction|novel|harry\s*potter|哈利波特|manga|漫畫|comic|故事書|言情|科幻|fantasy|推理小說|輕小說)/i.test(
+    t,
+  );
+}
+
+/** 成長／用腦類 → 唔係 Diffused Mode */
+function aiReadingIsFocusedStudy_(blob) {
+  var t = String(blob || "").toLowerCase();
+  return /(原子習慣|atomic\s*habits|trading\s*in\s*the\s*zone|deep\s*work|非小說|non[\s-]?fiction|textbook|教材|self[\s-]?help|成長|筆記書|how\s*to|心理學|策略書|投資|business|學習|流程|系統)/i.test(
+    t,
+  );
+}
+
+/**
+ * Diffused Mode：主要睇係唔係要集中用腦。
+ * Reading：小說類=是；成長／用腦類=否；唔清=否。
+ * Friending：預設=是；深談／會議等=否。
+ */
+function aiIsDiffusedModeActivity_(tKey, ev) {
+  var blob = aiEventTextBlob_(ev);
+  if (tKey === "reading") {
+    if (aiReadingIsNovel_(blob)) return true;
+    if (aiReadingIsFocusedStudy_(blob)) return false;
+    return false;
+  }
+  if (tKey === "friending") {
+    if (
+      /(深談|談判|諮詢|會議|meeting|interview|面試|輔導|工作討論|1\s*on\s*1|one[\s-]?on[\s-]?one)/i.test(
+        blob,
+      )
+    ) {
+      return false;
+    }
+    return true;
+  }
+  return !!AI_DIFFUSED_BASE_KEYS[tKey];
+}
 
 function aiNormKey_(s) {
   return String(s || "")
@@ -104,6 +170,34 @@ function aiMondayOfIsoWeek_(weekKey) {
   var day1 = (week1.getDay() + 6) % 7;
   week1.setDate(week1.getDate() - day1);
   return new Date(week1.getFullYear(), week1.getMonth(), week1.getDate() + (w - 1) * 7);
+}
+
+/** MM-DD（顯示用；唔用 W29） */
+function aiMdLabelFromYmd_(ymd) {
+  var s = String(ymd || "");
+  return s.length >= 10 ? s.slice(5, 10) : s;
+}
+
+function aiWeekLabelFromKey_(weekKey) {
+  try {
+    var mon = aiMondayOfIsoWeek_(weekKey);
+    var sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+    return aiMdLabelFromYmd_(aiYmdLocal_(mon.getTime())) + " → " + aiMdLabelFromYmd_(aiYmdLocal_(sun.getTime()));
+  } catch (e) {
+    return String(weekKey || "");
+  }
+}
+
+/** 報告標題／對比用顯示名（週用日期範圍） */
+function aiPeriodDisplayLabel_(periodType, periodKey) {
+  var type = String(periodType || "").toLowerCase();
+  var key = String(periodKey || "").trim();
+  if (type === "week") return aiWeekLabelFromKey_(key);
+  if (type === "custom") {
+    var parts = key.split("/");
+    if (parts.length === 2) return aiMdLabelFromYmd_(parts[0]) + " → " + aiMdLabelFromYmd_(parts[1]);
+  }
+  return key;
 }
 
 function aiPeriodRange_(periodType, periodKey) {
@@ -209,6 +303,7 @@ function attachAiComparisons_(state, stats) {
       enrichStatsWithPeriodKpis_(state, s);
       comparisons.push({
         periodKey: s.periodKey,
+        periodLabel: s.periodLabel || aiPeriodDisplayLabel_(type, s.periodKey),
         range: s.range,
         totals: s.totals,
         trueFocus: s.trueFocus
@@ -596,6 +691,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     var row = weekBuckets[wbk];
     weeklyPerformance.push({
       weekKey: row.weekKey,
+      weekLabel: aiWeekLabelFromKey_(row.weekKey),
       daysInBucket: row.days,
       workHours: aiHours_(row.workMs),
       trueFocusWorkHours: aiHours_(row.trueFocusWorkMs),
@@ -614,7 +710,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     return a.weekKey < b.weekKey ? -1 : a.weekKey > b.weekKey ? 1 : 0;
   });
 
-  // Rhythm & Interleaving：連續 Work 塊 + DMN 間隔
+  // Rhythm & Interleaving：連續 Work 塊 + Diffused Mode 間隔
   // 注意：未打卡 Sleeping 時，上一個活動會「吞」去下一打卡前嘅空窗（尤其隔夜）→ 唔好當成長時間專注
   var timeline = [];
   var suspectedUnloggedBreaks = [];
@@ -660,7 +756,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       name: tName,
       key: tKey,
       isWork: tGroup === "Work",
-      isDmn: !!AI_DMN_KEYS[tKey],
+      isDiffused: aiIsDiffusedModeActivity_(tKey, tev),
       countsForLock: tGroup === "Work" && !impliedBreak,
       impliedBreak: impliedBreak,
     });
@@ -684,13 +780,13 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     }
     var blockEndIdx = idx - 1;
     var blockYmd = aiYmdLocal_(timeline[blockStart].startMs);
-    // 必須被「真實打卡」嘅非 Work／DMN 結束；開放結尾或疑似睡眠斷點唔算認知鎖死
+    // 必須被「真實打卡」嘅非 Work／Diffused Mode 結束；開放結尾或疑似睡眠斷點唔算認知鎖死
     var closer = idx < timeline.length ? timeline[idx] : null;
     var closedByLoggedBreak =
       closer &&
       !closer.impliedBreak &&
       !closer.countsForLock &&
-      (closer.isDmn || !closer.isWork);
+      (closer.isDiffused || !closer.isWork);
     if (blockMs > AI_COGNITIVE_LOCK_MS && closedByLoggedBreak) {
       var nameList = [];
       for (var bn in blockNames) {
@@ -716,28 +812,28 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       }
     }
     if (nextWork < 0) break;
-    var dmnMs = 0;
+    var diffusedMs = 0;
     var betweenActs = [];
     var hasImpliedBreak = false;
     for (var m = idx; m < nextWork; m++) {
-      if (timeline[m].isDmn || timeline[m].impliedBreak) {
-        dmnMs += timeline[m].ms;
+      if (timeline[m].isDiffused || timeline[m].impliedBreak) {
+        diffusedMs += timeline[m].ms;
         if (timeline[m].impliedBreak) hasImpliedBreak = true;
       }
       betweenActs.push({
         name: timeline[m].impliedBreak ? "(疑似未打卡休息／睡眠)" : timeline[m].name,
         minutes: aiMinutes_(timeline[m].ms),
-        isDmn: timeline[m].isDmn || timeline[m].impliedBreak,
+        isDiffused: timeline[m].isDiffused || timeline[m].impliedBreak,
         impliedBreak: !!timeline[m].impliedBreak,
       });
     }
-    if (!hasImpliedBreak && dmnMs < AI_DMN_GAP_MIN_MS) {
+    if (!hasImpliedBreak && diffusedMs < AI_DIFFUSED_GAP_MIN_MS) {
       switchFails.push({
         ymd: aiYmdLocal_(timeline[nextWork].startMs),
         afterWorkEndLocal: aiLocalDateTimeStr_(timeline[blockEndIdx].endMs),
         beforeNextWorkStartLocal: aiLocalDateTimeStr_(timeline[nextWork].startMs),
-        dmnMinutesBetween: aiMinutes_(dmnMs),
-        requiredDmnMinutes: 15,
+        diffusedMinutesBetween: aiMinutes_(diffusedMs),
+        requiredDiffusedMinutes: 15,
         betweenActivities: betweenActs.slice(0, 10),
         flag: "切換失靈",
       });
@@ -761,6 +857,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     var dates = socialByWeek[wkKey].slice().sort();
     socialWeekRows.push({
       weekKey: wkKey,
+      weekLabel: aiWeekLabelFromKey_(wkKey),
       socialDays: dates.length,
       targetMaxDays: 3,
       overTarget: dates.length > 3,
@@ -802,7 +899,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         "放假日(Vacation): Work<2h；理想專注日(Ideal Focus): 2–4h；超負荷預警日(Overload): 4h<Work<6h；臨界崩潰日(Critical): Work≥6h",
       reviewingAudit: "理想Review: 15–30m；缺乏Review: <15m；過度Review: >30m",
       rhythmInterleaving:
-        "認知鎖死: 連續可信Work>60m 且由真實休息／非Work打卡結束；22:00–06:59／跨午夜／跨wake／開放>2h → 疑似睡眠唔計。切換失靈: 兩段可信Work之間DMN<15m",
+        "認知鎖死: 連續可信Work>60m 且由真實休息／非Work打卡結束；22:00–06:59／跨午夜／跨wake／開放>2h → 疑似睡眠唔計。切換失靈: 兩段可信Work之間 Diffused Mode <15m",
       boundaryFlags:
         "高頻交易練習日: Trading相關>2h；No-Trades(Mon–Fri): Transporting或Social/Family/Friend其中一個>2h",
       socialBattery: "每週有Social活動天數目標≤3（計天唔計時）",
@@ -915,6 +1012,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     person: "Xavier",
     periodType: range.periodType,
     periodKey: range.periodKey,
+    periodLabel: aiPeriodDisplayLabel_(range.periodType, range.periodKey),
     reportLens: reportLens,
     reportLensNote:
       pType === "week"
@@ -933,12 +1031,15 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       缺乏Review: "當日 Reviewing < 15 分鐘（可能遺漏系統修正）",
       過度Review: "當日 Reviewing > 30 分鐘（判定為無效重複／反芻風險）",
       認知鎖死: "連續可信 Work >60 分鐘，且由真實打卡嘅休息／非 Work 結束；踏入 22:00–06:59、跨午夜／wake、或開放空窗 >2h（疑似未打卡睡眠）一律唔計",
-      切換失靈: "兩段可信 Work 之間，DMN 活動合計 < 15 分鐘（Meditating／Walking／Resting／Gyming／Showering／Fooding 等）",
+      切換失靈: "兩段可信 Work 之間，Diffused Mode 活動合計 < 15 分鐘（Meditating／Walking／Resting／Gyming／Showering／Fooding；小說類 Reading、一般 Friending 可計入；成長類 Reading 唔計）",
       trueFocus: "真正專注時間 = max(0, 活動時長 − distraction)",
       高頻交易練習日: "當日 Trading 相關活動合計 > 2 小時",
       NoTradesBanner: "週一至週五：當日 Transporting 或 Social／Family／Friend 其中一個 > 2 小時 → 交易禁令提示",
       SocialBattery: "每週有 Social 活動嘅天數；目標 ≤ 3 天（計天唔計時）",
-      DMN: "Default Mode Network 恢復類活動，用作 Work 之間嘅切換緩衝",
+      DiffusedMode:
+        "唔使高度用腦／專注嘅恢復緩衝（前稱 DMN）。判定原則：需唔需要集中精神。Reading：小說類（如 Harry Potter）=是；成長／用腦類（如原子習慣、Trading in the Zone）=否。Friending：一般社交=是；深談／會議=否。",
+      運動日:
+        "gyming／hiking／yogaing／running 等合計 ≥ 30 分鐘；Photoing 暫時唔計，除非 remark 注明高強度／重裝／長途拍攝等",
     },
     range: { from: range.fromYmd, to: range.toYmd },
     totals: {
@@ -994,7 +1095,8 @@ function aiDefaultSystemInstruction_() {
     "框架：hypothesis → evidence（只能用提供的數字）→ review／下期實驗。",
     "禁止預測市場升跌；禁止虛構未提供的數據。",
     "對齊價值：過程質素、樣本、期望值、少／小／慢；僅在數據支持時點出鬆懈／資訊過載／唔跟 checklist 跡象。",
-    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、認知鎖死、切換失靈、trueFocus、No-Trades 等），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
+    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、認知鎖死、切換失靈、trueFocus、No-Trades、Diffused Mode 等），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
+    "日期／週期顯示：唔好用 W29／ISO week 編號；用月-日範圍（例如 07-14 → 07-20）或 DATA_JSON 入面嘅 weekLabel／periodLabel／range。",
     "輸出純 Markdown。",
   ].join("\n");
 }
@@ -1008,7 +1110,7 @@ function aiDefaultReportOutline_() {
     "2. 週期對比",
     "3. Work Load Tiers 日數（Vacation／Ideal／Overload／Critical；Critical 點名日期）",
     "4. Reviewing Audit 日數（Ideal／Lack／Excessive）",
-    "5. Rhythm／DMN（認知鎖死／切換失靈次數；疑似未打卡休息只作附註）",
+    "5. Rhythm／Diffused Mode（認知鎖死／切換失靈次數；疑似未打卡休息只作附註）",
     "6. Boundary Flags 日數（高頻 Trading、No-Trades 日期＋原因）",
     "7. Social Battery（每週社交天數）",
     "8. 下期 3 個實驗",
@@ -1130,15 +1232,17 @@ function aiSystemInstruction_() {
 function aiUserPrompt_(stats) {
   var cfg = getAiPromptConfig_();
   var type = String(stats.periodType || "custom").toLowerCase();
+  var display =
+    stats.periodLabel || aiPeriodDisplayLabel_(type, stats.periodKey) || stats.periodKey;
   var title =
     type === "year"
-      ? stats.periodKey + " 年 Time Stat 專業報告"
+      ? display + " 年 Time Stat 專業報告"
       : type === "quarter"
-        ? stats.periodKey + " Time Stat 專業報告"
+        ? display + " Time Stat 專業報告"
         : type === "month"
-          ? stats.periodKey + " 月 Time Stat 專業報告"
+          ? display + " 月 Time Stat 專業報告"
           : type === "week"
-            ? stats.periodKey + " 週 Time Stat 專業報告"
+            ? display + " 週 Time Stat 專業報告"
             : "Time Stat 報告 " + stats.range.from + "～" + stats.range.to;
   var pcfg = (cfg.periodConfig && cfg.periodConfig[type]) || {
     sections: aiDefaultPeriodSections_(type),
@@ -1406,7 +1510,7 @@ function generatePeriodAiReport_(periodType, periodKey, opts) {
   enrichStatsWithPeriodKpis_(state, stats);
   attachAiComparisons_(state, stats);
   var gem = callGeminiForAiReport_(stats);
-  var subject = "[Time Stat AI] " + stats.periodType + " " + stats.periodKey;
+  var subject = "[Time Stat AI] " + stats.periodType + " " + (stats.periodLabel || stats.periodKey);
   var id = Utilities.getUuid();
   var generatedAt = new Date().toISOString();
 

@@ -3569,7 +3569,7 @@
       byProject[pj] = (byProject[pj] || 0) + ms;
       byCatDim[cj] = (byCatDim[cj] || 0) + ms;
       bySubDim[sj] = (bySubDim[sj] || 0) + ms;
-      if (showByDay) {
+      {
         const ymd = ymdFromLocalDate(new Date(ev.start));
         byDay[ymd] = (byDay[ymd] || 0) + ms;
       }
@@ -4185,14 +4185,16 @@
     }
     html += `</tbody></table>`;
     html += tbl("Project", byProject);
-    if (showByDay) {
+    {
       const dayKeys = Object.keys(byDay).sort();
       if (dayKeys.length) {
         html += `<h2 class="report-h">Daily Subtotal</h2><table><thead><tr><th>Date</th><th>${unitTh}</th></tr></thead><tbody>`;
         for (let di = 0; di < dayKeys.length; di++) {
           const d = dayKeys[di];
           const ms = byDay[d];
-          html += `<tr><td class="mono">${escapeHtml(d)}</td><td class="mono">${fmtAggCell(ms)}</td></tr>`;
+          html +=
+            `<tr><td class="mono"><button type="button" class="report-day-jump" data-jump-ymd="${escapeHtml(d)}">${escapeHtml(d)}</button></td>` +
+            `<td class="mono">${fmtAggCell(ms)}</td></tr>`;
         }
         html += `</tbody></table>`;
       }
@@ -4200,14 +4202,15 @@
     html += tbl("People", byPerson);
 
     const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
-    html += `<h2 class="report-h">Data</h2>`;
+    html += `<h2 class="report-h" id="reportRawDataHeading">Data</h2>`;
 
-    html += `<div class="report-records-wrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Distraction</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
+    html += `<div class="report-records-wrap" id="reportRecordsWrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Distraction</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
     for (let ri = 0; ri < sortedRaw.length; ri++) {
       const row = sortedRaw[ri];
       const ev = row.ev;
       const ms = row.ms;
       const startStr = ymdHmFromEventStart(ev.start);
+      const rowYmd = ymdFromLocalDate(new Date(ev.start));
       const durStr = durationMinutesLabel(ms);
       const distractStr = formatDistractionMmSs_(ev.distractionSec);
       const mapped = reportCtx.inferred.get(ev.id);
@@ -4221,7 +4224,7 @@
       const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
       const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
       html +=
-        `<tr><td class="mono">${escapeHtml(startStr)}</td><td class="mono">${escapeHtml(durStr)}</td>` +
+        `<tr data-ymd="${escapeHtml(rowYmd)}"><td class="mono">${escapeHtml(startStr)}</td><td class="mono">${escapeHtml(durStr)}</td>` +
         `<td class="mono">${escapeHtml(distractStr)}</td>` +
         `<td>${escapeHtml(g)}</td><td>${escapeHtml(ly)}</td><td>${escapeHtml(cj)}</td><td>${escapeHtml(sj)}</td>` +
         `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
@@ -4229,9 +4232,48 @@
     html += `</tbody></table></div>`;
 
     box.innerHTML = html;
+    bindReportDayJump_();
     } finally {
       syncReportUnitToggleButtons();
     }
+  }
+
+  function bindReportDayJump_() {
+    const box = document.getElementById("reportSummary");
+    if (!box || box.dataset.dayJumpBound === "1") return;
+    box.dataset.dayJumpBound = "1";
+    box.addEventListener("click", (ev) => {
+      const btn = ev.target && ev.target.closest ? ev.target.closest("[data-jump-ymd]") : null;
+      if (!btn || !box.contains(btn)) return;
+      const ymd = String(btn.getAttribute("data-jump-ymd") || "").trim();
+      if (!ymd) return;
+      scrollReportRawToYmd_(ymd);
+    });
+  }
+
+  function scrollReportRawToYmd_(ymd) {
+    const wrap = document.getElementById("reportRecordsWrap");
+    const box = document.getElementById("reportSummary");
+    if (!wrap) return;
+    wrap.querySelectorAll("tr.report-raw-day-hl").forEach((tr) => tr.classList.remove("report-raw-day-hl"));
+    const row = wrap.querySelector('tr[data-ymd="' + ymd.replace(/"/g, "") + '"]');
+    if (!row) {
+      toast("No raw rows for " + ymd);
+      return;
+    }
+    row.classList.add("report-raw-day-hl");
+    const heading = document.getElementById("reportRawDataHeading");
+    if (heading && typeof heading.scrollIntoView === "function") {
+      heading.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    const results = box && box.closest ? box.closest(".report-results") : null;
+    if (results) {
+      const top =
+        wrap.getBoundingClientRect().top - results.getBoundingClientRect().top + results.scrollTop - 8;
+      results.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+    }
+    const rowTop = row.offsetTop - (wrap.querySelector("thead")?.offsetHeight || 0) - 4;
+    wrap.scrollTo({ top: Math.max(0, rowTop), behavior: "smooth" });
   }
 
   function csv(s) {
@@ -4429,6 +4471,27 @@
     return weekYear + "-W" + String(weekNo).padStart(2, "0");
   }
 
+  /** Display week as MM-DD → MM-DD (never W29). Internal key stays ISO week. */
+  function formatPeriodKeyForDisplay_(periodType, periodKey) {
+    const type = String(periodType || "").toLowerCase();
+    const key = String(periodKey || "").trim();
+    if (type === "week") {
+      const m = key.match(/^(\d{4})-W(\d{2})$/i);
+      if (!m) return key;
+      const y = parseInt(m[1], 10);
+      const w = parseInt(m[2], 10);
+      const week1 = new Date(y, 0, 4);
+      const day1 = (week1.getDay() + 6) % 7;
+      week1.setDate(week1.getDate() - day1);
+      const mon = new Date(week1.getFullYear(), week1.getMonth(), week1.getDate() + (w - 1) * 7);
+      const sun = new Date(mon.getFullYear(), mon.getMonth(), mon.getDate() + 6);
+      const pad = (n) => String(n).padStart(2, "0");
+      const fmt = (d) => pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      return fmt(mon) + " \u2192 " + fmt(sun);
+    }
+    return key;
+  }
+
   function periodKeyFromReportDates_() {
     const from = String(document.getElementById("reportFromStr")?.value || "").trim();
     const to = String(document.getElementById("reportToStr")?.value || "").trim();
@@ -4577,7 +4640,7 @@
         row.textContent =
           (rep.periodType || "") +
           " " +
-          (rep.periodKey || "") +
+          formatPeriodKeyForDisplay_(rep.periodType, rep.periodKey) +
           " · " +
           String(rep.generatedAt || "").slice(0, 19).replace("T", " ");
         row.addEventListener("click", () => void openAiReportDetail_(rep.id));
@@ -4600,7 +4663,14 @@
       const rep = j.report || {};
       if (listEl) listEl.classList.add("hidden");
       detail.classList.remove("hidden");
-      if (title) title.textContent = (rep.subject || rep.periodKey || id) + "";
+      if (title) {
+        const label = formatPeriodKeyForDisplay_(rep.periodType, rep.periodKey);
+        let subj = String(rep.subject || "");
+        if (rep.periodKey && label && subj.indexOf(rep.periodKey) >= 0) {
+          subj = subj.split(String(rep.periodKey)).join(label);
+        }
+        title.textContent = subj || ((rep.periodType || "") + " " + label) || String(id);
+      }
       setAiReportBodyHtml_(body, rep.markdown || "");
     } catch (e) {
       toast("開啟報告失敗：" + (e && e.message ? e.message : String(e)));
@@ -4723,7 +4793,7 @@
       badge.textContent = "";
       return;
     }
-    badge.textContent = pk.periodType + " · " + pk.periodKey;
+    badge.textContent = pk.periodType + " · " + formatPeriodKeyForDisplay_(pk.periodType, pk.periodKey);
   }
 
   async function saveAiSettingsForm_() {
