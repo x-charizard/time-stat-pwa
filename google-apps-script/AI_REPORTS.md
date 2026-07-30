@@ -11,47 +11,52 @@
 
 PWA 連嘅 URL（`config.remote.json` / app 內 default）必須係呢個部署嘅 `/exec`。
 
-專案要有兩個檔：
-- `TimeStatSync.gs`（有 `doPost` + `aiPing`）
-- `TimeStatAiReports.gs`（有 `handleGetAiSettings_` 等）
+專案要有三個檔：
+- `TimeStatSync.gs`（有 `doPost` + emotion brief hook）
+- `TimeStatAiReports.gs`
+- `TimeStatAiPeriodKpis.gs`（KPI／periodConfig／情緒 brief）
 
 喺 PWA **AI Reports** 睇歷史；Refresh 重載列表同 Settings。  
 若人手 Generate 仍 `missing_state` / `unknown_action` → 呢個 `/exec` 仲係舊版本。
 
-1. 貼上／更新（同一專案兩個檔）：
+1. 貼上／更新（同一專案三個檔）：
    - `TimeStatSync.gs`
    - `TimeStatAiReports.gs`
+   - `TimeStatAiPeriodKpis.gs`
 2. Script properties：
    - `GEMINI_API_KEY` =（你已 set）
    - 已有 `ALLOWED_EMAILS`、`GOOGLE_CLIENT_ID`
 3. 儲存 → **管理部署 → 新版本**
-4. 編輯器跑一次：`installAiReportTriggers()`（會重裝含**星期六 07:00 週報**）
-5. 乾跑（可選）：
-   - `testGenerateAiReportMonth()`
-   - `testGenerateAiReportWeek()`（會寄信 + 寫入 `TimeStatAIReports`）
+4. 編輯器跑一次：`installAiReportTriggers()`（含**星期六 07:00 週報**）
+5. AI Settings：**Reset defaults → Save**（載入週／月／季／年 checklist 預設）
+6. 乾跑（可選）：`testGenerateAiReportWeek()` / `testGenerateAiReportMonth()`
 
 ## 2. 自動排程（Asia/Hong_Kong）
 
-- **每星期六 ~07:00** → 上一個 ISO 週（Mon–Sun），key 如 `2026-W29`
+- **每星期六 ~07:00** → 上一個 ISO 週（Mon–Sun）
 - 每月 1 號 ~03:10 → 上一個曆月
 - 季首日 ~03:20 → 上一季
 - 1 月 1 日 ~03:30 → 上一年  
 
-寄去 `ALLOWED_EMAILS`；寫入 PWA **AI Reports** 歷史。  
-**唔寫 Obsidian。**
+寄去 `ALLOWED_EMAILS`；寫入 PWA **AI Reports** 歷史。
 
-每份報告嘅 DATA_JSON 會附 `comparisons[]`（週：上 3 週；月／季／年：上 2 期），AI 大綱要求有「週期對比」章節（建議 Markdown table）。
+## 3. 期別內容（可調）
 
-## 3. PWA
+AI Settings → **Period content**（Week／Month／Quarter／Year checklist + 補充文字）。  
+Generate 只要求已勾選章節；KPI 喺 `DATA_JSON.kpis`（含 `passFail`／targets）。
 
-- Tab **AI Reports**：自動報告歷史（Markdown 會渲染粗體／table）
-- 同一頁 **AI Settings**：Roles and Rules／Structure／Topic of the Period／Temperature → Save
-- Report 頁 **AI Report**：人手 generate（唔入歷史）；loading 期間報告框會一直顯示；可 **Email me**
-- Report 日期若係完整 ISO 週（Mon–Sun）會以 `week` 送出
+人手 Report：日期範圍自動對應 `week`／`month`／`quarter`／`year`（掣旁有 badge）。
 
-## 4. 驗證
+連續 **3 個同類型週期**對比（本期 + 上 2 期）。
 
-- Settings Save 後，人手 AI Report 語氣／章節有變
-- Generate 期間報告框顯示 Generating…，完成先換內容；`**粗體**` 同 table 可見
+## 4. 情緒 brief（即時）
+
+Remark 含 negative keywords（可 Settings 改，預設含 chaos／頭痛／焦慮等）→ 雲端 sync 後 **即刻 email** 過去 72h 摘要。  
+同一 wake-day 最多一封（dedupe）。
+
+## 5. 驗證
+
+- Settings Save 後，人手週／月報章節跟 checklist
+- 揀 Mon–Sun → badge 顯示 `week · YYYY-Www`
+- 打含 `chaos` 嘅 remark 並 sync → 應收到 Emotion brief
 - 自動報告只 email + 歷史，無 Obsidian 檔
-- 跑完 `installAiReportTriggers()` 後，觸發器列表有 Saturday 07:00 嗰條

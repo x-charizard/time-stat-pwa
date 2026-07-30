@@ -36,7 +36,8 @@
  * - 工作表 "TimeStatDB"：一格 JSON（超長自動 CHUNK）— App 用
  * - 工作表 "TimeStatLog"：可讀表（Start／Activity／Place／Group／Remark…）— 你用嚟 check；每次 save 自動重寫
  * - 工作表 "TimeStatAIReports"：AI 報告歷史（persist=true）
- * - Script property AI_REPORT_PROMPT_CONFIG：AI 溝通／報告大綱（PWA 可改）
+ * - Script property AI_REPORT_PROMPT_CONFIG：Roles／periodConfig checklist／emotionKeywords（PWA 可改）
+ * - 寫入 state 後會 scan remark 情緒字眼 → Emotion brief email（見 TimeStatAiPeriodKpis.gs）
  */
 
 var DB_SHEET = "TimeStatDB";
@@ -1283,6 +1284,11 @@ function doPost(e) {
       });
     }
     writeStateToSheet_(incoming);
+    try {
+      if (typeof scanIncomingForEmotionBriefs_ === "function") {
+        scanIncomingForEmotionBriefs_(prev, incoming);
+      }
+    } catch (eBrief) {}
     return jsonOut_(authOkFields_({ events: Array.isArray(incoming.events) ? incoming.events.length : 0 }));
   } catch (err2) {
     return authFail_(String(err2 && err2.message ? err2.message : err2));

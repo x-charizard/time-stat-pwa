@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=156" />
+  <link rel="stylesheet" href="styles.css?v=157" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -210,6 +210,7 @@
             <div class="report-main-header-actions">
               <button type="button" class="report-export-btn" id="btnReportExport" aria-label="Export Data CSV">Export</button>
               <button type="button" class="report-export-btn" id="btnAiReportGenerate" aria-label="Generate AI Report">AI Report</button>
+              <span id="aiReportPeriodBadge" class="muted" style="font-size:0.8rem;align-self:center;"></span>
               <div class="report-unit-toggle" id="reportUnitToggle" role="group" aria-label="Display Units">
                 <button type="button" class="report-unit-btn active" data-unit="hours">Hours</button>
                 <button type="button" class="report-unit-btn" data-unit="pct">%</button>
@@ -252,14 +253,27 @@
       <label for="aiSettingSystem">Roles and Rules</label>
       <textarea id="aiSettingSystem" class="ai-setting-ta" rows="8"></textarea>
 
-      <label for="aiSettingOutline" style="margin-top:10px;">Structure</label>
-      <textarea id="aiSettingOutline" class="ai-setting-ta" rows="8"></textarea>
-
       <label for="aiSettingExtra" style="margin-top:10px;">Topic of the Period</label>
       <textarea id="aiSettingExtra" class="ai-setting-ta" rows="4"></textarea>
 
       <label for="aiSettingTemp" style="margin-top:10px;">Temperature（0–1）</label>
       <input type="number" id="aiSettingTemp" class="input-xl" min="0" max="1" step="0.1" value="0.3" />
+
+      <h3 class="report-h" style="margin:16px 0 8px;font-size:1rem;">Period content</h3>
+      <p class="muted" style="margin:0 0 8px;">勾選要寫入各期報告嘅章節；可加補充文字。</p>
+      <div class="ai-period-tabs" id="aiPeriodTabs" role="tablist">
+        <button type="button" class="ghost ai-period-tab active" data-period="week">Week</button>
+        <button type="button" class="ghost ai-period-tab" data-period="month">Month</button>
+        <button type="button" class="ghost ai-period-tab" data-period="quarter">Quarter</button>
+        <button type="button" class="ghost ai-period-tab" data-period="year">Year</button>
+      </div>
+      <div id="aiPeriodPanels"></div>
+
+      <label for="aiEmotionNeg" style="margin-top:14px;">Negative emotion keywords（觸發 72h brief email）</label>
+      <textarea id="aiEmotionNeg" class="ai-setting-ta" rows="3"></textarea>
+      <label for="aiEmotionPos" style="margin-top:10px;">Positive emotion keywords（週／月 highlight）</label>
+      <textarea id="aiEmotionPos" class="ai-setting-ta" rows="3"></textarea>
+
       <div class="row" style="margin-top:12px;gap:8px;">
         <button type="button" class="primary" id="btnAiSettingsSave">Save settings</button>
         <button type="button" class="ghost" id="btnAiSettingsReset">Reset defaults</button>
@@ -269,6 +283,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=156"></script>
+  <script src="app.js?v=157"></script>
 </body>
 </html>

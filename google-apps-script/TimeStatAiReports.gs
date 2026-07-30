@@ -20,6 +20,31 @@ var AI_TRADING_KEYS = { trading: 1, "trading practice": 1, "trading planning": 1
 var AI_REVIEW_KEYS = { reviewing: 1 };
 var AI_TRANSPORT_KEYS = { transporting: 1 };
 var AI_SOCIAL_KEYS = { friending: 1, familying: 1, socialing: 1 };
+/** DMN／恢復類活動（兩段 Work 之間至少要有 15 分鐘） */
+var AI_DMN_KEYS = {
+  meditating: 1,
+  walking: 1,
+  resting: 1,
+  gyming: 1,
+  showering: 1,
+  fooding: 1,
+  sleeping: 1,
+  running: 1,
+  yogaing: 1,
+  hiking: 1,
+  camping: 1,
+  exercise: 1,
+  workouting: 1,
+};
+var AI_WORK_VACATION_MS = 2 * 3600000;
+var AI_WORK_IDEAL_MAX_MS = 4 * 3600000;
+var AI_WORK_OVERLOAD_MAX_MS = 6 * 3600000;
+var AI_REVIEW_IDEAL_MIN_MS = 15 * 60000;
+var AI_REVIEW_IDEAL_MAX_MS = 30 * 60000;
+var AI_COGNITIVE_LOCK_MS = 60 * 60000;
+var AI_DMN_GAP_MIN_MS = 15 * 60000;
+/** 單一活動開放時段（至下一打卡）>2h → 疑似未打卡休息／睡眠，唔當認知鎖死 */
+var AI_OPEN_SEGMENT_SUSPECT_MS = 2 * 3600000;
 
 function aiNormKey_(s) {
   return String(s || "")
@@ -174,20 +199,28 @@ function attachAiComparisons_(state, stats) {
     stats.comparisonNote = "自訂範圍唔附帶連續週期對比。";
     return stats;
   }
-  var count = type === "week" ? 3 : 2;
+  var count = 2; // 本期 + 上 2 期 = 連續 3 個週期對比
   var comparisons = [];
   for (var i = 1; i <= count; i++) {
     var pk = aiShiftPeriodKey_(type, stats.periodKey, -i);
     if (!pk) continue;
     try {
       var s = aggregatePeriodStatsForAi_(state, type, pk);
+      enrichStatsWithPeriodKpis_(state, s);
       comparisons.push({
         periodKey: s.periodKey,
         range: s.range,
         totals: s.totals,
+        trueFocus: s.trueFocus
+          ? { totalHours: s.trueFocus.totalHours, workGroupHours: s.trueFocus.workGroupHours }
+          : null,
         focusMetrics: s.focusMetrics,
         byGroup: s.byGroup,
         wakeDayFlags: s.wakeDayFlags,
+        processAuditsSummary: s.processAudits ? s.processAudits.summary : null,
+        kpisSummary: s.kpis ? s.kpis.summary : null,
+        passFail: s.kpis ? s.kpis.passFail : null,
+        weeklyPerformance: s.weeklyPerformance || null,
       });
     } catch (e) {}
   }
@@ -224,6 +257,114 @@ function aiHours_(ms) {
   return Math.round((ms / 3600000) * 10) / 10;
 }
 
+function aiMinutes_(ms) {
+  return Math.round(ms / 60000);
+}
+
+function aiPeopleList_(ev) {
+  var p = ev && ev.people;
+  if (!p) return [];
+  if (Object.prototype.toString.call(p) === "[object Array]") {
+    return p
+      .map(function (x) {
+        return String(x || "").trim();
+      })
+      .filter(Boolean);
+  }
+  var s = String(p).trim();
+  return s ? [s] : [];
+}
+
+function aiEventReasonBits_(ev, activityName) {
+  var place = String((ev && ev.place) || "").trim();
+  var people = aiPeopleList_(ev);
+  var remark = String((ev && ev.remark) || "").trim();
+  return {
+    activity: activityName || "",
+    place: place,
+    people: people,
+    remark: remark.slice(0, 160),
+  };
+}
+
+function aiWorkLoadTier_(workMs) {
+  if (workMs < AI_WORK_VACATION_MS) return "vacation";
+  if (workMs <= AI_WORK_IDEAL_MAX_MS) return "idealFocus";
+  if (workMs < AI_WORK_OVERLOAD_MAX_MS) return "overload";
+  return "critical";
+}
+
+function aiReviewTier_(reviewMs) {
+  if (reviewMs < AI_REVIEW_IDEAL_MIN_MS) return "lack";
+  if (reviewMs <= AI_REVIEW_IDEAL_MAX_MS) return "ideal";
+  return "excessive";
+}
+
+function aiWeekdayName_(ms) {
+  var names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  return names[new Date(ms).getDay()] || "";
+}
+
+function aiIsWeekdayMonFri_(ms) {
+  var d = new Date(ms).getDay();
+  return d >= 1 && d <= 5;
+}
+
+/** 下一個 wake 邊界（03:00），嚴格晚於 ms */
+function aiNextWakeBoundaryAfter_(ms) {
+  var d = new Date(ms);
+  var wake = new Date(d.getFullYear(), d.getMonth(), d.getDate(), AI_WAKE_H, AI_WAKE_MI, 0, 0);
+  if (wake.getTime() <= ms) wake.setDate(wake.getDate() + 1);
+  return wake.getTime();
+}
+
+function aiCrossesWakeBoundary_(t0, t1) {
+  if (!(t1 > t0)) return false;
+  return aiNextWakeBoundaryAfter_(t0) < t1;
+}
+
+function aiLocalHour_(ms) {
+  return new Date(ms).getHours();
+}
+
+/** 22:00–06:59：易同瞓覺重疊／未打卡 Sleeping 嘅時段 */
+function aiInSleepBandHour_(h) {
+  return h >= 22 || h <= 6;
+}
+
+function aiCrossesLocalMidnight_(t0, t1) {
+  if (!(t1 > t0)) return false;
+  var a = new Date(t0);
+  var b = new Date(t1 - 1);
+  return (
+    a.getFullYear() !== b.getFullYear() ||
+    a.getMonth() !== b.getMonth() ||
+    a.getDate() !== b.getDate()
+  );
+}
+
+/** 時段有冇踏入睡眠帶（抽樣） */
+function aiSegmentOverlapsSleepBand_(t0, t1) {
+  if (!(t1 > t0)) return false;
+  if (aiInSleepBandHour_(aiLocalHour_(t0)) || aiInSleepBandHour_(aiLocalHour_(t1 - 1))) return true;
+  var step = 20 * 60000;
+  for (var t = t0 + step; t < t1; t += step) {
+    if (aiInSleepBandHour_(aiLocalHour_(t))) return true;
+    if (t - t0 > 36 * 3600000) break;
+  }
+  return false;
+}
+
+function aiLocalDateTimeStr_(ms) {
+  var d = new Date(ms);
+  var y = d.getFullYear();
+  var m = ("0" + (d.getMonth() + 1)).slice(-2);
+  var day = ("0" + d.getDate()).slice(-2);
+  var hh = ("0" + d.getHours()).slice(-2);
+  var mi = ("0" + d.getMinutes()).slice(-2);
+  return y + "-" + m + "-" + day + " " + hh + ":" + mi;
+}
+
 function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   var range = aiPeriodRange_(periodType, periodKey);
   var list = aiSortedEvents_(state);
@@ -241,6 +382,10 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   };
   var totalMs = 0;
   var distractMs = 0;
+  var trueFocusMs = 0;
+  var trueFocusWorkMs = 0;
+  var trueFocusByActivity = {};
+  var remarksForReview = [];
   var sampleRemarks = [];
   var distractByAct = {};
 
@@ -263,49 +408,371 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     if (AI_TRANSPORT_KEYS[key]) focus.transportingHours += seg;
     if (AI_SOCIAL_KEYS[key]) focus.socialFamilyFriendHours += seg;
     var dsec = Number(ev.distractionSec) || 0;
-    if (dsec > 0) {
-      distractMs += dsec * 1000;
+    var dMs = dsec > 0 ? dsec * 1000 : 0;
+    if (dMs > 0) {
+      distractMs += dMs;
       distractByAct[name] = (distractByAct[name] || 0) + dsec;
     }
+    var netMs = Math.max(0, seg - dMs);
+    trueFocusMs += netMs;
+    trueFocusByActivity[name] = (trueFocusByActivity[name] || 0) + netMs;
+    if (g === "Work") trueFocusWorkMs += netMs;
     var rm = String(ev.remark || "").trim();
-    if (rm && sampleRemarks.length < 12) sampleRemarks.push(rm.slice(0, 120));
+    if (rm) {
+      var remarkRow = {
+        ymd: aiYmdLocal_(t0),
+        weekday: aiWeekdayName_(t0),
+        activity: name,
+        group: g,
+        remark: rm.slice(0, 240),
+        grossMinutes: aiMinutes_(seg),
+        distractionMinutes: Math.round(dsec / 60),
+        trueFocusMinutes: aiMinutes_(netMs),
+      };
+      remarksForReview.push(remarkRow);
+      if (sampleRemarks.length < 12) sampleRemarks.push(rm.slice(0, 120));
+    }
   }
 
-  // wake-day flags inside calendar range
+  // —— Process audits（wake-day + timeline）——
+  var workLoadDays = [];
+  var reviewDays = [];
+  var highTradingDays = [];
+  var noTradesDays = [];
+  var socialDaySet = {}; // ymd -> true
+  var tierCounts = { vacation: 0, idealFocus: 0, overload: 0, critical: 0 };
+  var reviewCounts = { ideal: 0, lack: 0, excessive: 0 };
+  var weekBuckets = {}; // weekKey -> weekly performance accumulator
   var flags = {
     daysWorkOverCap: 0,
     daysTradingOverCap: 0,
     daysReviewingOver30m: 0,
     daysNoTradesBanner: 0,
   };
+
   var dayCursor = aiWakeDayStartMs_(range.fromMs);
   var endBound = range.toMs;
   var guard = 0;
   while (dayCursor <= endBound && guard < 400) {
     guard++;
     var dayEnd = dayCursor + 86400000;
+    var dayYmd = aiYmdLocal_(dayCursor);
     var wMs = 0;
     var tMs = 0;
     var rMs = 0;
     var trMs = 0;
     var soMs = 0;
+    var reasonBits = [];
+    var hasSocial = false;
     for (var j = 0; j < list.length; j++) {
       var st = aiParseStartMs_(list[j].start);
       if (isNaN(st) || st < dayCursor || st >= dayEnd) continue;
       var seg2 = aiSegmentMs_(list, j, nowMs);
-      var nm = aiNormKey_(aiActivityName_(state, list[j].activityId));
+      var actName = aiActivityName_(state, list[j].activityId) || "(unknown)";
+      var nm = aiNormKey_(actName);
       var gg = String(list[j].group || list[j].category || "").trim();
       if (gg === "Work") wMs += seg2;
       if (AI_TRADING_KEYS[nm]) tMs += seg2;
       if (AI_REVIEW_KEYS[nm]) rMs += seg2;
-      if (AI_TRANSPORT_KEYS[nm]) trMs += seg2;
-      if (AI_SOCIAL_KEYS[nm]) soMs += seg2;
+      if (AI_TRANSPORT_KEYS[nm]) {
+        trMs += seg2;
+        reasonBits.push(aiEventReasonBits_(list[j], actName));
+      }
+      if (AI_SOCIAL_KEYS[nm]) {
+        soMs += seg2;
+        hasSocial = true;
+        reasonBits.push(aiEventReasonBits_(list[j], actName));
+      }
     }
+    if (hasSocial) socialDaySet[dayYmd] = true;
+
+    var wTier = aiWorkLoadTier_(wMs);
+    tierCounts[wTier]++;
+    var dayRow = {
+      ymd: dayYmd,
+      weekday: aiWeekdayName_(dayCursor),
+      workHours: aiHours_(wMs),
+      tier: wTier,
+    };
+    if (wTier === "critical") {
+      dayRow.warning = "Critical：Work ≥6h，嚴重影響隔日表現";
+    }
+    workLoadDays.push(dayRow);
+
+    var rTier = aiReviewTier_(rMs);
+    reviewCounts[rTier]++;
+    reviewDays.push({
+      ymd: dayYmd,
+      weekday: aiWeekdayName_(dayCursor),
+      reviewingMinutes: aiMinutes_(rMs),
+      tier: rTier,
+    });
+
+    if (tMs > AI_TRADE_CAP_MS) {
+      highTradingDays.push({
+        ymd: dayYmd,
+        weekday: aiWeekdayName_(dayCursor),
+        tradingHours: aiHours_(tMs),
+      });
+    }
+
+    // 舊 flag：任一單項超標（兼容）
     if (wMs > AI_WORK_CAP_MS) flags.daysWorkOverCap++;
     if (tMs > AI_TRADE_CAP_MS) flags.daysTradingOverCap++;
     if (rMs > AI_REVIEW_ALERT_MS) flags.daysReviewingOver30m++;
     if (trMs > AI_NO_TRADES_MS || soMs > AI_NO_TRADES_MS) flags.daysNoTradesBanner++;
+
+    // 新規則：Mon–Fri 且 Transporting 或 Social/Family/Friend 其中一個 >2h
+    if (aiIsWeekdayMonFri_(dayCursor) && (trMs > AI_NO_TRADES_MS || soMs > AI_NO_TRADES_MS)) {
+      noTradesDays.push({
+        ymd: dayYmd,
+        weekday: aiWeekdayName_(dayCursor),
+        transportingHours: aiHours_(trMs),
+        socialFamilyFriendHours: aiHours_(soMs),
+        trigger:
+          trMs > AI_NO_TRADES_MS && soMs > AI_NO_TRADES_MS
+            ? "both"
+            : trMs > AI_NO_TRADES_MS
+              ? "transporting"
+              : "social",
+        reasons: reasonBits.slice(0, 12),
+      });
+    }
+
+    // 週表現累積（季報／對比用）
+    var wkKeyDay = aiIsoWeekKeyFromDate_(new Date(dayCursor));
+    if (!weekBuckets[wkKeyDay]) {
+      weekBuckets[wkKeyDay] = {
+        weekKey: wkKeyDay,
+        workMs: 0,
+        tradingMs: 0,
+        reviewingMs: 0,
+        distractMs: 0,
+        trueFocusWorkMs: 0,
+        loggedMs: 0,
+        days: 0,
+        socialDays: 0,
+        tiers: { vacation: 0, idealFocus: 0, overload: 0, critical: 0 },
+        reviewTiers: { ideal: 0, lack: 0, excessive: 0 },
+        noTradesDays: 0,
+        highTradingDays: 0,
+      };
+    }
+    var wb = weekBuckets[wkKeyDay];
+    wb.days++;
+    wb.workMs += wMs;
+    wb.tradingMs += tMs;
+    wb.reviewingMs += rMs;
+    wb.tiers[wTier]++;
+    wb.reviewTiers[rTier]++;
+    if (hasSocial) wb.socialDays++;
+    if (tMs > AI_TRADE_CAP_MS) wb.highTradingDays++;
+    if (aiIsWeekdayMonFri_(dayCursor) && (trMs > AI_NO_TRADES_MS || soMs > AI_NO_TRADES_MS)) {
+      wb.noTradesDays++;
+    }
+
     dayCursor = dayEnd;
+  }
+
+  // 補每週 trueFocus／distraction（按事件）
+  for (var wi = 0; wi < list.length; wi++) {
+    var wev = list[wi];
+    var wt0 = aiParseStartMs_(wev.start);
+    if (isNaN(wt0) || wt0 < range.fromMs || wt0 > range.toMs) continue;
+    var wseg = aiSegmentMs_(list, wi, nowMs);
+    var wdMs = (Number(wev.distractionSec) || 0) * 1000;
+    var wnet = Math.max(0, wseg - wdMs);
+    var wkk = aiIsoWeekKeyFromDate_(new Date(wt0));
+    if (!weekBuckets[wkk]) continue;
+    weekBuckets[wkk].loggedMs += wseg;
+    weekBuckets[wkk].distractMs += wdMs;
+    var wg = String(wev.group || wev.category || "").trim();
+    if (wg === "Work") weekBuckets[wkk].trueFocusWorkMs += wnet;
+  }
+
+  var weeklyPerformance = [];
+  for (var wbk in weekBuckets) {
+    if (!Object.prototype.hasOwnProperty.call(weekBuckets, wbk)) continue;
+    var row = weekBuckets[wbk];
+    weeklyPerformance.push({
+      weekKey: row.weekKey,
+      daysInBucket: row.days,
+      workHours: aiHours_(row.workMs),
+      trueFocusWorkHours: aiHours_(row.trueFocusWorkMs),
+      distractionHours: aiHours_(row.distractMs),
+      loggedHours: aiHours_(row.loggedMs),
+      tradingHours: aiHours_(row.tradingMs),
+      reviewingHours: aiHours_(row.reviewingMs),
+      socialDays: row.socialDays,
+      workLoadTierDays: row.tiers,
+      reviewingTierDays: row.reviewTiers,
+      noTradesDays: row.noTradesDays,
+      highTradingDays: row.highTradingDays,
+    });
+  }
+  weeklyPerformance.sort(function (a, b) {
+    return a.weekKey < b.weekKey ? -1 : a.weekKey > b.weekKey ? 1 : 0;
+  });
+
+  // Rhythm & Interleaving：連續 Work 塊 + DMN 間隔
+  // 注意：未打卡 Sleeping 時，上一個活動會「吞」去下一打卡前嘅空窗（尤其隔夜）→ 唔好當成長時間專注
+  var timeline = [];
+  var suspectedUnloggedBreaks = [];
+  for (var ti = 0; ti < list.length; ti++) {
+    var tev = list[ti];
+    var t0b = aiParseStartMs_(tev.start);
+    if (isNaN(t0b) || t0b < range.fromMs || t0b > range.toMs) continue;
+    var tSeg = aiSegmentMs_(list, ti, nowMs);
+    var tName = aiActivityName_(state, tev.activityId) || "(unknown)";
+    var tKey = aiNormKey_(tName);
+    var tGroup = String(tev.group || tev.category || "").trim();
+    var tEnd = t0b + tSeg;
+    var crossesWake = aiCrossesWakeBoundary_(t0b, tEnd);
+    var crossesMidnight = aiCrossesLocalMidnight_(t0b, tEnd);
+    var overlapsSleep = aiSegmentOverlapsSleepBand_(t0b, tEnd);
+    var longOpen = tSeg > AI_OPEN_SEGMENT_SUSPECT_MS;
+    var impliedBreak = false;
+    var lockMs = tSeg;
+    var suspectReason = "";
+    if (tGroup === "Work" && (crossesWake || crossesMidnight || overlapsSleep || longOpen)) {
+      impliedBreak = true;
+      if (crossesWake) {
+        suspectReason = "跨越 wake(03:00) 且中間無打卡 → 疑似睡眠（唔計認知鎖死）";
+      } else if (crossesMidnight || overlapsSleep) {
+        suspectReason = "踏入／跨越睡眠帶（22:00–06:59）或跨午夜 → 疑似睡眠（唔計認知鎖死）";
+      } else {
+        suspectReason = "單一開放時段 >2 小時 → 疑似未打卡休息／睡眠（唔計認知鎖死）";
+      }
+      suspectedUnloggedBreaks.push({
+        ymd: aiYmdLocal_(t0b),
+        activity: tName,
+        startLocal: aiLocalDateTimeStr_(t0b),
+        rawEndLocal: aiLocalDateTimeStr_(tEnd),
+        rawMinutes: aiMinutes_(tSeg),
+        reason: suspectReason,
+      });
+    }
+    timeline.push({
+      startMs: t0b,
+      endMs: tEnd,
+      ms: tSeg,
+      lockMs: lockMs,
+      name: tName,
+      key: tKey,
+      isWork: tGroup === "Work",
+      isDmn: !!AI_DMN_KEYS[tKey],
+      countsForLock: tGroup === "Work" && !impliedBreak,
+      impliedBreak: impliedBreak,
+    });
+  }
+
+  var cognitiveLocks = [];
+  var switchFails = [];
+  var idx = 0;
+  while (idx < timeline.length) {
+    if (!timeline[idx].countsForLock) {
+      idx++;
+      continue;
+    }
+    var blockStart = idx;
+    var blockMs = 0;
+    var blockNames = {};
+    while (idx < timeline.length && timeline[idx].countsForLock) {
+      blockMs += timeline[idx].lockMs;
+      blockNames[timeline[idx].name] = 1;
+      idx++;
+    }
+    var blockEndIdx = idx - 1;
+    var blockYmd = aiYmdLocal_(timeline[blockStart].startMs);
+    // 必須被「真實打卡」嘅非 Work／DMN 結束；開放結尾或疑似睡眠斷點唔算認知鎖死
+    var closer = idx < timeline.length ? timeline[idx] : null;
+    var closedByLoggedBreak =
+      closer &&
+      !closer.impliedBreak &&
+      !closer.countsForLock &&
+      (closer.isDmn || !closer.isWork);
+    if (blockMs > AI_COGNITIVE_LOCK_MS && closedByLoggedBreak) {
+      var nameList = [];
+      for (var bn in blockNames) {
+        if (Object.prototype.hasOwnProperty.call(blockNames, bn)) nameList.push(bn);
+      }
+      var lockEndMs = timeline[blockStart].startMs + blockMs;
+      cognitiveLocks.push({
+        ymd: blockYmd,
+        startLocal: aiLocalDateTimeStr_(timeline[blockStart].startMs),
+        endLocal: aiLocalDateTimeStr_(lockEndMs),
+        durationMinutes: aiMinutes_(blockMs),
+        activities: nameList,
+        closedBy: closer.name,
+        flag: "認知鎖死",
+      });
+    }
+    // 下一段可信 Work 之前嘅間隔
+    var nextWork = -1;
+    for (var k = idx; k < timeline.length; k++) {
+      if (timeline[k].countsForLock) {
+        nextWork = k;
+        break;
+      }
+    }
+    if (nextWork < 0) break;
+    var dmnMs = 0;
+    var betweenActs = [];
+    var hasImpliedBreak = false;
+    for (var m = idx; m < nextWork; m++) {
+      if (timeline[m].isDmn || timeline[m].impliedBreak) {
+        dmnMs += timeline[m].ms;
+        if (timeline[m].impliedBreak) hasImpliedBreak = true;
+      }
+      betweenActs.push({
+        name: timeline[m].impliedBreak ? "(疑似未打卡休息／睡眠)" : timeline[m].name,
+        minutes: aiMinutes_(timeline[m].ms),
+        isDmn: timeline[m].isDmn || timeline[m].impliedBreak,
+        impliedBreak: !!timeline[m].impliedBreak,
+      });
+    }
+    if (!hasImpliedBreak && dmnMs < AI_DMN_GAP_MIN_MS) {
+      switchFails.push({
+        ymd: aiYmdLocal_(timeline[nextWork].startMs),
+        afterWorkEndLocal: aiLocalDateTimeStr_(timeline[blockEndIdx].endMs),
+        beforeNextWorkStartLocal: aiLocalDateTimeStr_(timeline[nextWork].startMs),
+        dmnMinutesBetween: aiMinutes_(dmnMs),
+        requiredDmnMinutes: 15,
+        betweenActivities: betweenActs.slice(0, 10),
+        flag: "切換失靈",
+      });
+    }
+    idx = nextWork;
+  }
+
+  // Social Battery：按 ISO 週統計有 Social 活動嘅天數（目標 ≤3）
+  var socialByWeek = {};
+  for (var sy in socialDaySet) {
+    if (!Object.prototype.hasOwnProperty.call(socialDaySet, sy)) continue;
+    var parts = sy.split("-");
+    var sd = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    var wk = aiIsoWeekKeyFromDate_(sd);
+    if (!socialByWeek[wk]) socialByWeek[wk] = [];
+    socialByWeek[wk].push(sy);
+  }
+  var socialWeekRows = [];
+  for (var wkKey in socialByWeek) {
+    if (!Object.prototype.hasOwnProperty.call(socialByWeek, wkKey)) continue;
+    var dates = socialByWeek[wkKey].slice().sort();
+    socialWeekRows.push({
+      weekKey: wkKey,
+      socialDays: dates.length,
+      targetMaxDays: 3,
+      overTarget: dates.length > 3,
+      dates: dates,
+    });
+  }
+  socialWeekRows.sort(function (a, b) {
+    return a.weekKey < b.weekKey ? -1 : a.weekKey > b.weekKey ? 1 : 0;
+  });
+  var totalSocialDays = 0;
+  for (var sdi in socialDaySet) {
+    if (Object.prototype.hasOwnProperty.call(socialDaySet, sdi)) totalSocialDays++;
   }
 
   function topMap(obj, n, isMs) {
@@ -329,14 +796,162 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     return b.distractionMinutes - a.distractionMinutes;
   });
 
+  var processAudits = {
+    definitions: {
+      workLoadTiers:
+        "放假日(Vacation): Work<2h；理想專注日(Ideal Focus): 2–4h；超負荷預警日(Overload): 4h<Work<6h；臨界崩潰日(Critical): Work≥6h",
+      reviewingAudit: "理想Review: 15–30m；缺乏Review: <15m；過度Review: >30m",
+      rhythmInterleaving:
+        "認知鎖死: 連續可信Work>60m 且由真實休息／非Work打卡結束；22:00–06:59／跨午夜／跨wake／開放>2h → 疑似睡眠唔計。切換失靈: 兩段可信Work之間DMN<15m",
+      boundaryFlags:
+        "高頻交易練習日: Trading相關>2h；No-Trades(Mon–Fri): Transporting或Social/Family/Friend其中一個>2h",
+      socialBattery: "每週有Social活動天數目標≤3（計天唔計時）",
+    },
+    summary: {
+      workLoadTiers: {
+        vacationDays: tierCounts.vacation,
+        idealFocusDays: tierCounts.idealFocus,
+        overloadDays: tierCounts.overload,
+        criticalDays: tierCounts.critical,
+      },
+      reviewingAudit: {
+        idealDays: reviewCounts.ideal,
+        lackDays: reviewCounts.lack,
+        excessiveDays: reviewCounts.excessive,
+      },
+      rhythmInterleaving: {
+        cognitiveLockCount: cognitiveLocks.length,
+        switchFailCount: switchFails.length,
+        suspectedUnloggedBreakCount: suspectedUnloggedBreaks.length,
+      },
+      boundaryFlags: {
+        highTradingPracticeDayCount: highTradingDays.length,
+        noTradesBannerDayCount: noTradesDays.length,
+      },
+      socialBattery: {
+        totalSocialDaysInPeriod: totalSocialDays,
+        weeksOverTarget: socialWeekRows.filter(function (r) {
+          return r.overTarget;
+        }).length,
+      },
+    },
+    workLoadTiers: {
+      counts: {
+        vacation: tierCounts.vacation,
+        idealFocus: tierCounts.idealFocus,
+        overload: tierCounts.overload,
+        critical: tierCounts.critical,
+      },
+      criticalDays: workLoadDays.filter(function (d) {
+        return d.tier === "critical";
+      }),
+      overloadDays: workLoadDays.filter(function (d) {
+        return d.tier === "overload";
+      }),
+      nonIdealDays: workLoadDays
+        .filter(function (d) {
+          return d.tier !== "idealFocus";
+        })
+        .slice(0, 90),
+    },
+    reviewingAudit: {
+      counts: {
+        ideal: reviewCounts.ideal,
+        lack: reviewCounts.lack,
+        excessive: reviewCounts.excessive,
+      },
+      excessiveDays: reviewDays.filter(function (d) {
+        return d.tier === "excessive";
+      }),
+      lackDays: reviewDays
+        .filter(function (d) {
+          return d.tier === "lack";
+        })
+        .slice(0, 90),
+      nonIdealDays: reviewDays
+        .filter(function (d) {
+          return d.tier !== "ideal";
+        })
+        .slice(0, 90),
+    },
+    rhythmInterleaving: {
+      cognitiveLockCount: cognitiveLocks.length,
+      switchFailCount: switchFails.length,
+      suspectedUnloggedBreakCount: suspectedUnloggedBreaks.length,
+      cognitiveLocks: cognitiveLocks.slice(0, 40),
+      switchFails: switchFails.slice(0, 40),
+      suspectedUnloggedBreaks: suspectedUnloggedBreaks.slice(0, 40),
+    },
+    boundaryFlags: {
+      highTradingPracticeDays: highTradingDays,
+      noTradesBanner: noTradesDays,
+    },
+    socialBattery: {
+      targetMaxSocialDaysPerWeek: 3,
+      totalSocialDaysInPeriod: totalSocialDays,
+      byWeek: socialWeekRows,
+    },
+  };
+
+  var pType = range.periodType;
+  var reportLens =
+    pType === "week"
+      ? "week_true_focus_remarks"
+      : pType === "month"
+        ? "month_day_count_audits"
+        : pType === "quarter"
+          ? "quarter_weekly_performance"
+          : pType === "year"
+            ? "year_themes_with_weekly_monthly_trends"
+            : "custom";
+
+  // 週報：詳細 remarks；月／季：精簡
+  var remarksOut =
+    pType === "week"
+      ? remarksForReview.slice(0, 100)
+      : remarksForReview.slice(0, 24);
+
   return {
     person: "Xavier",
     periodType: range.periodType,
     periodKey: range.periodKey,
+    reportLens: reportLens,
+    reportLensNote:
+      pType === "week"
+        ? "週報重點：trueFocus（活動時間−distraction）＋ remarks 內容／pattern／值得留意之處。processAudits 只作輔助，唔好變成日數盤點。"
+        : pType === "month"
+          ? "月報重點：processAudits 各規則出現咗幾多日（日數盤點）。Critical／No-Trades／認知鎖死要點名日期。"
+          : pType === "quarter"
+            ? "季報重點：weeklyPerformance 每週表現對比（趨勢／起伏）。日數細節次要。"
+            : "跟大綱；可用 weeklyPerformance 同 processAudits.summary。",
+    termGlossary: {
+      放假日_Vacation: "每日 Work Group < 2 小時",
+      理想專注日_IdealFocus: "每日 Work Group 介乎 2–4 小時（含 2 同 4）",
+      超負荷預警日_Overload: "每日 Work Group > 4 且 < 6 小時",
+      臨界崩潰日_Critical: "每日 Work Group ≥ 6 小時（嚴重影響隔日表現）",
+      理想Review: "當日 Reviewing 15–30 分鐘（高效總結）",
+      缺乏Review: "當日 Reviewing < 15 分鐘（可能遺漏系統修正）",
+      過度Review: "當日 Reviewing > 30 分鐘（判定為無效重複／反芻風險）",
+      認知鎖死: "連續可信 Work >60 分鐘，且由真實打卡嘅休息／非 Work 結束；踏入 22:00–06:59、跨午夜／wake、或開放空窗 >2h（疑似未打卡睡眠）一律唔計",
+      切換失靈: "兩段可信 Work 之間，DMN 活動合計 < 15 分鐘（Meditating／Walking／Resting／Gyming／Showering／Fooding 等）",
+      trueFocus: "真正專注時間 = max(0, 活動時長 − distraction)",
+      高頻交易練習日: "當日 Trading 相關活動合計 > 2 小時",
+      NoTradesBanner: "週一至週五：當日 Transporting 或 Social／Family／Friend 其中一個 > 2 小時 → 交易禁令提示",
+      SocialBattery: "每週有 Social 活動嘅天數；目標 ≤ 3 天（計天唔計時）",
+      DMN: "Default Mode Network 恢復類活動，用作 Work 之間嘅切換緩衝",
+    },
     range: { from: range.fromYmd, to: range.toYmd },
     totals: {
       loggedHours: aiHours_(totalMs),
       distractionHours: aiHours_(distractMs),
+      trueFocusHours: aiHours_(trueFocusMs),
+      trueFocusWorkHours: aiHours_(trueFocusWorkMs),
+    },
+    trueFocus: {
+      formula: "trueFocusMinutes = max(0, activityMinutes - distractionMinutes)",
+      totalHours: aiHours_(trueFocusMs),
+      workGroupHours: aiHours_(trueFocusWorkMs),
+      byActivityTop: topMap(trueFocusByActivity, 15, true),
     },
     byGroup: (function () {
       var o = {};
@@ -359,11 +974,14 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       workSoftCapHoursPerWakeDay: 4,
       tradingSoftCapHoursPerWakeDay: 2,
       reviewingAlertMinutesPerWakeDay: 30,
-      noTradesIfTransportOrSocialOverHours: 2,
+      noTradesIfTransportOrSocialOverHoursMonFri: 2,
       workHardBlockAfterLocalHour: 17,
       wakeTime: "03:00",
     },
     wakeDayFlags: flags,
+    processAudits: processAudits,
+    weeklyPerformance: weeklyPerformance,
+    remarksForReview: remarksOut,
     distractionTopActivities: distractTop.slice(0, 8),
     sampleRemarks: sampleRemarks,
   };
@@ -376,22 +994,42 @@ function aiDefaultSystemInstruction_() {
     "框架：hypothesis → evidence（只能用提供的數字）→ review／下期實驗。",
     "禁止預測市場升跌；禁止虛構未提供的數據。",
     "對齊價值：過程質素、樣本、期望值、少／小／慢；僅在數據支持時點出鬆懈／資訊過載／唔跟 checklist 跡象。",
+    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、認知鎖死、切換失靈、trueFocus、No-Trades 等），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
     "輸出純 Markdown。",
   ].join("\n");
 }
 
 function aiDefaultReportOutline_() {
   return [
-    "報告必須包含以下章節（可用繁中標題）：",
-    "1. 執行摘要",
-    "2. 週期對比（對照 DATA_JSON.comparisons；用 Markdown table 列出本期 vs 上期重點指標）",
-    "3. 時間配置儀表板",
-    "4. 交易相關時間質素",
-    "5. 恢復與干擾",
-    "6. 規則遵守分數卡",
-    "7. 下期 3 個可執行實驗（細、可量度）",
-    "週報偏本週節奏；月報偏操作；季報加趨勢；年報加主題回顧。",
-    "表格請用 GFM：| col | … | 下一行 | --- |。粗體用 **文字**。",
+    "按 DATA_JSON.reportLens 選擇寫法（唔好用錯期別模板）：",
+    "",
+    "【month_day_count_audits｜月報】重點係「有幾多日」出現各類日子：",
+    "1. 執行摘要（用日數講）",
+    "2. 週期對比",
+    "3. Work Load Tiers 日數（Vacation／Ideal／Overload／Critical；Critical 點名日期）",
+    "4. Reviewing Audit 日數（Ideal／Lack／Excessive）",
+    "5. Rhythm／DMN（認知鎖死／切換失靈次數；疑似未打卡休息只作附註）",
+    "6. Boundary Flags 日數（高頻 Trading、No-Trades 日期＋原因）",
+    "7. Social Battery（每週社交天數）",
+    "8. 下期 3 個實驗",
+    "",
+    "【week_true_focus_remarks｜週報】重點係真正專注同 remark，唔好做成日數盤點報告：",
+    "1. 執行摘要（本週 trueFocus／distraction）",
+    "2. 真正專注時間（trueFocus = 活動時間 − distraction；按活動 top；Work 淨專注）",
+    "3. Remarks 內容回顧：寫咗啲咩、重複 pattern、情緒／決策／流程線索",
+    "4. 值得留意嘅信號（只基於 remarks + trueFocus／distraction；可輕提 1–2 個 audit 紅旗）",
+    "5. 下週 3 個細實驗",
+    "",
+    "【quarter_weekly_performance｜季報】重點係每週表現：",
+    "1. 執行摘要（整季趨勢）",
+    "2. 每週表現表（用 weeklyPerformance：trueFocusWork、Work 時數、distraction、tier 日數、No-Trades 等）",
+    "3. 哪幾週最好／最差、可能原因（只可用數據）",
+    "4. 季內主題回顧（短）",
+    "5. 下季 3 個實驗",
+    "",
+    "年報：主題回顧 + 可用 weeklyPerformance／月度日數摘要。",
+    "術語：首次出現必須附定義（見 termGlossary）；可用「理想專注日（Work Group 每日 2–4 小時）」呢種寫法。",
+    "只能用 DATA_JSON；表格用 GFM；粗體用 **文字**。",
   ].join("\n");
 }
 
@@ -404,6 +1042,8 @@ function getAiPromptConfig_() {
     reportOutline: aiDefaultReportOutline_(),
     extraInstructions: "",
     temperature: 0.3,
+    periodConfig: aiDefaultPeriodConfig_(),
+    emotionKeywords: aiDefaultEmotionKeywords_(),
   };
   if (!raw) return cfg;
   try {
@@ -420,34 +1060,76 @@ function getAiPromptConfig_() {
       }
       var t = Number(j.temperature);
       if (isFinite(t) && t >= 0 && t <= 1) cfg.temperature = t;
+      if (j.periodConfig && typeof j.periodConfig === "object") {
+        var defPc = aiDefaultPeriodConfig_();
+        ["week", "month", "quarter", "year"].forEach(function (pt) {
+          var src = j.periodConfig[pt] || {};
+          var defSec = (defPc[pt] && defPc[pt].sections) || {};
+          var mergedSec = {};
+          for (var sk in defSec) {
+            if (Object.prototype.hasOwnProperty.call(defSec, sk)) {
+              mergedSec[sk] = src.sections && src.sections[sk] === false ? false : true;
+              if (src.sections && typeof src.sections[sk] === "boolean") {
+                mergedSec[sk] = src.sections[sk];
+              }
+            }
+          }
+          // allow extra keys from client
+          if (src.sections) {
+            for (var ek in src.sections) {
+              if (Object.prototype.hasOwnProperty.call(src.sections, ek) && mergedSec[ek] === undefined) {
+                mergedSec[ek] = !!src.sections[ek];
+              }
+            }
+          }
+          cfg.periodConfig[pt] = {
+            sections: mergedSec,
+            notes: typeof src.notes === "string" ? src.notes : "",
+          };
+        });
+      }
+      if (j.emotionKeywords && typeof j.emotionKeywords === "object") {
+        if (Object.prototype.toString.call(j.emotionKeywords.negative) === "[object Array]") {
+          cfg.emotionKeywords.negative = j.emotionKeywords.negative.map(String);
+        }
+        if (Object.prototype.toString.call(j.emotionKeywords.positive) === "[object Array]") {
+          cfg.emotionKeywords.positive = j.emotionKeywords.positive.map(String);
+        }
+      }
     }
   } catch (e) {}
   return cfg;
 }
 
 function saveAiPromptConfig_(cfg) {
+  var cur = getAiPromptConfig_();
   var next = {
-    systemInstruction: String((cfg && cfg.systemInstruction) || aiDefaultSystemInstruction_()).trim(),
-    reportOutline: String((cfg && cfg.reportOutline) || aiDefaultReportOutline_()).trim(),
-    extraInstructions: String((cfg && cfg.extraInstructions) || "").trim(),
+    systemInstruction: String((cfg && cfg.systemInstruction) || cur.systemInstruction || aiDefaultSystemInstruction_()).trim(),
+    reportOutline: String((cfg && cfg.reportOutline) || cur.reportOutline || aiDefaultReportOutline_()).trim(),
+    extraInstructions: String(
+      cfg && cfg.extraInstructions != null ? cfg.extraInstructions : cur.extraInstructions || ""
+    ).trim(),
     temperature: 0.3,
+    periodConfig: (cfg && cfg.periodConfig) || cur.periodConfig || aiDefaultPeriodConfig_(),
+    emotionKeywords: (cfg && cfg.emotionKeywords) || cur.emotionKeywords || aiDefaultEmotionKeywords_(),
   };
   var t = Number(cfg && cfg.temperature);
   if (isFinite(t) && t >= 0 && t <= 1) next.temperature = t;
+  // re-merge periodConfig through getter logic by round-trip
   PropertiesService.getScriptProperties().setProperty("AI_REPORT_PROMPT_CONFIG", JSON.stringify(next));
-  return next;
+  return getAiPromptConfig_();
 }
 
 function aiSystemInstruction_() {
   var cfg = getAiPromptConfig_();
-  var parts = [cfg.systemInstruction, cfg.reportOutline];
-  if (cfg.extraInstructions) parts.push(cfg.extraInstructions);
+  var parts = [cfg.systemInstruction];
+  if (cfg.extraInstructions) parts.push("Topic of the Period／額外：\n" + cfg.extraInstructions);
   return parts.join("\n\n");
 }
 
 function aiUserPrompt_(stats) {
   var cfg = getAiPromptConfig_();
-  var type = stats.periodType;
+  var type = String(stats.periodType || "custom").toLowerCase();
   var title =
     type === "year"
       ? stats.periodKey + " 年 Time Stat 專業報告"
@@ -458,30 +1140,30 @@ function aiUserPrompt_(stats) {
           : type === "week"
             ? stats.periodKey + " 週 Time Stat 專業報告"
             : "Time Stat 報告 " + stats.range.from + "～" + stats.range.to;
-  var spanNote =
-    type === "year"
-      ? "期別：年報。"
-      : type === "quarter"
-        ? "期別：季報。"
-        : type === "month"
-          ? "期別：月報。"
-          : type === "week"
-            ? "期別：週報（ISO 週 Mon–Sun）。"
-            : "期別：自訂範圍。";
-  var extra = cfg.extraInstructions ? "\n\n用戶額外要求：\n" + cfg.extraInstructions : "";
+  var pcfg = (cfg.periodConfig && cfg.periodConfig[type]) || {
+    sections: aiDefaultPeriodSections_(type),
+    notes: "",
+  };
+  var outline = aiPeriodOutlineFromSections_(type, pcfg.sections || {}, pcfg.notes || "");
+  var lensNote = stats.reportLensNote ? "\n" + stats.reportLensNote : "";
   var cmpNote =
     stats.comparisons && stats.comparisons.length
-      ? "\nDATA_JSON.comparisons 已附連續上期摘要，必須有「週期對比」章節（建議用 table）。"
+      ? "\nDATA_JSON.comparisons 已附上 2 個同類型週期（合共連續 3 期對比）。"
       : "";
+  var glossaryNote =
+    "\n專有術語首次出現必須附定義（DATA_JSON.termGlossary）。負面情緒必引用 negativeRemarks[].context72h。";
+  var kpiNote =
+    "\nDATA_JSON.kpis.passFail 同 kpis.targets 係合格門檻；enabledSections 決定寫邊啲章節。";
   return (
     "請根據以下 JSON 撰寫「" +
     title +
-    "」。\n" +
-    spanNote +
+    "」。\n\n報告大綱：\n" +
+    outline +
+    lensNote +
     cmpNote +
-    "\n請嚴格遵守 system 入面嘅溝通方式同報告大綱。" +
-    extra +
-    "\n\nDATA_JSON:\n" +
+    glossaryNote +
+    kpiNote +
+    "\n請嚴格遵守 system 溝通方式。\n\nDATA_JSON:\n" +
     JSON.stringify(stats)
   );
 }
@@ -721,6 +1403,7 @@ function generatePeriodAiReport_(periodType, periodKey, opts) {
   var state = readStateFromSheet_();
   if (!state || !state.events) throw new Error("no_state");
   var stats = aggregatePeriodStatsForAi_(state, periodType, periodKey);
+  enrichStatsWithPeriodKpis_(state, stats);
   attachAiComparisons_(state, stats);
   var gem = callGeminiForAiReport_(stats);
   var subject = "[Time Stat AI] " + stats.periodType + " " + stats.periodKey;
@@ -934,7 +1617,10 @@ function handleGetAiSettings_(body) {
         reportOutline: aiDefaultReportOutline_(),
         extraInstructions: "",
         temperature: 0.3,
+        periodConfig: aiDefaultPeriodConfig_(),
+        emotionKeywords: aiDefaultEmotionKeywords_(),
       },
+      sectionLabels: aiPeriodSectionLabels_(),
     })
   );
 }
@@ -946,6 +1632,8 @@ function handleSaveAiSettings_(body) {
     reportOutline: s.reportOutline,
     extraInstructions: s.extraInstructions,
     temperature: s.temperature,
+    periodConfig: s.periodConfig,
+    emotionKeywords: s.emotionKeywords,
   });
   return jsonOut_(authOkFields_({ settings: saved, saved: true }));
 }

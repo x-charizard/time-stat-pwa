@@ -1786,6 +1786,30 @@ body.auth-locked [data-panel] {
   font-size: 0.85rem;
   line-height: 1.45;
 }
+.ai-period-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.ai-period-tab.active {
+  border-color: var(--accent, #6cf);
+  background: rgba(255, 255, 255, 0.08);
+}
+.ai-period-panel.hidden {
+  display: none !important;
+}
+.ai-period-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+.ai-period-check input {
+  margin-top: 3px;
+}
 .ai-setting-help {
   margin: 4px 0 0;
   font-size: 0.8rem;

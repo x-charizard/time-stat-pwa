@@ -4606,13 +4606,11 @@
 
   async function loadAiSettingsForm_() {
     const sys = document.getElementById("aiSettingSystem");
-    const outline = document.getElementById("aiSettingOutline");
     const extra = document.getElementById("aiSettingExtra");
     const temp = document.getElementById("aiSettingTemp");
-    if (!sys || !outline) return;
+    if (!sys) return;
     if (!canRemoteSync()) {
       sys.value = "";
-      outline.value = "";
       if (extra) extra.value = "";
       return;
     }
@@ -4620,13 +4618,109 @@
       const j = await postAiAction_({ action: "getAiSettings" });
       const s = j.settings || {};
       sys.value = s.systemInstruction || "";
-      outline.value = s.reportOutline || "";
       if (extra) extra.value = s.extraInstructions || "";
       if (temp) temp.value = s.temperature != null ? String(s.temperature) : "0.3";
       window.__AI_SETTINGS_DEFAULTS__ = j.defaults || null;
+      window.__AI_SECTION_LABELS__ = j.sectionLabels || {};
+      renderAiPeriodPanels_(s.periodConfig || (j.defaults && j.defaults.periodConfig) || {});
+      const neg = document.getElementById("aiEmotionNeg");
+      const pos = document.getElementById("aiEmotionPos");
+      const ek = s.emotionKeywords || {};
+      if (neg) neg.value = (ek.negative || []).join(", ");
+      if (pos) pos.value = (ek.positive || []).join(", ");
+      bindAiPeriodTabs_();
     } catch (e) {
       toast("載入 AI Settings 失敗：" + (e && e.message ? e.message : String(e)));
     }
+  }
+
+  function parseKeywordList_(s) {
+    return String(s || "")
+      .split(/[,，\n]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+  }
+
+  function renderAiPeriodPanels_(periodConfig) {
+    const root = document.getElementById("aiPeriodPanels");
+    if (!root) return;
+    const labels = window.__AI_SECTION_LABELS__ || {};
+    const periods = ["week", "month", "quarter", "year"];
+    root.innerHTML = "";
+    periods.forEach((pt, idx) => {
+      const pc = (periodConfig && periodConfig[pt]) || { sections: {}, notes: "" };
+      const sec = pc.sections || {};
+      const lab = labels[pt] || {};
+      const panel = document.createElement("div");
+      panel.className = "ai-period-panel" + (idx === 0 ? "" : " hidden");
+      panel.dataset.period = pt;
+      const keys = Object.keys(lab).length ? Object.keys(lab) : Object.keys(sec);
+      keys.forEach((k) => {
+        const row = document.createElement("label");
+        row.className = "ai-period-check";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.dataset.period = pt;
+        cb.dataset.section = k;
+        cb.checked = sec[k] !== false;
+        const span = document.createElement("span");
+        span.textContent = lab[k] || k;
+        row.appendChild(cb);
+        row.appendChild(span);
+        panel.appendChild(row);
+      });
+      const noteLab = document.createElement("label");
+      noteLab.style.marginTop = "10px";
+      noteLab.textContent = "補充文字（" + pt + "）";
+      noteLab.htmlFor = "aiPeriodNotes_" + pt;
+      const ta = document.createElement("textarea");
+      ta.id = "aiPeriodNotes_" + pt;
+      ta.className = "ai-setting-ta";
+      ta.rows = 3;
+      ta.value = pc.notes || "";
+      panel.appendChild(noteLab);
+      panel.appendChild(ta);
+      root.appendChild(panel);
+    });
+  }
+
+  function readAiPeriodConfigFromForm_() {
+    const out = { week: {}, month: {}, quarter: {}, year: {} };
+    ["week", "month", "quarter", "year"].forEach((pt) => {
+      const sections = {};
+      document.querySelectorAll('input[type="checkbox"][data-period="' + pt + '"]').forEach((cb) => {
+        sections[cb.dataset.section] = !!cb.checked;
+      });
+      const ta = document.getElementById("aiPeriodNotes_" + pt);
+      out[pt] = { sections: sections, notes: ta ? ta.value : "" };
+    });
+    return out;
+  }
+
+  function bindAiPeriodTabs_() {
+    const tabs = document.querySelectorAll(".ai-period-tab");
+    tabs.forEach((btn) => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = "1";
+      btn.addEventListener("click", () => {
+        const pt = btn.dataset.period;
+        tabs.forEach((b) => b.classList.toggle("active", b === btn));
+        document.querySelectorAll(".ai-period-panel").forEach((p) => {
+          p.classList.toggle("hidden", p.dataset.period !== pt);
+        });
+      });
+    });
+  }
+
+  function updateAiReportPeriodBadge_() {
+    const badge = document.getElementById("aiReportPeriodBadge");
+    if (!badge) return;
+    const pk = periodKeyFromReportDates_();
+    if (!pk) {
+      badge.textContent = "";
+      return;
+    }
+    badge.textContent = pk.periodType + " · " + pk.periodKey;
   }
 
   async function saveAiSettingsForm_() {
@@ -4635,17 +4729,22 @@
       return;
     }
     const sys = document.getElementById("aiSettingSystem");
-    const outline = document.getElementById("aiSettingOutline");
     const extra = document.getElementById("aiSettingExtra");
     const temp = document.getElementById("aiSettingTemp");
+    const neg = document.getElementById("aiEmotionNeg");
+    const pos = document.getElementById("aiEmotionPos");
     try {
       await postAiAction_({
         action: "saveAiSettings",
         settings: {
           systemInstruction: sys ? sys.value : "",
-          reportOutline: outline ? outline.value : "",
           extraInstructions: extra ? extra.value : "",
           temperature: temp ? Number(temp.value) : 0.3,
+          periodConfig: readAiPeriodConfigFromForm_(),
+          emotionKeywords: {
+            negative: parseKeywordList_(neg ? neg.value : ""),
+            positive: parseKeywordList_(pos ? pos.value : ""),
+          },
         },
       });
       toast("AI Settings 已儲存（自動／人手報告都會用）。");
@@ -4672,17 +4771,30 @@
 
   function applyAiDefaultsToForm_(d) {
     const sys = document.getElementById("aiSettingSystem");
-    const outline = document.getElementById("aiSettingOutline");
     const extra = document.getElementById("aiSettingExtra");
     const temp = document.getElementById("aiSettingTemp");
     if (sys) sys.value = d.systemInstruction || "";
-    if (outline) outline.value = d.reportOutline || "";
     if (extra) extra.value = d.extraInstructions || "";
     if (temp) temp.value = d.temperature != null ? String(d.temperature) : "0.3";
+    renderAiPeriodPanels_(d.periodConfig || {});
+    bindAiPeriodTabs_();
+    const neg = document.getElementById("aiEmotionNeg");
+    const pos = document.getElementById("aiEmotionPos");
+    const ek = d.emotionKeywords || {};
+    if (neg) neg.value = (ek.negative || []).join(", ");
+    if (pos) pos.value = (ek.positive || []).join(", ");
     toast("已填入預設（未儲存；記得 Save）。");
   }
 
   (function bindAiReportUi_() {
+    ["reportFromStr", "reportToStr"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el || el.dataset.aiBadgeBound) return;
+      el.dataset.aiBadgeBound = "1";
+      el.addEventListener("change", () => updateAiReportPeriodBadge_());
+      el.addEventListener("input", () => updateAiReportPeriodBadge_());
+    });
+    updateAiReportPeriodBadge_();
     const gen = document.getElementById("btnAiReportGenerate");
     if (gen && !gen.dataset.bound) {
       gen.dataset.bound = "1";
@@ -4764,6 +4876,7 @@
     const b = monthBoundsYMD(new Date());
     fromEl.value = b.from;
     toEl.value = b.to;
+    updateAiReportPeriodBadge_();
   }
 
   /** When leaving multi-window presets for Custom: reset range to current calendar month. */
