@@ -4366,6 +4366,110 @@
 
   let _lastManualAiReport_ = null;
 
+  function resetAiFollowUpUi_() {
+    const wrap = document.getElementById("aiReportFollowUp");
+    const thread = document.getElementById("aiReportFollowUpThread");
+    const input = document.getElementById("aiReportFollowUpInput");
+    if (wrap) wrap.classList.add("hidden");
+    if (thread) thread.innerHTML = "";
+    if (input) {
+      input.value = "";
+      input.disabled = false;
+    }
+    const ask = document.getElementById("btnAiReportFollowUpAsk");
+    if (ask) ask.disabled = false;
+  }
+
+  function showAiFollowUpUi_() {
+    const wrap = document.getElementById("aiReportFollowUp");
+    if (wrap) wrap.classList.remove("hidden");
+  }
+
+  function appendAiFollowUpMessage_(role, markdown, opts) {
+    const thread = document.getElementById("aiReportFollowUpThread");
+    if (!thread) return;
+    const o = opts || {};
+    const row = document.createElement("div");
+    row.className = "ai-followup-msg " + (role === "user" ? "user" : "assistant");
+    const roleEl = document.createElement("span");
+    roleEl.className = "ai-followup-role";
+    roleEl.textContent = role === "user" ? "You" : "AI";
+    row.appendChild(roleEl);
+    const body = document.createElement("div");
+    body.className = "ai-report-md";
+    if (o.loading) {
+      body.innerHTML = '<p class="ai-report-loading">Thinking…</p>';
+    } else if (o.error) {
+      body.innerHTML = '<p class="ai-report-loading">' + escapeHtml(String(o.error)) + "</p>";
+    } else if (role === "user") {
+      body.innerHTML = "<p>" + escapeHtml(String(markdown || "")).replace(/\n/g, "<br>") + "</p>";
+    } else {
+      body.innerHTML = renderAiMarkdownToHtml_(markdown || "", { linkDates: true });
+      bindAiManualDateJumps_(body);
+    }
+    row.appendChild(body);
+    thread.appendChild(row);
+    thread.scrollTop = thread.scrollHeight;
+    return row;
+  }
+
+  async function askAiReportFollowUp_() {
+    if (!canRemoteSync()) {
+      toast("請先 Google 登入。");
+      return;
+    }
+    if (!_lastManualAiReport_ || !_lastManualAiReport_.markdown) {
+      toast("請先 Generate AI Report。");
+      return;
+    }
+    const input = document.getElementById("aiReportFollowUpInput");
+    const askBtn = document.getElementById("btnAiReportFollowUpAsk");
+    const question = String(input && input.value ? input.value : "").trim();
+    if (!question) {
+      toast("請輸入問題。");
+      return;
+    }
+    if (!Array.isArray(_lastManualAiReport_.history)) _lastManualAiReport_.history = [];
+    appendAiFollowUpMessage_("user", question);
+    if (input) {
+      input.value = "";
+      input.disabled = true;
+    }
+    if (askBtn) askBtn.disabled = true;
+    const thinkingRow = appendAiFollowUpMessage_("assistant", "", { loading: true });
+    try {
+      const j = await postAiAction_({
+        action: "askAiReportFollowUp",
+        periodType: _lastManualAiReport_.periodType,
+        periodKey: _lastManualAiReport_.periodKey,
+        question: question,
+        reportMarkdown: _lastManualAiReport_.markdown,
+        history: _lastManualAiReport_.history.slice(-8),
+      });
+      const answer = j.markdown || "";
+      _lastManualAiReport_.history.push({ role: "user", content: question });
+      _lastManualAiReport_.history.push({ role: "assistant", content: answer });
+      if (thinkingRow && thinkingRow.parentNode) thinkingRow.parentNode.removeChild(thinkingRow);
+      appendAiFollowUpMessage_("assistant", answer);
+      const fb =
+        j.fallback || j.tier === "free-lite"
+          ? " · fallback free lite"
+          : j.model
+            ? " · " + j.model + (j.thinkingLevel ? "@" + j.thinkingLevel : "")
+            : "";
+      toast("Answered" + fb);
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      if (thinkingRow && thinkingRow.parentNode) thinkingRow.parentNode.removeChild(thinkingRow);
+      appendAiFollowUpMessage_("assistant", "", { error: msg });
+      toast("追問失敗：" + msg);
+    } finally {
+      if (input) input.disabled = false;
+      if (askBtn) askBtn.disabled = false;
+      if (input) input.focus();
+    }
+  }
+
   function splitAiMdTableRow_(line) {
     let s = String(line || "").trim();
     if (s.startsWith("|")) s = s.slice(1);
@@ -4722,6 +4826,7 @@
     const body = document.getElementById("aiReportManualBody");
     if (btn) btn.disabled = true;
     if (box) box.classList.remove("hidden");
+    resetAiFollowUpUi_();
     setAiReportBodyHtml_(body, "", { loading: true });
     try {
       const j = await postAiAction_({
@@ -4735,6 +4840,7 @@
         subject: j.subject || "",
         periodType: j.periodType,
         periodKey: j.periodKey,
+        history: [],
       };
       // Generate 期間若有 sync 改咗 date pickers，還原返用戶揀嘅範圍
       if (fromEl && toEl && fromSnap && toSnap) {
@@ -4753,6 +4859,7 @@
       }
       setAiReportBodyHtml_(body, _lastManualAiReport_.markdown, { linkDates: true });
       if (box) box.classList.remove("hidden");
+      showAiFollowUpUi_();
       updateAiReportPeriodBadge_();
       const modelBit = j.model ? String(j.model) : "";
       const thinkBit = j.thinkingLevel ? "@" + j.thinkingLevel : "";
@@ -4768,6 +4875,7 @@
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       setAiReportBodyHtml_(body, "", { error: "AI Report 失敗：" + msg });
+      resetAiFollowUpUi_();
       toast("AI Report 失敗：" + msg);
     } finally {
       if (btn) btn.disabled = false;
@@ -5044,6 +5152,22 @@
       close.addEventListener("click", () => {
         const box = document.getElementById("aiReportManualBox");
         if (box) box.classList.add("hidden");
+        resetAiFollowUpUi_();
+      });
+    }
+    const ask = document.getElementById("btnAiReportFollowUpAsk");
+    if (ask && !ask.dataset.bound) {
+      ask.dataset.bound = "1";
+      ask.addEventListener("click", () => void askAiReportFollowUp_());
+    }
+    const followInput = document.getElementById("aiReportFollowUpInput");
+    if (followInput && !followInput.dataset.bound) {
+      followInput.dataset.bound = "1";
+      followInput.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+          ev.preventDefault();
+          void askAiReportFollowUp_();
+        }
       });
     }
     const refresh = document.getElementById("btnAiReportsRefresh");

@@ -1373,14 +1373,12 @@ function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user
 /**
  * Pro+High 優先；無 quota／唔支援 → 免費 Flash-Lite。
  */
-function callGeminiForAiReport_(stats) {
+function callGeminiWithMessages_(system, user) {
   var props = PropertiesService.getScriptProperties();
   var apiKey = String(props.getProperty("GEMINI_API_KEY") || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
   var cfg = getAiPromptConfig_();
-  var system = aiSystemInstruction_();
-  var user = aiUserPrompt_(stats);
   var temperature = cfg.temperature;
   var chain = aiGeminiModelChain_();
   var last = null;
@@ -1402,7 +1400,6 @@ function callGeminiForAiReport_(stats) {
         attempted: attempted,
       };
     }
-    // quota／唔支援 → 試下一檔（免費 lite）；其他錯誤亦試下一檔以保可用
     if (!(r && (r.quota || r.code >= 400))) break;
   }
 
@@ -1419,6 +1416,64 @@ function callGeminiForAiReport_(stats) {
     );
   }
   throw new Error("gemini_http_" + code + ":" + detail + " attempted=" + attempted.join(" → "));
+}
+
+function callGeminiForAiReport_(stats) {
+  return callGeminiWithMessages_(aiSystemInstruction_(), aiUserPrompt_(stats));
+}
+
+/**
+ * 人手報告追問：帶原報告 + DATA_JSON + 對話歷史答問題。
+ */
+function aiFollowUpSystem_() {
+  var base = aiSystemInstruction_();
+  return [
+    base,
+    "",
+    "你而家係「報告追問」模式：用戶已有一份 Time Stat AI 報告，會再問跟進問題。",
+    "必須用 DATA_JSON 入面嘅數字／日期答；報告正文只作語境，唔好同 DATA_JSON 矛盾。",
+    "若 DATA_JSON 無足夠證據，清楚講「數據唔夠／未提供」，唔好虛構。",
+    "輸出純 Markdown；精簡、可直接執行嘅洞察優先。",
+  ].join("\n");
+}
+
+function aiFollowUpUserPrompt_(stats, reportMarkdown, history, question) {
+  var histLines = [];
+  var hist = history || [];
+  for (var i = 0; i < hist.length; i++) {
+    var turn = hist[i] || {};
+    var role = String(turn.role || "") === "assistant" ? "助理" : "用戶";
+    var content = String(turn.content || "").trim();
+    if (!content) continue;
+    histLines.push(role + "：\n" + content.slice(0, 6000));
+  }
+  var histBlock = histLines.length ? "\n\n對話歷史：\n" + histLines.join("\n\n") : "";
+  var reportSlice = String(reportMarkdown || "").slice(0, 60000);
+  return (
+    "期別：" +
+    String(stats.periodType || "") +
+    " · " +
+    String(stats.periodLabel || stats.periodKey || "") +
+    "（range " +
+    ((stats.range && stats.range.from) || "") +
+    "～" +
+    ((stats.range && stats.range.to) || "") +
+    "）\n\n" +
+    "原報告（Markdown）：\n" +
+    reportSlice +
+    histBlock +
+    "\n\n用戶新問題：\n" +
+    String(question || "").trim() +
+    "\n\n請用繁體中文答。必要時引用 DATA_JSON 具體數字／日期。\n\nDATA_JSON:\n" +
+    JSON.stringify(stats)
+  );
+}
+
+function callGeminiForAiFollowUp_(stats, reportMarkdown, history, question) {
+  return callGeminiWithMessages_(
+    aiFollowUpSystem_(),
+    aiFollowUpUserPrompt_(stats, reportMarkdown, history, question),
+  );
 }
 
 function extractGeminiTextFallback_(j) {
@@ -1554,16 +1609,194 @@ function markAiReportSynced_(id) {
   return false;
 }
 
+function aiEscapeHtmlEmail_(s) {
+  return String(s || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function aiMdInlineEmail_(text) {
+  var s = aiEscapeHtmlEmail_(text);
+  s = s.replace(/`([^`\n]+)`/g, "<code style=\"font-family:ui-monospace,Menlo,Consolas,monospace;font-size:0.9em;background:#f4f4f5;padding:1px 4px;border-radius:3px;\">$1</code>");
+  s = s.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+  s = s.replace(/__([^_\n]+)__/g, "<strong>$1</strong>");
+  s = s.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/g, "$1<em>$2</em>");
+  return s;
+}
+
+function aiSplitMdTableRowEmail_(line) {
+  var s = String(line || "").trim();
+  if (s.charAt(0) === "|") s = s.slice(1);
+  if (s.charAt(s.length - 1) === "|") s = s.slice(0, -1);
+  return s.split("|").map(function (c) {
+    return c.trim();
+  });
+}
+
+function aiIsMdTableSepEmail_(line) {
+  return /^\s*\|?[\s|:/-]+\|[\s|:|/-]*$/.test(String(line || ""));
+}
+
+/**
+ * Lightweight Markdown → email-safe HTML（標題／列表／粗體／GFM table）
+ */
+function aiMarkdownToEmailHtml_(md) {
+  var raw = String(md || "").replace(/\r\n/g, "\n");
+  var lines = raw.split("\n");
+  var html = [];
+  var i = 0;
+  var inUl = false;
+  var inOl = false;
+
+  function closeLists() {
+    if (inUl) {
+      html.push("</ul>");
+      inUl = false;
+    }
+    if (inOl) {
+      html.push("</ol>");
+      inOl = false;
+    }
+  }
+
+  while (i < lines.length) {
+    var line = lines[i];
+    if (/^\s*\|/.test(line) && i + 1 < lines.length && aiIsMdTableSepEmail_(lines[i + 1])) {
+      closeLists();
+      var rows = [];
+      while (i < lines.length && /^\s*\|/.test(lines[i])) {
+        rows.push(lines[i]);
+        i++;
+      }
+      html.push(
+        '<table style="border-collapse:collapse;width:100%;max-width:100%;font-size:14px;margin:12px 0;" cellpadding="0" cellspacing="0">',
+      );
+      html.push("<thead><tr>");
+      aiSplitMdTableRowEmail_(rows[0]).forEach(function (h) {
+        html.push(
+          '<th style="border:1px solid #ccc;padding:6px 10px;text-align:left;background:#f4f4f5;">' +
+            aiMdInlineEmail_(h) +
+            "</th>",
+        );
+      });
+      html.push("</tr></thead><tbody>");
+      for (var r = 1; r < rows.length; r++) {
+        if (aiIsMdTableSepEmail_(rows[r])) continue;
+        html.push("<tr>");
+        aiSplitMdTableRowEmail_(rows[r]).forEach(function (c) {
+          html.push(
+            '<td style="border:1px solid #ccc;padding:6px 10px;text-align:left;vertical-align:top;">' +
+              aiMdInlineEmail_(c) +
+              "</td>",
+          );
+        });
+        html.push("</tr>");
+      }
+      html.push("</tbody></table>");
+      continue;
+    }
+
+    var hm = line.match(/^(#{1,3})\s+(.+)$/);
+    if (hm) {
+      closeLists();
+      var level = hm[1].length;
+      var sizes = { 1: "22px", 2: "18px", 3: "16px" };
+      html.push(
+        "<h" +
+          level +
+          ' style="margin:1.1em 0 0.4em;line-height:1.3;font-size:' +
+          sizes[level] +
+          ';">' +
+          aiMdInlineEmail_(hm[2]) +
+          "</h" +
+          level +
+          ">",
+      );
+      i++;
+      continue;
+    }
+
+    if (/^(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      closeLists();
+      html.push('<hr style="border:0;border-top:1px solid #ddd;margin:1em 0;">');
+      i++;
+      continue;
+    }
+
+    var ulm = line.match(/^\s*[-*+]\s+(.+)$/);
+    if (ulm) {
+      if (inOl) {
+        html.push("</ol>");
+        inOl = false;
+      }
+      if (!inUl) {
+        html.push('<ul style="margin:0.4em 0 0.8em;padding-left:1.4em;">');
+        inUl = true;
+      }
+      html.push("<li style=\"margin:0.2em 0;\">" + aiMdInlineEmail_(ulm[1]) + "</li>");
+      i++;
+      continue;
+    }
+
+    var olm = line.match(/^\s*\d+\.\s+(.+)$/);
+    if (olm) {
+      if (inUl) {
+        html.push("</ul>");
+        inUl = false;
+      }
+      if (!inOl) {
+        html.push('<ol style="margin:0.4em 0 0.8em;padding-left:1.4em;">');
+        inOl = true;
+      }
+      html.push("<li style=\"margin:0.2em 0;\">" + aiMdInlineEmail_(olm[1]) + "</li>");
+      i++;
+      continue;
+    }
+
+    if (/^\s*$/.test(line)) {
+      closeLists();
+      i++;
+      continue;
+    }
+
+    closeLists();
+    var paras = [];
+    while (
+      i < lines.length &&
+      !/^\s*$/.test(lines[i]) &&
+      !/^\s*\|/.test(lines[i]) &&
+      !/^#{1,3}\s/.test(lines[i]) &&
+      !/^\s*[-*+]\s/.test(lines[i]) &&
+      !/^\s*\d+\.\s/.test(lines[i]) &&
+      !/^(-{3,}|\*{3,}|_{3,})\s*$/.test(lines[i])
+    ) {
+      paras.push(lines[i]);
+      i++;
+    }
+    html.push('<p style="margin:0.55em 0;line-height:1.55;">' + aiMdInlineEmail_(paras.join(" ")) + "</p>");
+  }
+  closeLists();
+
+  return (
+    '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;font-size:15px;color:#111;line-height:1.55;max-width:720px;">' +
+    (html.join("\n") || "<p>（空白報告）</p>") +
+    "</div>"
+  );
+}
+
 function mailAiReportToAllowed_(subject, markdown) {
   var emails = allowedEmailsList_();
   if (!emails || !emails.length) throw new Error("no_allowed_emails");
   var body = String(markdown || "");
-  // Gmail plain text; keep markdown readable
+  var htmlBody = aiMarkdownToEmailHtml_(body);
   for (var i = 0; i < emails.length; i++) {
     MailApp.sendEmail({
       to: emails[i],
       subject: subject,
       body: body,
+      htmlBody: htmlBody,
     });
   }
   return emails.slice();
@@ -1786,10 +2019,62 @@ function handleGenerateAiReport_(body) {
       subject: r.subject,
       model: r.model,
       via: r.via,
+      thinkingLevel: r.thinkingLevel,
+      tier: r.tier,
+      fallback: r.fallback,
       periodType: r.periodType,
       periodKey: r.periodKey,
       persist: false,
       emailed: !!wantEmail,
+    })
+  );
+}
+
+/**
+ * 人手報告追問：{ periodType, periodKey, question, reportMarkdown?, history?[{role,content}] }
+ */
+function handleAskAiReportFollowUp_(body) {
+  var periodType = String(body && body.periodType ? body.periodType : "custom");
+  var periodKey = String(body && body.periodKey ? body.periodKey : "");
+  if (!periodKey && body && body.fromYmd && body.toYmd) {
+    periodType = "custom";
+    periodKey = String(body.fromYmd) + "/" + String(body.toYmd);
+  }
+  if (!periodKey) return authFail_("missing_period_key");
+  var question = String(body && body.question ? body.question : "").trim();
+  if (!question) return authFail_("missing_question");
+  if (question.length > 4000) question = question.slice(0, 4000);
+
+  var reportMarkdown = String(body && body.reportMarkdown ? body.reportMarkdown : "");
+  var historyIn = body && body.history && Object.prototype.toString.call(body.history) === "[object Array]"
+    ? body.history
+    : [];
+  var history = [];
+  for (var i = 0; i < historyIn.length && history.length < 8; i++) {
+    var t = historyIn[i] || {};
+    var role = String(t.role || "") === "assistant" ? "assistant" : "user";
+    var content = String(t.content || "").trim();
+    if (!content) continue;
+    history.push({ role: role, content: content.slice(0, 8000) });
+  }
+
+  var state = readStateFromSheet_();
+  if (!state || !state.events) throw new Error("no_state");
+  var stats = aggregatePeriodStatsForAi_(state, periodType, periodKey);
+  enrichStatsWithPeriodKpis_(state, stats);
+  attachAiComparisons_(state, stats);
+
+  var gem = callGeminiForAiFollowUp_(stats, reportMarkdown, history, question);
+  return jsonOut_(
+    authOkFields_({
+      markdown: gem.markdown,
+      model: gem.model,
+      via: gem.via,
+      thinkingLevel: gem.thinkingLevel,
+      tier: gem.tier,
+      fallback: gem.fallback,
+      periodType: stats.periodType,
+      periodKey: stats.periodKey,
     })
   );
 }

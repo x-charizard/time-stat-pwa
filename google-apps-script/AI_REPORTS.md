@@ -27,10 +27,18 @@ PWA 連嘅 URL（`config.remote.json` / app 內 default）必須係呢個部署�
    - `GEMINI_API_KEY` =（你已 set）
    - 已有 `ALLOWED_EMAILS`、`GOOGLE_CLIENT_ID`
 
+**人手追問（Ask about this report）**
+- Generate 之後可喺報告下方追問；server 會用同一期 `DATA_JSON` + 原報告 + 最近對話答。
+- 要更新：`TimeStatAiReports.gs` + `TimeStatSync.gs` → **新版本**。
+
 **Gemini 模型（免費優先 fallback）**
 1. 優先：`gemini-3.1-pro-preview` + `thinking_level: high`
 2. Pro 撞 RPD／quota／唔支援 → 自動：`gemini-3.5-flash-lite` + `thinking_level: minimal`
 3. 兩者都無額 → 錯誤提示等太平洋午夜重置（≈ 香港下午 3–4 點）
+
+**Email**
+- AI／emotion brief 會用 `htmlBody` 渲染 Markdown（標題、粗體、列表、表格）；`body` 仍附 plain text 後備。
+
 3. 儲存 → **管理部署 → 新版本**
 4. 編輯器跑一次：`installAiReportTriggers()`（含**星期六 07:00 週報**）
 5. AI Settings：**Reset defaults → Save**（載入週／月／季／年 checklist 預設）

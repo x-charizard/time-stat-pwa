@@ -28,6 +28,7 @@
  * - { idToken, action:"listAiReports" }
  * - { idToken, action:"getAiReport", id }
  * - { idToken, action:"generateAiReport", periodType, periodKey, email? }  // persist:false
+ * - { idToken, action:"askAiReportFollowUp", periodType, periodKey, question, reportMarkdown?, history? }
  * - { idToken, action:"getAiSettings" }
  * - { idToken, action:"saveAiSettings", settings:{ systemInstruction, reportOutline, extraInstructions, temperature } }
  * - { idToken, state }                  → 寫入 TimeStatDB
@@ -76,6 +77,7 @@ function handleAiPing_() {
         getAiSettings: typeof handleGetAiSettings_ === "function",
         saveAiSettings: typeof handleSaveAiSettings_ === "function",
         generateAiReport: typeof handleGenerateAiReport_ === "function",
+        askAiReportFollowUp: typeof handleAskAiReportFollowUp_ === "function",
         listAiReports: typeof handleListAiReports_ === "function",
       },
       geminiKeySet: Boolean(
@@ -1231,6 +1233,17 @@ function doPost(e) {
       return handleGenerateAiReport_(body);
     } catch (errGen) {
       return authFail_(String(errGen && errGen.message ? errGen.message : errGen));
+    }
+  }
+
+  if (String(body.action || "") === "askAiReportFollowUp") {
+    try {
+      if (typeof handleAskAiReportFollowUp_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
+      return handleAskAiReportFollowUp_(body);
+    } catch (errAsk) {
+      return authFail_(String(errAsk && errAsk.message ? errAsk.message : errAsk));
     }
   }
 

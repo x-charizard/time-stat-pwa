@@ -1845,8 +1845,56 @@ body.auth-locked [data-panel] {
   flex-wrap: wrap;
 }
 .ai-report-manual.hidden,
-.ai-report-detail.hidden {
+.ai-report-detail.hidden,
+.ai-report-followup.hidden {
   display: none !important;
+}
+.ai-report-followup {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border, #333);
+}
+.ai-followup-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: min(40vh, 360px);
+  overflow: auto;
+  margin-bottom: 10px;
+}
+.ai-followup-msg {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border, #333);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  text-align: left;
+}
+.ai-followup-msg.user {
+  border-color: rgba(var(--accent-rgb, 124, 183, 255), 0.35);
+  background: rgba(var(--accent-rgb, 124, 183, 255), 0.08);
+}
+.ai-followup-msg .ai-followup-role {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted, #aaa);
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+.ai-followup-compose {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ai-followup-compose .ai-setting-ta {
+  min-height: 72px;
+  margin-top: 0;
+}
+.ai-followup-compose .report-export-btn {
+  align-self: flex-end;
 }
 .ai-setting-ta {
   width: 100%;

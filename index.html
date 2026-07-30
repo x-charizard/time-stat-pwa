@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=165" />
+  <link rel="stylesheet" href="styles.css?v=166" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -223,6 +223,19 @@
               <button type="button" class="ghost" id="btnAiReportClose">Close</button>
             </div>
             <div id="aiReportManualBody" class="ai-report-md"></div>
+            <div id="aiReportFollowUp" class="ai-report-followup hidden">
+              <h3 class="report-h" style="margin:14px 0 8px;">Ask about this report</h3>
+              <div id="aiReportFollowUpThread" class="ai-followup-thread" aria-live="polite"></div>
+              <div class="ai-followup-compose">
+                <textarea
+                  id="aiReportFollowUpInput"
+                  class="ai-setting-ta"
+                  rows="3"
+                  placeholder="Ask a follow-up（AI 會用呢期 DATA_JSON 答）"
+                ></textarea>
+                <button type="button" class="report-export-btn" id="btnAiReportFollowUpAsk">Ask</button>
+              </div>
+            </div>
           </div>
           <div class="report-results" id="reportSummary"></div>
         </div>
@@ -282,6 +295,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=165"></script>
+  <script src="app.js?v=166"></script>
 </body>
 </html>
