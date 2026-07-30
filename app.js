@@ -4673,7 +4673,7 @@
         panel.appendChild(row);
       });
       const noteLab = document.createElement("label");
-      noteLab.style.marginTop = "10px";
+      noteLab.className = "ai-period-note-label";
       noteLab.textContent = "補充文字（" + pt + "）";
       noteLab.htmlFor = "aiPeriodNotes_" + pt;
       const ta = document.createElement("textarea");

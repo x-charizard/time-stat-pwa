@@ -1796,19 +1796,44 @@ body.auth-locked [data-panel] {
   border-color: var(--accent, #6cf);
   background: rgba(255, 255, 255, 0.08);
 }
+.ai-period-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 2px;
+}
 .ai-period-panel.hidden {
   display: none !important;
 }
-.ai-period-check {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  margin: 6px 0;
+/* 蓋過全局 label{display:block}，checkbox 同文字齊欄 */
+label.ai-period-check {
+  display: grid;
+  grid-template-columns: 1.25rem minmax(0, 1fr);
+  align-items: start;
+  column-gap: 10px;
+  margin: 0;
+  padding: 7px 0;
+  color: var(--text, #eee);
   font-size: 0.9rem;
-  line-height: 1.35;
+  line-height: 1.4;
+  cursor: pointer;
 }
-.ai-period-check input {
-  margin-top: 3px;
+label.ai-period-check input[type="checkbox"] {
+  margin: 0.2rem 0 0;
+  width: 1rem;
+  height: 1rem;
+  justify-self: center;
+  accent-color: var(--accent, #6cf);
+}
+label.ai-period-check span {
+  min-width: 0;
+  word-break: break-word;
+}
+.ai-period-note-label {
+  display: block;
+  margin: 14px 0 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 .ai-setting-help {
   margin: 4px 0 0;
