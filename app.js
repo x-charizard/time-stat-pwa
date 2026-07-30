@@ -4708,6 +4708,10 @@
       toast("請先 Google 登入先可以 Generate AI Report。");
       return;
     }
+    const fromEl = document.getElementById("reportFromStr");
+    const toEl = document.getElementById("reportToStr");
+    const fromSnap = String(fromEl && fromEl.value ? fromEl.value : "").trim();
+    const toSnap = String(toEl && toEl.value ? toEl.value : "").trim();
     const pk = periodKeyFromReportDates_();
     if (!pk) {
       toast("請先揀 Report 日期範圍。");
@@ -4732,8 +4736,24 @@
         periodType: j.periodType,
         periodKey: j.periodKey,
       };
+      // Generate 期間若有 sync 改咗 date pickers，還原返用戶揀嘅範圍
+      if (fromEl && toEl && fromSnap && toSnap) {
+        const pr = document.getElementById("reportPeriodPreset");
+        if (pr) pr.value = "custom";
+        reportPresetSuppress = true;
+        try {
+          fromEl.value = fromSnap;
+          toEl.value = toSnap;
+        } finally {
+          queueMicrotask(() => {
+            reportPresetSuppress = false;
+          });
+        }
+        renderReport();
+      }
       setAiReportBodyHtml_(body, _lastManualAiReport_.markdown, { linkDates: true });
       if (box) box.classList.remove("hidden");
+      updateAiReportPeriodBadge_();
       const modelBit = j.model ? String(j.model) : "";
       const thinkBit = j.thinkingLevel ? "@" + j.thinkingLevel : "";
       const fb =
@@ -5086,27 +5106,20 @@
     const fromEl = document.getElementById("reportFromStr");
     const toEl = document.getElementById("reportToStr");
     if (!fromEl || !toEl) return;
+    // 已有範圍就唔好覆蓋（否則遠端 sync 會把用戶揀嘅 Apr–Jun 改返做今個月）
+    if (String(fromEl.value || "").trim() && String(toEl.value || "").trim()) {
+      updateAiReportPeriodBadge_();
+      return;
+    }
     const b = monthBoundsYMD(new Date());
     fromEl.value = b.from;
     toEl.value = b.to;
     updateAiReportPeriodBadge_();
   }
 
-  /** When leaving multi-window presets for Custom: reset range to current calendar month. */
+  /** When leaving multi-window presets for Custom: keep current From～To（通常係 focus period）. */
   function setReportRangeToCurrentCalendarMonth() {
-    const fromEl = document.getElementById("reportFromStr");
-    const toEl = document.getElementById("reportToStr");
-    if (!fromEl || !toEl) return;
-    const b = monthBoundsYMD(new Date());
-    reportPresetSuppress = true;
-    try {
-      fromEl.value = b.from;
-      toEl.value = b.to;
-    } finally {
-      queueMicrotask(() => {
-        reportPresetSuppress = false;
-      });
-    }
+    // no-op 保留：舊呼叫位唔好再強制跳去今個月
   }
 
   const MANUAL_DATE_CHIP_DAYS = 3;
@@ -5694,7 +5707,7 @@
         const next = presetEl.value || "custom";
         presetEl.dataset.prevPreset = next;
         if (next === "custom" && reportComparePresetActive(prev)) {
-          setReportRangeToCurrentCalendarMonth();
+          // 保留而家 From～To（compare focus），唔好跳去今個月
         }
         applyReportPeriodPreset();
         renderReport();
