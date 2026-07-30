@@ -3913,7 +3913,8 @@
     if (!slices || !slices.ranges || slices.ranges.length !== 3) return;
     reportPresetSuppress = true;
     try {
-      fromEl.value = slices.ranges[2].from;
+      // Date pickers = focus period（最新一期）；對比表仍用三期，Raw Data 跟呢個範圍
+      fromEl.value = slices.ranges[0].from;
       toEl.value = slices.ranges[0].to;
     } finally {
       queueMicrotask(() => {
@@ -3997,7 +3998,8 @@
       }
       reportPresetSuppress = true;
       try {
-        document.getElementById("reportFromStr").value = slices.ranges[2].from;
+        // Focus period only（唔好擴到三期全距，否則 Raw Data 會睇到較新／較舊季度）
+        document.getElementById("reportFromStr").value = slices.ranges[0].from;
         document.getElementById("reportToStr").value = slices.ranges[0].to;
       } finally {
         queueMicrotask(() => {
@@ -4107,7 +4109,14 @@
       html += tblCmp("Project", (a) => a.byProject);
       html += tblCmp("People", (a) => a.byPerson);
 
+      const focusFrom = slices.ranges[0].from;
+      const focusTo = slices.ranges[0].to;
+      html +=
+        `<p class="muted" style="margin:16px 0 8px;">Raw Data · focus period ${escapeHtml(focusFrom)} ～ ${escapeHtml(focusTo)}（comparison columns stay 3 periods）</p>`;
+      html += buildReportRawDataHtml_(ag[0].rawSegmentRows, reportCtx);
+
       box.innerHTML = html;
+      bindReportRawDayFilter_();
       return;
     }
 
@@ -4186,8 +4195,21 @@
     html += `</tbody></table>`;
     html += tbl("Project", byProject);
     html += tbl("People", byPerson);
+    html += buildReportRawDataHtml_(rawSegmentRows, reportCtx);
 
-    const sortedRaw = [...rawSegmentRows].sort((a, b) => new Date(a.ev.start) - new Date(b.ev.start));
+    box.innerHTML = html;
+    bindReportRawDayFilter_();
+    } finally {
+      syncReportUnitToggleButtons();
+    }
+  }
+
+  let _reportRawDayFilter_ = "";
+
+  function buildReportRawDataHtml_(rawSegmentRows, reportCtx) {
+    const sortedRaw = [...(rawSegmentRows || [])].sort(
+      (a, b) => new Date(a.ev.start) - new Date(b.ev.start),
+    );
     const rawDayKeys = [];
     const rawDaySeen = Object.create(null);
     for (let ri0 = 0; ri0 < sortedRaw.length; ri0++) {
@@ -4202,7 +4224,7 @@
       _reportRawDayFilter_ = "";
     }
 
-    html += `<h2 class="report-h" id="reportRawDataHeading">Data</h2>`;
+    let html = `<h2 class="report-h" id="reportRawDataHeading">Data</h2>`;
     html +=
       `<div class="report-raw-toolbar">` +
       `<label for="reportRawDayFilter" class="report-raw-day-label">Day</label>` +
@@ -4243,15 +4265,8 @@
         `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
     }
     html += `</tbody></table></div>`;
-
-    box.innerHTML = html;
-    bindReportRawDayFilter_();
-    } finally {
-      syncReportUnitToggleButtons();
-    }
+    return html;
   }
-
-  let _reportRawDayFilter_ = "";
 
   function bindReportRawDayFilter_() {
     const sel = document.getElementById("reportRawDayFilter");

@@ -148,7 +148,7 @@ function aiPeriodSectionLabels_() {
         "Cognitive Lock — continuous trusted Work >60m closed by a real rest/non-Work log (ideal <3 / week)",
       switchFail:
         "Switch Fail — Diffused Mode between two trusted Work blocks <15m (ideal <3 / week)",
-      socialDays: "Social days — Friending/Familying/Socialing present (ideal <3 / week)",
+      socialDays: "Social days — Friending+Familying+Socialing total >2h that day (ideal <3 / week)",
       negativeRemarks72h:
         "Negative emotion remarks — list hits + what happened in the prior 72h",
       positiveRemarks: "Positive emotion remarks — highlight matching remarks",
@@ -165,7 +165,7 @@ function aiPeriodSectionLabels_() {
     },
     month: {
       switchFailDays: "Switch-fail days — days with Diffused Mode gap <15m between Work (ideal ≤4 / month)",
-      overSocialWeeks: "Over-social weeks — socialDays >3; must not be two weeks in a row",
+      overSocialWeeks: "Over-social weeks — socialDays (>2h) >3; must not be two weeks in a row",
       chaosStreak: "Chaos streak — negative-emotion days must not run ≥3 consecutive",
       sleepAnomalies: "Sleep anomalies — short/long sleep must not be two consecutive days",
       meditateKeep: "Meditate keep — whether Meditating days stay consistent",
@@ -255,7 +255,7 @@ function aiBuildDailySeries_(state, range) {
     var exerciseMs = 0;
     var workMs = 0;
     var tradeMs = 0;
-    var hasSocial = false;
+    var socialMs = 0;
     var negHits = [];
     var posHits = [];
     var places = {};
@@ -268,7 +268,7 @@ function aiBuildDailySeries_(state, range) {
       var gg = String(list[j].group || list[j].category || "").trim();
       if (gg === "Work") workMs += seg;
       if (AI_TRADING_KEYS[nm]) tradeMs += seg;
-      if (AI_SOCIAL_KEYS[nm]) hasSocial = true;
+      if (AI_SOCIAL_KEYS[nm]) socialMs += seg;
       if (nm === AI_SLEEP_KEY) sleepMs += seg;
       if (nm === AI_MEDITATE_KEY) meditateMs += seg;
       if (AI_EXERCISE_KEYS[nm]) exerciseMs += seg;
@@ -317,7 +317,8 @@ function aiBuildDailySeries_(state, range) {
       overWork: workMs > AI_WORK_IDEAL_MAX_MS,
       workOver6h: workMs >= AI_WORK_OVERLOAD_MAX_MS,
       tradingOver2h: tradeMs > AI_TRADE_CAP_MS,
-      social: hasSocial,
+      social: socialMs > (typeof AI_SOCIAL_ACTIVE_MS !== "undefined" ? AI_SOCIAL_ACTIVE_MS : 2 * 3600000),
+      socialHours: aiHours_(socialMs),
       negativeRemarks: negHits,
       positiveRemarks: posHits,
       hasNegative: negHits.length > 0,

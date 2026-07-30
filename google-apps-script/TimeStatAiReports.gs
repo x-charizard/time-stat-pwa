@@ -19,6 +19,8 @@ var AI_WORK_CAP_MS = 4 * 3600000;
 var AI_TRADE_CAP_MS = 2 * 3600000;
 var AI_REVIEW_ALERT_MS = 30 * 60000;
 var AI_NO_TRADES_MS = 2 * 3600000;
+/** 社交活躍日：當日 Friending＋Familying＋Socialing 合計 > 2h */
+var AI_SOCIAL_ACTIVE_MS = AI_NO_TRADES_MS;
 var AI_TRADING_KEYS = { trading: 1, "trading practice": 1, "trading planning": 1 };
 var AI_REVIEW_KEYS = { reviewing: 1 };
 var AI_TRANSPORT_KEYS = { transporting: 1 };
@@ -561,7 +563,6 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     var trMs = 0;
     var soMs = 0;
     var reasonBits = [];
-    var hasSocial = false;
     for (var j = 0; j < list.length; j++) {
       var st = aiParseStartMs_(list[j].start);
       if (isNaN(st) || st < dayCursor || st >= dayEnd) continue;
@@ -578,10 +579,10 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       }
       if (AI_SOCIAL_KEYS[nm]) {
         soMs += seg2;
-        hasSocial = true;
         reasonBits.push(aiEventReasonBits_(list[j], actName));
       }
     }
+    var hasSocial = soMs > AI_SOCIAL_ACTIVE_MS;
     if (hasSocial) socialDaySet[dayYmd] = true;
 
     var wTier = aiWorkLoadTier_(wMs);
@@ -905,7 +906,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         "認知鎖死: 連續可信Work>60m 且由真實休息／非Work打卡結束；22:00–06:59／跨午夜／跨wake／開放>2h → 疑似睡眠唔計。切換失靈: 兩段可信Work之間 Diffused Mode <15m",
       boundaryFlags:
         "高頻交易練習日: Trading相關>2h；No-Trades(Mon–Fri): Transporting或Social/Family/Friend其中一個>2h",
-      socialBattery: "每週有Social活動天數目標≤3（計天唔計時）",
+      socialBattery: "每週社交活躍天數目標≤3（當日 Friending＋Familying＋Socialing 合計>2h 先計 1 日）",
     },
     summary: {
       workLoadTiers: {
@@ -1038,7 +1039,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       trueFocus: "真正專注時間 = max(0, 活動時長 − distraction)",
       高頻交易練習日: "當日 Trading 相關活動合計 > 2 小時",
       NoTradesBanner: "週一至週五：當日 Transporting 或 Social／Family／Friend 其中一個 > 2 小時 → 交易禁令提示",
-      SocialBattery: "每週有 Social 活動嘅天數；目標 ≤ 3 天（計天唔計時）",
+      SocialBattery: "每週有「社交活躍日」嘅天數；當日 Friending＋Familying＋Socialing 合計 > 2 小時先計 1 日；目標 ≤ 3 天（計天唔計「有出現」）",
       DiffusedMode:
         "唔使高度用腦／專注嘅恢復緩衝（前稱 DMN）。判定原則：需唔需要集中精神。Reading：小說類（如 Harry Potter）=是；成長／用腦類（如原子習慣、Trading in the Zone）=否。Friending：一般社交=是；深談／會議=否。",
       運動日:
