@@ -2324,8 +2324,7 @@
       message = "System Overload. All focus tasks forbidden. Please sleep or rest immediately.";
     } else if (st.fp <= 300) {
       level = "orange";
-      message =
-        "Critical: Cognitive lock risk! Mandatory 15min Resting/Meditating recommended.";
+      message = "";
     } else if (st.fp <= 700) {
       level = "yellow";
       message = "";
@@ -2697,6 +2696,12 @@
       host.innerHTML = "";
       return;
     }
+    // 日線或以上唔顯示 FP chart（只留小時／5 分鐘）
+    const gran = energyChartGranularity_(fromYmd, toYmd);
+    if (gran.mode === "day") {
+      host.innerHTML = "";
+      return;
+    }
     let pack;
     try {
       pack = buildFocusEnergySeries_(fromYmd, toYmd);
@@ -2799,7 +2804,9 @@
     }
     if (tempEl) {
       const t = snap.systemTemp || "idle";
-      tempEl.textContent = "Temp: " + energyTempLabel_(t);
+      // 只顯示 Cold／Overheating；Optimal／Idle／Cooldown 隱藏
+      const showTemp = t === "cold" || t === "overheating";
+      tempEl.textContent = showTemp ? "Temp: " + energyTempLabel_(t) : "";
       tempEl.classList.remove(
         "energy-temp--cold",
         "energy-temp--optimal",
@@ -2807,17 +2814,12 @@
         "energy-temp--cooldown",
         "energy-temp--idle",
       );
-      tempEl.classList.add("energy-temp--" + t);
-      tempEl.classList.toggle("hidden", false);
+      if (showTemp) tempEl.classList.add("energy-temp--" + t);
+      tempEl.classList.toggle("hidden", !showTemp);
     }
     if (meta) {
-      const bits = [];
-      if (snap.workStreakMin > 0) bits.push("Work streak " + Math.round(snap.workStreakMin) + "m");
-      if (snap.heatMult > 1) bits.push("Heat ×" + snap.heatMult);
-      if (snap.inertiaLeftMin > 0) bits.push("Inertia " + Math.round(snap.inertiaLeftMin) + "m");
-      if (snap.drainMult > 1) bits.push("Drain ×" + snap.drainMult);
-      meta.textContent = bits.join(" · ");
-      meta.classList.toggle("hidden", !bits.length);
+      meta.textContent = "";
+      meta.classList.add("hidden");
     }
 
     const list = sortedEventsUniqueById();
@@ -2910,8 +2912,7 @@
       return {
         ok: false,
         hardBlock: true,
-        message:
-          "Trading forbidden: High Drain ≥ 2h (non-trading High) or ≥ 4h total High. Cognitive overload.",
+        message: "No Trading",
         needsReason: false,
       };
     }
@@ -3001,11 +3002,11 @@
             formatEnergyLockCountdown_(energy.tradeLockUntilMs, Date.now()) +
             "]",
         );
-      } else if (energy.blockHigh) lines.push("High Drain ≥4h: High/Trading blocked");
-      else if (energy.banTrade) lines.push("Trading forbidden (High Drain rule)");
+      } else if (energy.blockHigh || energy.banTrade || noTradesToday) {
+        lines.push("No Trading");
+      }
       if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
       if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
-      if (noTradesToday) lines.push(MSG_NO_TRADES_TODAY);
       el.textContent = lines.join(" · ");
       el.classList.remove("hidden", "soft-cap-banner--warn");
       el.classList.add("soft-cap-banner--danger");
