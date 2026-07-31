@@ -1606,7 +1606,7 @@
     return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  // —— Xavier Energy Model 2.0（Focus Points / FP）——
+  // —— Xavier Energy Model 3.0（Focus Points / FP + Work Momentum）——
   const ENERGY_FP_CAP = 1000;
   const ENERGY_FP_FLOOR = -500;
   const ENERGY_HIGH_RATE = 4.17;
@@ -1658,31 +1658,46 @@
     hiking: { rate: 1.0, cap: 150 },
     fooding: { rate: 0.8, cap: 60 },
   };
-  const ENERGY_SLEEP_GATE_MIN = 180;
-  const ENERGY_SLEEP_POSITIVE_MIN = 600;
-  const ENERGY_SLEEP_POS_RATE = 1.5;
-  const ENERGY_SLEEP_NEG_RATE = 3.0;
+  /** Sleep：Recovery_Points = (min/480)^1.5 * 1000（8h = 1000） */
+  const ENERGY_SLEEP_FULL_MIN = 480;
+  const ENERGY_HEAT_START_MIN = 60;
+  const ENERGY_HEAT_STEP_MIN = 30;
+  const ENERGY_HEAT_STEP_PCT = 0.1;
+  const ENERGY_RECOVER_RESET_MIN = 15;
+  const ENERGY_INERTIA_BREAK_MIN = 60;
+  const ENERGY_INERTIA_HIGH_MIN = 20;
+  const ENERGY_INERTIA_MULT = 1.3;
+  const ENERGY_MIN_DAY_CAP = 100;
   /** 下一筆距離超過呢個 → 當漏打卡／過夜，非 Sleep 最多計呢啲分鐘（避免假 System Crash） */
   const ENERGY_ORPHAN_GAP_MIN = 4 * 60;
   const ENERGY_ORPHAN_CREDIT_CAP_MIN = 90;
   /** 單一 punch 非 Sleep 最多計入 FP 嘅分鐘（含「而家仲進行中」；對齊 High 4h 上限） */
   const ENERGY_MAX_SEGMENT_NON_SLEEP_MIN = 4 * 60;
-  /**
-   * 跨日繼承暫時關閉：每日 wake 由 1000 起步。
-   * （舊繼承 + drain×1.2/1.5 會令「一開 app」就負 FP；等 Sleep 橋接穩定再開）
-   */
-  const ENERGY_INHERIT_PREV_DAY = false;
   let _energyRefreshTimer_ = null;
   let _lastEnergySnap_ = null;
 
-  function clampEnergyFp_(fp) {
-    return Math.max(ENERGY_FP_FLOOR, Math.min(ENERGY_FP_CAP, fp));
+  function clampEnergyFp_(fp, maxCap) {
+    const cap = maxCap != null ? maxCap : ENERGY_FP_CAP;
+    return Math.max(ENERGY_FP_FLOOR, Math.min(cap, fp));
   }
 
-  function energyDrainMultiplier_(fp) {
-    if (fp < 200) return 1.5;
-    if (fp < 500) return 1.2;
-    return 1;
+  function energyDayDrainScale_(maxCap) {
+    const cap = Math.max(1, maxCap != null ? maxCap : ENERGY_FP_CAP);
+    return ENERGY_FP_CAP / cap;
+  }
+
+  /** Heat：連續 High/Med >60 分後，每多 30 分 +10% drain */
+  function energyHeatMultiplier_(workStreakMin) {
+    if (workStreakMin <= ENERGY_HEAT_START_MIN) return 1;
+    const steps = Math.ceil((workStreakMin - ENERGY_HEAT_START_MIN) / ENERGY_HEAT_STEP_MIN);
+    return 1 + ENERGY_HEAT_STEP_PCT * steps;
+  }
+
+  /** 指數 Sleep 累積恢復總分（對 sleepTotalMin） */
+  function energySleepRecoveryTotal_(sleepMin) {
+    const m = Math.max(0, sleepMin);
+    if (m <= 0) return 0;
+    return Math.pow(m / ENERGY_SLEEP_FULL_MIN, 1.5) * ENERGY_FP_CAP;
   }
 
   /** 小說／放鬆閱讀 → Recover；非小說／預設 reading → Medium Drain */
@@ -1742,7 +1757,6 @@
     if (ENERGY_HIGH_KEYS.has(key)) return "high";
     if (ENERGY_MED_KEYS.has(key)) return "medium";
     if (ENERGY_LOW_KEYS.has(key)) return "low";
-    // photo books via remark on reading already handled; photoing = low
     return "none";
   }
 
@@ -1750,89 +1764,16 @@
     return energyTierOfEvent_(ev) === "high";
   }
 
-  function applySleepMinute_(st) {
-    st.sleepTotalMin += 1;
-    if (st.sleepTotalMin <= ENERGY_SLEEP_GATE_MIN) return;
-    const afterGate = st.sleepTotalMin - ENERGY_SLEEP_GATE_MIN;
-    if (afterGate <= ENERGY_SLEEP_POSITIVE_MIN) {
-      st.fp = clampEnergyFp_(st.fp + ENERGY_SLEEP_POS_RATE);
-      st.sleepRecoveredPts += ENERGY_SLEEP_POS_RATE;
-    } else {
-      st.fp = clampEnergyFp_(st.fp - ENERGY_SLEEP_NEG_RATE);
-      st.sleepPenaltyPts += ENERGY_SLEEP_NEG_RATE;
-    }
+  function energyIsWorkTier_(tier) {
+    return tier === "high" || tier === "medium";
   }
 
-  /** Sleeping：每半小時一批，但閾值按分鐘精確 */
-  function applySleepDuration_(st, durationMin) {
-    let left = Math.max(0, durationMin);
-    while (left > 0) {
-      const chunk = Math.min(30, left);
-      for (let i = 0; i < chunk; i++) applySleepMinute_(st);
-      left -= chunk;
-    }
-  }
-
-  function applyRecoverDuration_(st, key, durationMin) {
-    const cfg = ENERGY_RECOVERY[key];
-    if (!cfg || durationMin <= 0) return;
-    let rate = cfg.rate;
-    if (key !== "fooding" && durationMin < 15) rate *= 0.5;
-    const used = st.recoverUsed[key] || 0;
-    const room = Math.max(0, cfg.cap - used);
-    if (room <= 0) return;
-    const rawGain = rate * durationMin;
-    const gain = Math.min(room, rawGain);
-    st.fp = clampEnergyFp_(st.fp + gain);
-    st.recoverUsed[key] = used + gain;
-    st.recoveredPts += gain;
-  }
-
-  function applyDrainDuration_(st, ratePerMin, durationMin, bucket) {
-    let left = Math.max(0, durationMin);
-    while (left > 0) {
-      const step = Math.min(1, left);
-      const mult = energyDrainMultiplier_(st.fp);
-      const loss = ratePerMin * mult * step;
-      st.fp = clampEnergyFp_(st.fp - loss);
-      st.drainedPts += loss;
-      if (bucket === "high") st.highMin += step;
-      else if (bucket === "medium") st.medMin += step;
-      else if (bucket === "low") st.lowMin += step;
-      left -= step;
-    }
-  }
-
-  /**
-   * 計算某一 wake-day 結束時嘅 FP 快照。
-   * @param {number} refMs
-   * @param {{ inheritPrev?: boolean, endAtMs?: number, nowMs?: number, depth?: number }} [opts]
-   */
-  function calculateWakeDayEnergy_(refMs, opts) {
-    const o = opts || {};
-    const bounds = wakeDayBounds(refMs);
-    const endAt = o.endAtMs != null ? o.endAtMs : bounds.endMs;
-    const nowMs = o.nowMs != null ? o.nowMs : Date.now();
-    const depth = o.depth || 0;
-    const list = sortedEventsUniqueById();
-
-    let startFp = ENERGY_FP_CAP;
-    if (ENERGY_INHERIT_PREV_DAY && o.inheritPrev !== false && depth < 1) {
-      const prevSnap = calculateWakeDayEnergy_(bounds.startMs - 1, {
-        inheritPrev: false,
-        depth: depth + 1,
-        endAtMs: bounds.startMs,
-        nowMs: bounds.startMs,
-      });
-      if (!prevSnap.systemCrash && prevSnap.fp > ENERGY_FP_FLOOR + 1e-9) {
-        // 只繼承正數／輕微虧損；唔帶負起始入新一日
-        startFp = clampEnergyFp_(Math.max(0, prevSnap.fp));
-      }
-    }
-
-    const st = {
-      fp: startFp,
-      startFp: startFp,
+  function createEnergyDayState_(maxCap) {
+    const cap = Math.max(ENERGY_MIN_DAY_CAP, Math.min(ENERGY_FP_CAP, maxCap != null ? maxCap : ENERGY_FP_CAP));
+    return {
+      fp: cap,
+      startFp: cap,
+      maxCap: cap,
       highMin: 0,
       medMin: 0,
       lowMin: 0,
@@ -1844,8 +1785,185 @@
       sleepPenaltyPts: 0,
       recoverUsed: Object.create(null),
       foodingAiMin: 0,
+      workStreakMin: 0,
+      recoverStreakMin: 0,
+      lastActivityEndMs: null,
+      pendingInertia: false,
+      inertiaLeftMin: 0,
+      systemTemp: "idle",
+      lastHeatMult: 1,
+      lastDrainMult: 1,
     };
+  }
 
+  function energyUpdateSystemTemp_(st, tier) {
+    if (energyIsWorkTier_(tier)) {
+      if (st.inertiaLeftMin > 0 || st.workStreakMin < ENERGY_RECOVER_RESET_MIN) {
+        st.systemTemp = "cold";
+      } else if (st.workStreakMin <= ENERGY_HEAT_START_MIN) {
+        st.systemTemp = "optimal";
+      } else {
+        st.systemTemp = "overheating";
+      }
+      return;
+    }
+    if (tier === "recover" || tier === "sleep") {
+      st.systemTemp = "cooldown";
+      return;
+    }
+    st.systemTemp = "idle";
+  }
+
+  /**
+   * 段開始：用 last_activity_end_time 計 break；Recover>15 重置 heat；
+   * Break/Recover>60 → 下一節 High 頭 20 分 Inertia 1.3x。
+   */
+  function energyOnSegmentStart_(st, t0, tier) {
+    let breakMin = 0;
+    if (st.lastActivityEndMs != null && t0 > st.lastActivityEndMs) {
+      breakMin = (t0 - st.lastActivityEndMs) / 60000;
+    }
+    if (breakMin > 0.01) {
+      st.workStreakMin = 0;
+      st.recoverStreakMin = 0;
+      if (breakMin > ENERGY_INERTIA_BREAK_MIN) st.pendingInertia = true;
+    }
+    const prevRecover = st.recoverStreakMin;
+    if (energyIsWorkTier_(tier)) {
+      if (prevRecover > ENERGY_RECOVER_RESET_MIN) {
+        st.workStreakMin = 0;
+      }
+      if (
+        tier === "high" &&
+        (st.pendingInertia || prevRecover > ENERGY_INERTIA_BREAK_MIN || breakMin > ENERGY_INERTIA_BREAK_MIN)
+      ) {
+        st.inertiaLeftMin = Math.max(st.inertiaLeftMin, ENERGY_INERTIA_HIGH_MIN);
+        st.pendingInertia = false;
+      }
+      st.recoverStreakMin = 0;
+    } else if (tier === "recover") {
+      st.workStreakMin = 0;
+    } else if (tier === "sleep") {
+      st.workStreakMin = 0;
+      st.recoverStreakMin = 0;
+    } else {
+      st.workStreakMin = 0;
+    }
+  }
+
+  function energyApplySleepMinute_(st, step) {
+    const s = Math.max(0, step);
+    if (s <= 0) return;
+    const prevTotal = energySleepRecoveryTotal_(st.sleepTotalMin);
+    st.sleepTotalMin += s;
+    const nextTotal = energySleepRecoveryTotal_(st.sleepTotalMin);
+    const gain = nextTotal - prevTotal;
+    if (gain > 0) {
+      st.fp = clampEnergyFp_(st.fp + gain, st.maxCap);
+      st.sleepRecoveredPts += gain;
+      st.recoveredPts += gain;
+    }
+    st.workStreakMin = 0;
+    st.recoverStreakMin = 0;
+    energyUpdateSystemTemp_(st, "sleep");
+  }
+
+  function energyApplyRecoverMinute_(st, key, step, segmentMin) {
+    const s = Math.max(0, step);
+    if (s <= 0) return;
+    st.workStreakMin = 0;
+    st.recoverStreakMin += s;
+    if (key === "reading") {
+      let rate = 1.0;
+      if (segmentMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
+      const used = st.recoverUsed.leisure_reading || 0;
+      const room = Math.max(0, 60 - used);
+      const gain = Math.min(room, rate * s);
+      st.fp = clampEnergyFp_(st.fp + gain, st.maxCap);
+      st.recoverUsed.leisure_reading = used + gain;
+      st.recoveredPts += gain;
+      energyUpdateSystemTemp_(st, "recover");
+      return;
+    }
+    const cfg = ENERGY_RECOVERY[key];
+    if (!cfg) {
+      energyUpdateSystemTemp_(st, "recover");
+      return;
+    }
+    let rate = cfg.rate;
+    if (key !== "fooding" && segmentMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
+    const used = st.recoverUsed[key] || 0;
+    const room = Math.max(0, cfg.cap - used);
+    if (room > 0) {
+      const gain = Math.min(room, rate * s);
+      st.fp = clampEnergyFp_(st.fp + gain, st.maxCap);
+      st.recoverUsed[key] = used + gain;
+      st.recoveredPts += gain;
+    }
+    energyUpdateSystemTemp_(st, "recover");
+  }
+
+  function energyApplyDrainMinute_(st, baseRate, tier, step, isTrading) {
+    const s = Math.max(0, step);
+    if (s <= 0) return;
+    let mult = energyDayDrainScale_(st.maxCap);
+    if (energyIsWorkTier_(tier)) {
+      st.workStreakMin += s;
+      const heat = energyHeatMultiplier_(st.workStreakMin);
+      mult *= heat;
+      st.lastHeatMult = heat;
+    } else {
+      st.workStreakMin = 0;
+      st.lastHeatMult = 1;
+    }
+    if (tier === "high" && st.inertiaLeftMin > 0) {
+      const inertStep = Math.min(s, st.inertiaLeftMin);
+      const inertFrac = inertStep / s;
+      mult *= 1 + (ENERGY_INERTIA_MULT - 1) * inertFrac;
+      st.inertiaLeftMin = Math.max(0, st.inertiaLeftMin - inertStep);
+    }
+    st.lastDrainMult = mult;
+    const loss = baseRate * mult * s;
+    st.fp = clampEnergyFp_(st.fp - loss, st.maxCap);
+    st.drainedPts += loss;
+    if (tier === "high") {
+      st.highMin += s;
+      if (isTrading) st.highTradingMin += s;
+    } else if (tier === "medium") st.medMin += s;
+    else if (tier === "low") st.lowMin += s;
+    if (energyIsWorkTier_(tier)) st.recoverStreakMin = 0;
+    energyUpdateSystemTemp_(st, tier);
+  }
+
+  /**
+   * 計算某一 wake-day 結束時嘅 FP 快照（Model 3.0）。
+   * @param {number} refMs
+   * @param {{ endAtMs?: number, nowMs?: number, depth?: number }} [opts]
+   */
+  function calculateWakeDayEnergy_(refMs, opts) {
+    const o = opts || {};
+    const bounds = wakeDayBounds(refMs);
+    const endAt = o.endAtMs != null ? o.endAtMs : bounds.endMs;
+    const nowMs = o.nowMs != null ? o.nowMs : Date.now();
+    const depth = o.depth || 0;
+    const list = sortedEventsUniqueById();
+
+    let maxCap = ENERGY_FP_CAP;
+    if (depth < 12) {
+      const prevSnap = calculateWakeDayEnergy_(bounds.startMs - 1, {
+        depth: depth + 1,
+        endAtMs: bounds.startMs,
+        nowMs: bounds.startMs,
+      });
+      if (prevSnap.fp < -1e-9) {
+        maxCap = Math.max(
+          ENERGY_MIN_DAY_CAP,
+          Math.min(ENERGY_FP_CAP, Math.round(ENERGY_FP_CAP + prevSnap.fp)),
+        );
+      }
+    }
+
+    const st = createEnergyDayState_(maxCap);
     const dayEv = [];
     for (let i = 0; i < list.length; i++) {
       const ev = list[i];
@@ -1858,82 +1976,29 @@
 
     for (let i = 0; i < dayEv.length; i++) {
       const row = dayEv[i];
-      const t0 = row.t0;
-      // 用全域下一筆（唔好淨睇同日），先至係真正 segment
       let nextGlobal = null;
       for (let j = row.index + 1; j < list.length; j++) {
         const tj = new Date(list[j].start).getTime();
-        if (!Number.isNaN(tj) && tj > t0) {
+        if (!Number.isNaN(tj) && tj > row.t0) {
           nextGlobal = tj;
           break;
         }
       }
-      let t1 =
-        nextGlobal != null ? nextGlobal : liveDay ? Math.max(t0, nowMs) : endAt;
-      if (t1 > endAt) t1 = endAt;
-      let durationMin = Math.max(0, (t1 - t0) / 60000);
-      if (durationMin <= 0) continue;
-
-      const tier = energyTierOfEvent_(row.ev);
-      const key = activityKeyOfEv_(row.ev);
-      // 過夜／超長空窗／最後一筆接到 wake／開住唔打卡：非 Sleep 封頂，避免假 −500 Crash
-      if (tier !== "sleep") {
-        const gapMin =
-          nextGlobal != null ? (nextGlobal - t0) / 60000 : (endAt - t0) / 60000;
-        const endsAtWake = t1 >= endAt - 1;
-        const orphan =
-          gapMin > ENERGY_ORPHAN_GAP_MIN ||
-          (endsAtWake && nextGlobal != null && nextGlobal > endAt) ||
-          (nextGlobal == null && !liveDay);
-        if (orphan && durationMin > ENERGY_ORPHAN_CREDIT_CAP_MIN) {
-          durationMin = ENERGY_ORPHAN_CREDIT_CAP_MIN;
-        }
-        if (durationMin > ENERGY_MAX_SEGMENT_NON_SLEEP_MIN) {
-          durationMin = ENERGY_MAX_SEGMENT_NON_SLEEP_MIN;
-        }
-      }
-      if (tier === "sleep") {
-        applySleepDuration_(st, durationMin);
-      } else if (tier === "recover") {
-        if (key === "fooding") {
-          // Fooding + remark/distraction 標明 Aiing：嗰段當 Medium Drain；Recover 只用真·食飯時間
-          const aiMin = energyFoodingEmbeddedAiMinutes_(row.ev, durationMin);
-          const foodMin = Math.max(0, durationMin - aiMin);
-          if (aiMin > 0) {
-            applyDrainDuration_(st, ENERGY_MED_RATE, aiMin, "medium");
-            st.foodingAiMin = (st.foodingAiMin || 0) + aiMin;
-          }
-          if (foodMin > 0) applyRecoverDuration_(st, "fooding", foodMin);
-        } else if (key === "reading") {
-          // Leisure reading：+1.0／分、每日上限 60；適用 15-min 半額規則
-          let rate = 1.0;
-          if (durationMin < 15) rate *= 0.5;
-          const used = st.recoverUsed.leisure_reading || 0;
-          const room = Math.max(0, 60 - used);
-          const gain = Math.min(room, rate * durationMin);
-          st.fp = clampEnergyFp_(st.fp + gain);
-          st.recoverUsed.leisure_reading = used + gain;
-          st.recoveredPts += gain;
-        } else {
-          applyRecoverDuration_(st, key, durationMin);
-        }
-      } else if (tier === "high") {
-        const beforeHigh = st.highMin;
-        applyDrainDuration_(st, ENERGY_HIGH_RATE, durationMin, "high");
-        if (isTradingActivityEv_(row.ev)) {
-          st.highTradingMin += st.highMin - beforeHigh;
-        }
-      } else if (tier === "medium") {
-        applyDrainDuration_(st, ENERGY_MED_RATE, durationMin, "medium");
-      } else if (tier === "low") {
-        applyDrainDuration_(st, ENERGY_LOW_RATE, durationMin, "low");
-      }
+      const cred = energySegmentCreditMinutes_(
+        row.ev,
+        row.t0,
+        nextGlobal,
+        endAt,
+        nowMs,
+        liveDay,
+      );
+      if (cred.durationMin <= 0) continue;
+      applyEnergySegmentByMinutes_(st, row.ev, cred.durationMin, null, row.t0);
     }
 
     const highMin = st.highMin;
     const highTradingMin = st.highTradingMin;
     const nonTradeHigh = highMin - highTradingMin;
-    // 2h High 禁 trade（除非嗰 2h 都係 trading）；4h High 一律禁 trade + 禁再入 High
     const banTrade = highMin >= 240 || (highMin >= 120 && nonTradeHigh > 0.01);
     const blockHigh = highMin >= 240;
     const systemCrash = st.fp <= ENERGY_FP_FLOOR + 1e-9;
@@ -1952,12 +2017,14 @@
         "Critical: Cognitive lock risk! Mandatory 15min Resting/Meditating recommended.";
     } else if (st.fp <= 700) {
       level = "yellow";
-      // Yellow：只變色／顯示 FP，唔出 warning 文案
       message = "";
     }
 
     let suggest = "";
-    if (systemCrash || st.fp < 0) {
+    if (st.systemTemp === "overheating") {
+      suggest =
+        "You are in Flow, but overheating. Take a 15-min walk to reset drain rates.";
+    } else if (systemCrash || st.fp < 0) {
       suggest = "建議下一個活動：Sleeping／Resting（修復）";
     } else if (blockHigh || banTrade) {
       suggest =
@@ -1965,12 +2032,14 @@
         (banTrade && !blockHigh ? "Medium／Low（禁 Trading）" : "Recover／Low（禁 High／Trading）");
     } else if (st.fp <= 300) {
       suggest = "建議下一個活動：15min+ Resting／Meditating／Walking";
+    } else if (st.systemTemp === "cold" && st.inertiaLeftMin > 0) {
+      suggest = "Cold start（Inertia）：頭 20 分鐘 High drain ×1.3 — 細步進入。";
     }
-    // Green／Yellow：唔推「下一個活動」文案
 
     return {
       fp: Math.round(st.fp * 10) / 10,
-      startFp: Math.round(startFp * 10) / 10,
+      startFp: Math.round(st.startFp * 10) / 10,
+      maxCap: st.maxCap,
       level: level,
       message: message,
       suggest: suggest,
@@ -1983,8 +2052,13 @@
       blockHigh: blockHigh,
       systemCrash: systemCrash,
       blockAllWork: systemCrash,
-      drainMult: energyDrainMultiplier_(st.fp),
+      drainMult: Math.round(st.lastDrainMult * 100) / 100,
+      heatMult: Math.round(st.lastHeatMult * 100) / 100,
+      workStreakMin: Math.round(st.workStreakMin * 10) / 10,
+      inertiaLeftMin: Math.round(st.inertiaLeftMin * 10) / 10,
+      systemTemp: st.systemTemp,
       sleepTotalMin: Math.round(st.sleepTotalMin * 10) / 10,
+      sleepRecoveredPts: Math.round(st.sleepRecoveredPts * 10) / 10,
       bounds: bounds,
     };
   }
@@ -2031,8 +2105,11 @@
     return { durationMin: durationMin, t1: t1, tier: tier };
   }
 
-  /** 將一段活動按「分鐘」推進 st（供曲線取樣） */
-  function applyEnergySegmentByMinutes_(st, ev, durationMin, onMin) {
+  /**
+   * 將一段活動按「分鐘」推進 st（banner／chart 共用 Model 3.0）。
+   * @param {number|null} t0Ms segment start；用於 break／last_activity_end_time
+   */
+  function applyEnergySegmentByMinutes_(st, ev, durationMin, onMin, t0Ms) {
     const tier = energyTierOfEvent_(ev);
     const key = activityKeyOfEv_(ev);
     const n = Math.max(0, Math.floor(durationMin));
@@ -2041,39 +2118,46 @@
       tier === "recover" && key === "fooding"
         ? energyFoodingEmbeddedAiMinutes_(ev, durationMin)
         : 0;
+    const isTrading = isTradingActivityEv_(ev);
+    const t0 = t0Ms != null ? t0Ms : 0;
+
+    energyOnSegmentStart_(st, t0, tier === "recover" && key === "fooding" && aiMin > 0 ? "medium" : tier);
+
+    // Fooding 前半 AI：以 medium work session 開始；轉 recover 時再 trigger recover streak
+    let foodPhase = aiMin > 0 ? "ai" : "food";
 
     function stepOne(isFrac) {
       const step = isFrac ? frac : 1;
       if (step <= 0) return;
       if (tier === "sleep") {
-        applySleepDuration_(st, step);
+        energyApplySleepMinute_(st, step);
       } else if (tier === "recover" && key === "fooding") {
         const idx = st._segMinIndex || 0;
         if (idx < aiMin) {
-          applyDrainDuration_(st, ENERGY_MED_RATE, step, "medium");
+          if (foodPhase !== "ai") {
+            energyOnSegmentStart_(st, t0 + idx * 60000, "medium");
+            foodPhase = "ai";
+          }
+          energyApplyDrainMinute_(st, ENERGY_MED_RATE, "medium", step, false);
           st.foodingAiMin = (st.foodingAiMin || 0) + step;
         } else {
-          applyRecoverDuration_(st, "fooding", step);
+          if (foodPhase !== "food") {
+            energyOnSegmentStart_(st, t0 + idx * 60000, "recover");
+            foodPhase = "food";
+          }
+          energyApplyRecoverMinute_(st, "fooding", step, Math.max(0, durationMin - aiMin));
         }
         st._segMinIndex = idx + step;
-      } else if (tier === "recover" && key === "reading") {
-        let rate = 1.0;
-        if (durationMin < 15) rate *= 0.5;
-        const used = st.recoverUsed.leisure_reading || 0;
-        const room = Math.max(0, 60 - used);
-        const gain = Math.min(room, rate * step);
-        st.fp = clampEnergyFp_(st.fp + gain);
-        st.recoverUsed.leisure_reading = used + gain;
       } else if (tier === "recover") {
-        applyRecoverDuration_(st, key, step);
+        energyApplyRecoverMinute_(st, key === "reading" ? "reading" : key, step, durationMin);
       } else if (tier === "high") {
-        const before = st.highMin;
-        applyDrainDuration_(st, ENERGY_HIGH_RATE, step, "high");
-        if (isTradingActivityEv_(ev)) st.highTradingMin += st.highMin - before;
+        energyApplyDrainMinute_(st, ENERGY_HIGH_RATE, "high", step, isTrading);
       } else if (tier === "medium") {
-        applyDrainDuration_(st, ENERGY_MED_RATE, step, "medium");
+        energyApplyDrainMinute_(st, ENERGY_MED_RATE, "medium", step, false);
       } else if (tier === "low") {
-        applyDrainDuration_(st, ENERGY_LOW_RATE, step, "low");
+        energyApplyDrainMinute_(st, ENERGY_LOW_RATE, "low", step, false);
+      } else {
+        energyUpdateSystemTemp_(st, "none");
       }
       if (typeof onMin === "function") onMin(st.fp, step);
     }
@@ -2082,6 +2166,9 @@
     for (let i = 0; i < n; i++) stepOne(false);
     if (frac > 0.01) stepOne(true);
     delete st._segMinIndex;
+
+    const creditedMs = Math.max(0, durationMin) * 60000;
+    st.lastActivityEndMs = t0 + creditedMs;
   }
 
   function pushEnergySample_(points, bucketMs, t, fp, meta) {
@@ -2119,10 +2206,7 @@
       let guard = 0;
       while (cursor.getTime() <= end.getTime() && guard < 800) {
         guard++;
-        const snap = calculateWakeDayEnergy_(cursor.getTime(), {
-          inheritPrev: false,
-          nowMs: nowMs,
-        });
+        const snap = calculateWakeDayEnergy_(cursor.getTime(), { nowMs: nowMs });
         points.push({
           t: snap.bounds.startMs,
           fp: snap.fp,
@@ -2132,7 +2216,7 @@
       return { mode: gran.mode, label: gran.label, bucketMs: gran.bucketMs, points: points };
     }
 
-    // minute / hour：逐個 wake-day 模擬
+    // minute / hour：逐個 wake-day 模擬（同 Model 3.0）
     let dayCursor = wakeDayBounds(new Date(fromYmd + "T12:00:00")).startMs;
     const rangeEnd = wakeDayBounds(new Date(toYmd + "T12:00:00")).endMs;
     let guard = 0;
@@ -2141,21 +2225,19 @@
       const bounds = wakeDayBounds(dayCursor);
       const endAt = Math.min(bounds.endMs, rangeEnd);
       const liveDay = nowMs >= bounds.startMs && nowMs < bounds.endMs;
-      const st = {
-        fp: ENERGY_FP_CAP,
-        startFp: ENERGY_FP_CAP,
-        highMin: 0,
-        medMin: 0,
-        lowMin: 0,
-        highTradingMin: 0,
-        drainedPts: 0,
-        recoveredPts: 0,
-        sleepTotalMin: 0,
-        sleepRecoveredPts: 0,
-        sleepPenaltyPts: 0,
-        recoverUsed: Object.create(null),
-        foodingAiMin: 0,
-      };
+      // 同 Model 3.0：前一日負 FP → 今日 maxCap 下調
+      const prevSnap = calculateWakeDayEnergy_(bounds.startMs - 1, {
+        endAtMs: bounds.startMs,
+        nowMs: bounds.startMs,
+      });
+      let maxCap = ENERGY_FP_CAP;
+      if (prevSnap.fp < -1e-9) {
+        maxCap = Math.max(
+          ENERGY_MIN_DAY_CAP,
+          Math.min(ENERGY_FP_CAP, Math.round(ENERGY_FP_CAP + prevSnap.fp)),
+        );
+      }
+      const st = createEnergyDayState_(maxCap);
       pushEnergySample_(points, gran.bucketMs, bounds.startMs, st.fp);
 
       const dayEv = [];
@@ -2185,7 +2267,6 @@
           liveDay,
         );
         if (cred.durationMin <= 0) continue;
-        // 小時或以下（minute / hour）曲線先附活動／remark 去 tooltip
         const tipMeta =
           gran.mode === "minute" || gran.mode === "hour"
             ? {
@@ -2195,11 +2276,17 @@
             : null;
         pushEnergySample_(points, gran.bucketMs, row.t0, st.fp, tipMeta);
         let elapsed = 0;
-        applyEnergySegmentByMinutes_(st, row.ev, cred.durationMin, () => {
-          elapsed += 1;
-          const wall = row.t0 + elapsed * 60000;
-          pushEnergySample_(points, gran.bucketMs, wall, st.fp, tipMeta);
-        });
+        applyEnergySegmentByMinutes_(
+          st,
+          row.ev,
+          cred.durationMin,
+          () => {
+            elapsed += 1;
+            const wall = row.t0 + elapsed * 60000;
+            pushEnergySample_(points, gran.bucketMs, wall, st.fp, tipMeta);
+          },
+          row.t0,
+        );
       }
       const endFpT = liveDay ? Math.min(nowMs, endAt) : endAt;
       pushEnergySample_(points, gran.bucketMs, endFpT - 1, st.fp);
@@ -2449,6 +2536,14 @@
     bindFocusEnergyChartTooltip_(host, pack);
   }
 
+  function energyTempLabel_(temp) {
+    if (temp === "cold") return "Cold";
+    if (temp === "optimal") return "Optimal";
+    if (temp === "overheating") return "Overheating";
+    if (temp === "cooldown") return "Cooldown";
+    return "Idle";
+  }
+
   function refreshEnergyBanner_() {
     const banner = document.getElementById("energyBanner");
     if (!banner) return;
@@ -2461,14 +2556,26 @@
     }
     const snap = calculateEnergy(Date.now());
     _lastEnergySnap_ = snap;
-    banner.classList.remove("hidden", "energy-banner--green", "energy-banner--yellow", "energy-banner--orange", "energy-banner--red", "energy-banner--black");
+    banner.classList.remove(
+      "hidden",
+      "energy-banner--green",
+      "energy-banner--yellow",
+      "energy-banner--orange",
+      "energy-banner--red",
+      "energy-banner--black",
+    );
     banner.classList.add("energy-banner--" + snap.level);
 
     const fill = document.getElementById("energyBarFill");
     const msg = document.getElementById("energyBannerMsg");
     const sug = document.getElementById("energyBannerSuggest");
     const meta = document.getElementById("energyBannerMeta");
-    const pct = Math.max(0, Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (ENERGY_FP_CAP - ENERGY_FP_FLOOR)) * 100));
+    const tempEl = document.getElementById("energyBannerTemp");
+    const maxCap = snap.maxCap != null ? snap.maxCap : ENERGY_FP_CAP;
+    const pct = Math.max(
+      0,
+      Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (maxCap - ENERGY_FP_FLOOR)) * 100),
+    );
     if (fill) fill.style.width = pct.toFixed(1) + "%";
     if (msg) {
       msg.textContent = snap.message || "";
@@ -2478,16 +2585,36 @@
       sug.textContent = snap.suggest || "";
       sug.classList.toggle("hidden", !snap.suggest);
     }
+    if (tempEl) {
+      const t = snap.systemTemp || "idle";
+      tempEl.textContent = "Temp: " + energyTempLabel_(t);
+      tempEl.classList.remove(
+        "energy-temp--cold",
+        "energy-temp--optimal",
+        "energy-temp--overheating",
+        "energy-temp--cooldown",
+        "energy-temp--idle",
+      );
+      tempEl.classList.add("energy-temp--" + t);
+      tempEl.classList.toggle("hidden", false);
+    }
     if (meta) {
-      meta.textContent = "";
-      meta.classList.add("hidden");
+      const bits = [];
+      if (maxCap < ENERGY_FP_CAP) bits.push("Max Cap " + maxCap);
+      if (snap.workStreakMin > 0) bits.push("Work streak " + Math.round(snap.workStreakMin) + "m");
+      if (snap.heatMult > 1) bits.push("Heat ×" + snap.heatMult);
+      if (snap.inertiaLeftMin > 0) bits.push("Inertia " + Math.round(snap.inertiaLeftMin) + "m");
+      meta.textContent = bits.join(" · ");
+      meta.classList.toggle("hidden", !bits.length);
     }
 
-    // Sleeping 進行中：約每 30s 刷新（半小時結算感 + 即時條）
+    // Work／Sleep 進行中：較密刷新（Heat／Inertia／Sleep 曲線）
     const list = sortedEventsUniqueById();
     const last = list.length ? list[list.length - 1] : null;
-    const sleepingNow = last && activityKeyOfEv_(last) === "sleeping";
-    if (sleepingNow) {
+    const lastTier = last ? energyTierOfEvent_(last) : "none";
+    const needTick =
+      lastTier === "sleep" || lastTier === "high" || lastTier === "medium" || lastTier === "recover";
+    if (needTick) {
       if (!_energyRefreshTimer_) {
         _energyRefreshTimer_ = setInterval(() => {
           refreshEnergyBanner_();
