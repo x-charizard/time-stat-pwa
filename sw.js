@@ -1,4 +1,4 @@
-const CACHE = "time-stat-v185";
+const CACHE = "time-stat-v186";
 self.addEventListener("install", (e) => {
   self.skipWaiting();
 });

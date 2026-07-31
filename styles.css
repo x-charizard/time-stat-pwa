@@ -1618,20 +1618,58 @@ body.auth-locked [data-panel] {
   gap: 10px;
   margin-bottom: 8px;
 }
+.energy-bar-shell {
+  flex: 1;
+  min-width: 0;
+  height: 12px;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-start;
+}
 .energy-bar-track {
   position: relative;
-  flex: 1;
-  height: 10px;
+  height: 12px;
+  width: 100%;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   overflow: hidden;
+  transition: width 0.3s ease;
+  display: flex;
+  align-items: stretch;
+}
+.energy-bar-shell--df-low .energy-bar-track {
+  border-color: rgba(239, 108, 0, 0.65);
 }
 .energy-bar-fill {
   height: 100%;
   width: 0%;
   border-radius: 999px;
   background: #4caf50;
-  transition: width 0.25s ease, background 0.25s ease;
+  transition: width 0.25s ease, background 0.25s ease, margin 0.25s ease;
+}
+.energy-bar-fill--pos {
+  margin-left: 0;
+  margin-right: auto;
+}
+.energy-bar-fill--neg {
+  margin-left: auto;
+  margin-right: 0;
+  background: #ef5350;
+}
+.energy-bar-fill--falsefire {
+  animation: energy-falsefire 0.85s ease-in-out infinite;
+}
+@keyframes energy-falsefire {
+  0%,
+  100% {
+    background: #ee8326;
+    opacity: 1;
+  }
+  50% {
+    background: #ef5350;
+    opacity: 0.72;
+  }
 }
 .energy-banner-temp {
   flex: 0 0 auto;

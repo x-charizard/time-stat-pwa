@@ -1606,12 +1606,17 @@
     return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  // —— Xavier Energy Model 5.0（累積 FP + Semantic Lite + Emotional Lockdown）——
+  // —— Xavier Energy Model 7.0（SF / DF + Fatigue Ramp + Shrinking Bar）——
   const ENERGY_FP_CAP = 1000;
   const ENERGY_FP_FLOOR = -500;
-  const ENERGY_HIGH_RATE = 4.17;
-  const ENERGY_MED_RATE = 2.08;
-  const ENERGY_LOW_RATE = 1.39;
+  const ENERGY_SF_CAP = 1000;
+  const ENERGY_DF_CAP = 1000;
+  const ENERGY_HIGH_BASE = 4.17;
+  const ENERGY_MED_BASE = ENERGY_HIGH_BASE * 0.2;
+  const ENERGY_LOW_BASE = ENERGY_HIGH_BASE * 0.05;
+  const ENERGY_SF_RECOVER_RATE = 5.0;
+  const ENERGY_DF_EMPTY_SF_MULT = 3.0;
+  const ENERGY_FATIGUE_PER_HOUR = 0.15;
   const ENERGY_HIGH_KEYS = new Set([
     "trading",
     "trading practice",
@@ -1648,32 +1653,26 @@
     "editing",
     "transporting",
   ]);
-  const ENERGY_RECOVERY = {
-    meditating: { rate: 3.0, cap: 90 },
-    gyming: { rate: 2.0, cap: 120 },
-    yogaing: { rate: 2.0, cap: 120 },
-    showering: { rate: 2.0, cap: 30 },
-    resting: { rate: 1.5, cap: 120 },
-    walking: { rate: 1.2, cap: 90 },
-    hiking: { rate: 1.0, cap: 150 },
-    fooding: { rate: 0.8, cap: 60 },
-  };
+  const ENERGY_RECOVERY_KEYS = new Set([
+    "meditating",
+    "gyming",
+    "yogaing",
+    "showering",
+    "resting",
+    "walking",
+    "hiking",
+    "fooding",
+  ]);
   const ENERGY_SLEEP_FULL_MIN = 480;
   const ENERGY_SLEEP_POWER_DEFAULT = 1.5;
   const ENERGY_SLEEP_POWER_FRAGMENTED = 1.1;
-  const ENERGY_HEAT_START_MIN = 60;
-  const ENERGY_HEAT_STEP_MIN = 30;
-  const ENERGY_HEAT_STEP_PCT = 0.1;
   const ENERGY_RECOVER_RESET_MIN = 15;
-  const ENERGY_INERTIA_BREAK_MIN = 60;
-  const ENERGY_INERTIA_HIGH_MIN = 20;
-  const ENERGY_INERTIA_MULT = 1.3;
   const ENERGY_EMOTION_LOCK_SCORE = -1;
-  const ENERGY_EMOTION_DRAIN_MULT = 3;
   const ENERGY_EMOTION_LOCK_MS = 3 * 3600000;
   const ENERGY_ORPHAN_GAP_MIN = 4 * 60;
   const ENERGY_ORPHAN_CREDIT_CAP_MIN = 90;
   const ENERGY_MAX_SEGMENT_NON_SLEEP_MIN = 4 * 60;
+  const ENERGY_MIN_DF_CAP = 100;
   const ENERGY_SEMANTIC_CACHE_KEY = "timeStatEnergySemanticCacheV1";
   let _energyRefreshTimer_ = null;
   let _energyLockTimer_ = null;
@@ -1682,15 +1681,17 @@
   let _energySemanticInflight_ = Object.create(null);
   let _energySemanticBackfillTimer_ = null;
 
-  function clampEnergyFp_(fp, maxCap) {
-    const cap = maxCap != null ? maxCap : ENERGY_FP_CAP;
-    return Math.max(ENERGY_FP_FLOOR, Math.min(cap, fp));
+  function clampEnergySf_(sf) {
+    return Math.max(ENERGY_FP_FLOOR, Math.min(ENERGY_SF_CAP, sf));
   }
 
-  function energyHeatMultiplier_(workStreakMin) {
-    if (workStreakMin <= ENERGY_HEAT_START_MIN) return 1;
-    const steps = Math.ceil((workStreakMin - ENERGY_HEAT_START_MIN) / ENERGY_HEAT_STEP_MIN);
-    return 1 + ENERGY_HEAT_STEP_PCT * steps;
+  function clampEnergyDf_(df, dfMaxCap) {
+    const cap = dfMaxCap != null ? dfMaxCap : ENERGY_DF_CAP;
+    return Math.max(ENERGY_FP_FLOOR, Math.min(cap, df));
+  }
+
+  function energyFatigueFactor_(dailyWorkMin) {
+    return 1 + (Math.max(0, dailyWorkMin) / 60) * ENERGY_FATIGUE_PER_HOUR;
   }
 
   function energySleepCurveTotal_(sleepMin, power, base) {
@@ -1698,7 +1699,19 @@
     if (m <= 0) return 0;
     const p = power != null ? power : ENERGY_SLEEP_POWER_DEFAULT;
     const b = base != null ? base : 1;
-    return Math.pow(m / ENERGY_SLEEP_FULL_MIN, p) * ENERGY_FP_CAP * b;
+    return Math.pow(m / ENERGY_SLEEP_FULL_MIN, p) * ENERGY_DF_CAP * b;
+  }
+
+  function energySentimentDrainMult_(score) {
+    const s = Number(score);
+    if (!Number.isFinite(s)) return 1;
+    return Math.max(0.4, Math.min(1.8, 1 - s * 0.25));
+  }
+
+  function energySentimentRecoverMult_(score) {
+    const s = Number(score);
+    if (!Number.isFinite(s)) return 1;
+    return Math.max(0.4, Math.min(1.8, 1 + s * 0.25));
   }
 
   function energyReadingIsLeisure_(ev) {
@@ -1745,7 +1758,7 @@
     if (key === "reading") {
       return energyReadingIsLeisure_(ev) ? "recover" : "medium";
     }
-    if (ENERGY_RECOVERY[key]) return "recover";
+    if (ENERGY_RECOVERY_KEYS.has(key)) return "recover";
     if (ENERGY_HIGH_KEYS.has(key)) return "high";
     if (ENERGY_MED_KEYS.has(key)) return "medium";
     if (ENERGY_LOW_KEYS.has(key)) return "low";
@@ -1757,7 +1770,14 @@
   }
 
   function energyIsWorkTier_(tier) {
-    return tier === "high" || tier === "medium";
+    return tier === "high" || tier === "medium" || tier === "low";
+  }
+
+  function energyWorkBaseRate_(tier) {
+    if (tier === "high") return ENERGY_HIGH_BASE;
+    if (tier === "medium") return ENERGY_MED_BASE;
+    if (tier === "low") return ENERGY_LOW_BASE;
+    return 0;
   }
 
   function energySemanticCacheKey_(activity, remark) {
@@ -1921,12 +1941,12 @@
     }, 1200);
   }
 
-  function createEnergyState_(startFp) {
-    const fp0 = clampEnergyFp_(startFp != null ? startFp : ENERGY_FP_CAP, ENERGY_FP_CAP);
+  function createEnergyState_() {
     return {
-      fp: fp0,
-      startFp: fp0,
-      maxCap: ENERGY_FP_CAP,
+      sf: ENERGY_SF_CAP,
+      df: ENERGY_DF_CAP,
+      dfMaxCap: ENERGY_DF_CAP,
+      dailyWorkMin: 0,
       highMin: 0,
       medMin: 0,
       lowMin: 0,
@@ -1937,88 +1957,45 @@
       sleepRecoveredPts: 0,
       sleepPower: ENERGY_SLEEP_POWER_DEFAULT,
       sleepBase: 1,
-      recoverUsed: Object.create(null),
       foodingAiMin: 0,
-      workStreakMin: 0,
-      recoverStreakMin: 0,
       lastActivityEndMs: null,
-      pendingInertia: false,
-      inertiaLeftMin: 0,
-      systemTemp: "idle",
-      lastHeatMult: 1,
-      lastDrainMult: 1,
-      sessionEmotionMult: 1,
+      lastTier: "none",
+      sessionDrainMult: 1,
+      sessionRecoverMult: 1,
       tradeLockUntilMs: 0,
       wakeHighMin: 0,
       wakeHighTradingMin: 0,
       wakeKey: "",
-      lastTier: "none",
+      falseFire: false,
+      lastDrainMult: 1,
     };
   }
 
-  function energyUpdateSystemTemp_(st, tier) {
-    if (energyIsWorkTier_(tier)) {
-      if (st.inertiaLeftMin > 0 || st.workStreakMin < ENERGY_RECOVER_RESET_MIN) {
-        st.systemTemp = "cold";
-      } else if (st.workStreakMin <= ENERGY_HEAT_START_MIN) {
-        st.systemTemp = "optimal";
-      } else {
-        st.systemTemp = "overheating";
-      }
-      return;
-    }
-    if (tier === "recover" || tier === "sleep") {
-      st.systemTemp = "cooldown";
-      return;
-    }
-    st.systemTemp = "idle";
-  }
-
-  function energyOnSegmentStart_(st, t0, tier) {
-    let breakMin = 0;
-    if (st.lastActivityEndMs != null && t0 > st.lastActivityEndMs) {
-      breakMin = (t0 - st.lastActivityEndMs) / 60000;
-    }
-    if (breakMin > 0.01) {
-      st.workStreakMin = 0;
-      st.recoverStreakMin = 0;
-      if (breakMin > ENERGY_INERTIA_BREAK_MIN) st.pendingInertia = true;
-    }
-    const prevRecover = st.recoverStreakMin;
-    if (energyIsWorkTier_(tier)) {
-      if (prevRecover > ENERGY_RECOVER_RESET_MIN) st.workStreakMin = 0;
-      if (
-        tier === "high" &&
-        (st.pendingInertia || prevRecover > ENERGY_INERTIA_BREAK_MIN || breakMin > ENERGY_INERTIA_BREAK_MIN)
-      ) {
-        st.inertiaLeftMin = Math.max(st.inertiaLeftMin, ENERGY_INERTIA_HIGH_MIN);
-        st.pendingInertia = false;
-      }
-      st.recoverStreakMin = 0;
-    } else if (tier === "recover") {
-      st.workStreakMin = 0;
-    } else if (tier === "sleep") {
-      st.workStreakMin = 0;
-      st.recoverStreakMin = 0;
-      // 新一段 Sleep（或中斷後再開）先重置 bout；連續 Sleep punch 則累積曲線
-      if (st.lastTier !== "sleep" || breakMin > 0.01) {
-        st.sleepTotalMin = 0;
-        st.sleepRecoveredPts = 0;
-      }
-    } else {
-      st.workStreakMin = 0;
-    }
-    st.lastTier = tier;
-  }
-
-  function energySyncWakeCounters_(st, t0) {
+  function energySyncWakeDay_(st, t0) {
     const wk = wakeDayKey_(t0);
-    if (st.wakeKey !== wk) {
-      st.wakeKey = wk;
+    if (st.wakeKey === wk) return;
+    // 跨清醒日：負 DF → 下調當日 DF Max Cap；Daily Work 歸零
+    if (st.wakeKey) {
+      if (st.df < -1e-9) {
+        st.dfMaxCap = Math.max(
+          ENERGY_MIN_DF_CAP,
+          Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + st.df)),
+        );
+      } else if (st.sf < -1e-9) {
+        // DF 已空而 SF 借支為負：視作 Deep 債，縮翌日 DF 容量
+        st.dfMaxCap = Math.max(
+          ENERGY_MIN_DF_CAP,
+          Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + st.sf)),
+        );
+      } else {
+        st.dfMaxCap = ENERGY_DF_CAP;
+      }
+      st.df = clampEnergyDf_(st.df, st.dfMaxCap);
+      st.dailyWorkMin = 0;
       st.wakeHighMin = 0;
       st.wakeHighTradingMin = 0;
-      st.recoverUsed = Object.create(null);
     }
+    st.wakeKey = wk;
   }
 
   function energyApplySleepMinute_(st, step) {
@@ -2027,75 +2004,62 @@
     const prevTotal = energySleepCurveTotal_(st.sleepTotalMin, st.sleepPower, st.sleepBase);
     st.sleepTotalMin += s;
     const nextTotal = energySleepCurveTotal_(st.sleepTotalMin, st.sleepPower, st.sleepBase);
-    const gain = nextTotal - prevTotal;
+    const gain = (nextTotal - prevTotal) * st.sessionRecoverMult;
     if (gain > 0) {
-      st.fp = clampEnergyFp_(st.fp + gain, st.maxCap);
+      st.df = clampEnergyDf_(st.df + gain, st.dfMaxCap);
       st.sleepRecoveredPts += gain;
       st.recoveredPts += gain;
     }
-    st.workStreakMin = 0;
-    st.recoverStreakMin = 0;
-    energyUpdateSystemTemp_(st, "sleep");
+    st.falseFire = st.df <= 0;
   }
 
-  function energyApplyRecoverMinute_(st, key, step, segmentMin) {
+  function energyApplyRecoverMinute_(st, step, segmentMin) {
     const s = Math.max(0, step);
     if (s <= 0) return;
-    st.workStreakMin = 0;
-    st.recoverStreakMin += s;
-    if (key === "reading") {
-      let rate = 1.0;
-      if (segmentMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
-      const used = st.recoverUsed.leisure_reading || 0;
-      const room = Math.max(0, 60 - used);
-      const gain = Math.min(room, rate * s);
-      st.fp = clampEnergyFp_(st.fp + gain, st.maxCap);
-      st.recoverUsed.leisure_reading = used + gain;
-      st.recoveredPts += gain;
-      energyUpdateSystemTemp_(st, "recover");
-      return;
-    }
-    const cfg = ENERGY_RECOVERY[key];
-    if (!cfg) {
-      energyUpdateSystemTemp_(st, "recover");
-      return;
-    }
-    let rate = cfg.rate;
-    if (key !== "fooding" && segmentMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
-    const used = st.recoverUsed[key] || 0;
-    const room = Math.max(0, cfg.cap - used);
-    if (room > 0) {
-      const gain = Math.min(room, rate * s);
-      st.fp = clampEnergyFp_(st.fp + gain, st.maxCap);
-      st.recoverUsed[key] = used + gain;
-      st.recoveredPts += gain;
-    }
-    energyUpdateSystemTemp_(st, "recover");
+    let rate = ENERGY_SF_RECOVER_RATE * st.sessionRecoverMult;
+    if (segmentMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
+    const gain = rate * s;
+    st.sf = clampEnergySf_(st.sf + gain);
+    st.recoveredPts += gain;
   }
 
-  function energyApplyDrainMinute_(st, baseRate, tier, step, isTrading) {
+  function energyApplyWorkMinute_(st, tier, step, isTrading) {
     const s = Math.max(0, step);
     if (s <= 0) return;
-    let mult = st.sessionEmotionMult > 0 ? st.sessionEmotionMult : 1;
-    if (energyIsWorkTier_(tier)) {
-      st.workStreakMin += s;
-      const heat = energyHeatMultiplier_(st.workStreakMin);
-      mult *= heat;
-      st.lastHeatMult = heat;
+    const base = energyWorkBaseRate_(tier);
+    if (base <= 0) return;
+    const fat = energyFatigueFactor_(st.dailyWorkMin);
+    st.dailyWorkMin += s;
+    const sent = st.sessionDrainMult;
+    let drained = 0;
+
+    if (st.df > 1e-9) {
+      const dfLoss = base * fat * sent * s;
+      if (st.df >= dfLoss) {
+        st.df = clampEnergyDf_(st.df - dfLoss, st.dfMaxCap);
+        drained = dfLoss;
+        st.lastDrainMult = fat * sent;
+      } else {
+        const used = st.df;
+        st.df = 0;
+        const remRatio = (dfLoss - used) / dfLoss;
+        const sfLoss = base * ENERGY_DF_EMPTY_SF_MULT * sent * s * remRatio;
+        st.sf = clampEnergySf_(st.sf - sfLoss);
+        drained = used + sfLoss;
+        st.lastDrainMult = ENERGY_DF_EMPTY_SF_MULT * sent;
+        st.falseFire = true;
+      }
     } else {
-      st.workStreakMin = 0;
-      st.lastHeatMult = 1;
+      const sfLoss = base * ENERGY_DF_EMPTY_SF_MULT * sent * s;
+      st.sf = clampEnergySf_(st.sf - sfLoss);
+      // Deep 債：DF 已空時繼續累積負 DF，供翌日 Max Cap 下調
+      st.df = clampEnergyDf_(st.df - base * fat * sent * s, st.dfMaxCap);
+      drained = sfLoss;
+      st.lastDrainMult = ENERGY_DF_EMPTY_SF_MULT * sent;
+      st.falseFire = true;
     }
-    if (tier === "high" && st.inertiaLeftMin > 0) {
-      const inertStep = Math.min(s, st.inertiaLeftMin);
-      const inertFrac = inertStep / s;
-      mult *= 1 + (ENERGY_INERTIA_MULT - 1) * inertFrac;
-      st.inertiaLeftMin = Math.max(0, st.inertiaLeftMin - inertStep);
-    }
-    st.lastDrainMult = mult;
-    const loss = baseRate * mult * s;
-    st.fp = clampEnergyFp_(st.fp - loss, st.maxCap);
-    st.drainedPts += loss;
+
+    st.drainedPts += drained;
     if (tier === "high") {
       st.highMin += s;
       st.wakeHighMin += s;
@@ -2105,8 +2069,6 @@
       }
     } else if (tier === "medium") st.medMin += s;
     else if (tier === "low") st.lowMin += s;
-    if (energyIsWorkTier_(tier)) st.recoverStreakMin = 0;
-    energyUpdateSystemTemp_(st, tier);
   }
 
   function energySegmentCreditMinutes_(ev, t0, nextGlobal, endAt, nowMs, liveOpen) {
@@ -2136,11 +2098,6 @@
     return { durationMin: durationMin, t1: t0 + durationMin * 60000, tier: tier };
   }
 
-  /**
-   * 將一段活動推進 st（Model 5.0）。
-   * @param {number} t0Ms
-   * @param {{onMin?:function, stepMin?:number}|null} opts
-   */
   function applyEnergySegmentByMinutes_(st, ev, durationMin, onMin, t0Ms, opts) {
     const o = opts || {};
     const stepMin = o.stepMin > 0 ? o.stepMin : 1;
@@ -2153,19 +2110,21 @@
     const isTrading = isTradingActivityEv_(ev);
     const t0 = t0Ms != null ? t0Ms : 0;
     const sem = getEnergySemanticForEv_(ev);
-    st.sessionEmotionMult = sem.score < ENERGY_EMOTION_LOCK_SCORE ? ENERGY_EMOTION_DRAIN_MULT : 1;
+    st.sessionDrainMult = energySentimentDrainMult_(sem.score);
+    st.sessionRecoverMult = energySentimentRecoverMult_(sem.score);
     if (tier === "sleep") {
       st.sleepPower = sem.is_fragmented
         ? ENERGY_SLEEP_POWER_FRAGMENTED
         : ENERGY_SLEEP_POWER_DEFAULT;
       st.sleepBase = sem.sleep_base != null ? sem.sleep_base : 1;
+      if (st.lastTier !== "sleep") {
+        st.sleepTotalMin = 0;
+        st.sleepRecoveredPts = 0;
+      }
     }
-    energySyncWakeCounters_(st, t0);
-    energyOnSegmentStart_(
-      st,
-      t0,
-      tier === "recover" && key === "fooding" && aiMin > 0 ? "medium" : tier,
-    );
+
+    energySyncWakeDay_(st, t0);
+    st.lastTier = tier === "recover" && key === "fooding" && aiMin > 0 ? "medium" : tier;
 
     let foodPhase = aiMin > 0 ? "ai" : "food";
     let elapsed = 0;
@@ -2173,69 +2132,50 @@
 
     while (left > 0.0001) {
       const step = Math.min(stepMin, left);
-      energySyncWakeCounters_(st, t0 + elapsed * 60000);
+      energySyncWakeDay_(st, t0 + elapsed * 60000);
       if (tier === "sleep") {
         energyApplySleepMinute_(st, step);
       } else if (tier === "recover" && key === "fooding") {
         const idx = elapsed;
         if (idx < aiMin) {
-          if (foodPhase !== "ai") {
-            energyOnSegmentStart_(st, t0 + idx * 60000, "medium");
-            foodPhase = "ai";
-          }
           const drainStep = Math.min(step, Math.max(0, aiMin - idx));
-          energyApplyDrainMinute_(st, ENERGY_MED_RATE, "medium", drainStep, false);
+          energyApplyWorkMinute_(st, "medium", drainStep, false);
           st.foodingAiMin = (st.foodingAiMin || 0) + drainStep;
           if (drainStep < step) {
-            energyOnSegmentStart_(st, t0 + (idx + drainStep) * 60000, "recover");
             foodPhase = "food";
-            energyApplyRecoverMinute_(
-              st,
-              "fooding",
-              step - drainStep,
-              Math.max(0, durationMin - aiMin),
-            );
+            energyApplyRecoverMinute_(st, step - drainStep, Math.max(0, durationMin - aiMin));
+          } else {
+            foodPhase = "ai";
           }
         } else {
-          if (foodPhase !== "food") {
-            energyOnSegmentStart_(st, t0 + idx * 60000, "recover");
-            foodPhase = "food";
-          }
-          energyApplyRecoverMinute_(st, "fooding", step, Math.max(0, durationMin - aiMin));
+          foodPhase = "food";
+          energyApplyRecoverMinute_(st, step, Math.max(0, durationMin - aiMin));
         }
       } else if (tier === "recover") {
-        energyApplyRecoverMinute_(st, key === "reading" ? "reading" : key, step, durationMin);
-      } else if (tier === "high") {
-        energyApplyDrainMinute_(st, ENERGY_HIGH_RATE, "high", step, isTrading);
-      } else if (tier === "medium") {
-        energyApplyDrainMinute_(st, ENERGY_MED_RATE, "medium", step, false);
-      } else if (tier === "low") {
-        energyApplyDrainMinute_(st, ENERGY_LOW_RATE, "low", step, false);
-      } else {
-        energyUpdateSystemTemp_(st, "none");
+        energyApplyRecoverMinute_(st, step, durationMin);
+      } else if (energyIsWorkTier_(tier)) {
+        energyApplyWorkMinute_(st, tier, step, isTrading);
       }
       elapsed += step;
       left -= step;
-      if (typeof onMin === "function") onMin(st.fp, step, t0 + elapsed * 60000);
+      if (typeof onMin === "function") onMin(st.sf, step, t0 + elapsed * 60000, st);
     }
 
     const creditedMs = Math.max(0, durationMin) * 60000;
     st.lastActivityEndMs = t0 + creditedMs;
     if (sem.score < ENERGY_EMOTION_LOCK_SCORE) {
-      st.tradeLockUntilMs = Math.max(st.tradeLockUntilMs || 0, st.lastActivityEndMs + ENERGY_EMOTION_LOCK_MS);
+      st.tradeLockUntilMs = Math.max(
+        st.tradeLockUntilMs || 0,
+        st.lastActivityEndMs + ENERGY_EMOTION_LOCK_MS,
+      );
     }
   }
 
-  /**
-   * 累積 FP：由歷史第一筆重播到 atMs（唔再 03:00 reset）。
-   * @param {number} atMs
-   * @param {{ onSample?: function, sampleFromMs?: number, sampleStepMin?: number, historyStepMin?: number }} [opts]
-   */
   function replayEnergyTo_(atMs, opts) {
     const o = opts || {};
     const list = sortedEventsUniqueById();
     const nowMs = o.nowMs != null ? o.nowMs : Date.now();
-    const st = createEnergyState_(ENERGY_FP_CAP);
+    const st = createEnergyState_();
     const sampleFrom = o.sampleFromMs != null ? o.sampleFromMs : null;
     const historyStep = o.historyStepMin > 0 ? o.historyStepMin : 5;
     const liveStep = o.sampleStepMin > 0 ? o.sampleStepMin : 1;
@@ -2270,13 +2210,11 @@
       );
       if (cred.durationMin <= 0) continue;
       const inSampleWindow = sampleFrom != null && cred.t1 > sampleFrom;
-      const stepMin =
-        inSampleWindow || row.t0 >= recentCut ? liveStep : historyStep;
+      const stepMin = inSampleWindow || row.t0 >= recentCut ? liveStep : historyStep;
       const onMin =
         typeof o.onSample === "function" && inSampleWindow
-          ? (fp, step, wall) => o.onSample(fp, step, wall, row.ev)
+          ? (sf, step, wall, state) => o.onSample(sf, step, wall, row.ev, state)
           : null;
-      // 若段橫跨 sampleFrom，先快轉前半
       if (sampleFrom != null && row.t0 < sampleFrom && cred.t1 > sampleFrom) {
         const preMin = (sampleFrom - row.t0) / 60000;
         const postMin = cred.durationMin - preMin;
@@ -2303,48 +2241,49 @@
     const highMin = st.wakeHighMin;
     const highTradingMin = st.wakeHighTradingMin;
     const nonTradeHigh = highMin - highTradingMin;
+    const emotionLock = (st.tradeLockUntilMs || 0) > atMs;
     const banTrade =
       highMin >= 240 ||
       (highMin >= 120 && nonTradeHigh > 0.01) ||
-      (st.tradeLockUntilMs || 0) > atMs;
+      emotionLock;
     const blockHigh = highMin >= 240;
-    const systemCrash = st.fp <= ENERGY_FP_FLOOR + 1e-9;
-    const emotionLock = (st.tradeLockUntilMs || 0) > atMs;
+    const systemCrash = st.sf <= ENERGY_FP_FLOOR + 1e-9;
+    const dfEmpty = st.df <= 1e-9;
+    const falseFire = dfEmpty || st.falseFire || st.df < 300;
 
     let level = "green";
     let message = "System Stable. High-bandwidth tasks allowed.";
     if (systemCrash) {
       level = "black";
-      message = "System Crash (−500 FP). All Work hard-blocked. Stop immediately.";
+      message = "System Crash (−500 SF). All Work hard-blocked. Stop immediately.";
     } else if (emotionLock) {
       level = "red";
       message = "Emotional Interference Detected. Trading Locked for 3 hours.";
-    } else if (st.fp < 0) {
+    } else if (dfEmpty) {
       level = "red";
-      message = "System Overload. All focus tasks forbidden. Please sleep or rest immediately.";
-    } else if (st.fp <= 300) {
+      message =
+        "Deep Focus exhausted. System is borrowing from Surface Focus at 3x cost. Decisions will be erratic.";
+    } else if (st.sf < 0) {
+      level = "red";
+      message = "Surface Focus in debt. Recover or sleep.";
+    } else if (st.df < 300 || st.sf <= 300) {
       level = "orange";
       message = "";
-    } else if (st.fp <= 700) {
+    } else if (st.sf <= 700) {
       level = "yellow";
       message = "";
     }
 
-    let suggest = "";
-    if (emotionLock) {
-      suggest = ""; // banner 用專用 lockdown 倒數
-    } else if (st.systemTemp === "overheating") {
-      suggest =
-        "You are in Flow, but overheating. Take a 15-min walk to reset drain rates.";
-    }
-
     return {
-      fp: Math.round(st.fp * 10) / 10,
-      startFp: Math.round(st.startFp * 10) / 10,
-      maxCap: ENERGY_FP_CAP,
+      fp: Math.round(st.sf * 10) / 10,
+      sf: Math.round(st.sf * 10) / 10,
+      df: Math.round(st.df * 10) / 10,
+      dfMaxCap: st.dfMaxCap,
+      startFp: ENERGY_SF_CAP,
+      maxCap: ENERGY_SF_CAP,
       level: level,
       message: message,
-      suggest: suggest,
+      suggest: "",
       highMin: Math.round(highMin * 10) / 10,
       medMin: Math.round(st.medMin * 10) / 10,
       lowMin: Math.round(st.lowMin * 10) / 10,
@@ -2357,24 +2296,24 @@
       emotionLock: emotionLock,
       tradeLockUntilMs: st.tradeLockUntilMs || 0,
       drainMult: Math.round(st.lastDrainMult * 100) / 100,
-      heatMult: Math.round(st.lastHeatMult * 100) / 100,
-      workStreakMin: Math.round(st.workStreakMin * 10) / 10,
-      inertiaLeftMin: Math.round(st.inertiaLeftMin * 10) / 10,
-      systemTemp: st.systemTemp,
+      heatMult: Math.round(energyFatigueFactor_(st.dailyWorkMin) * 100) / 100,
+      workStreakMin: Math.round(st.dailyWorkMin * 10) / 10,
+      inertiaLeftMin: 0,
+      systemTemp: dfEmpty ? "overheating" : st.df < 300 ? "cold" : "idle",
+      falseFire: falseFire && st.df < 300,
+      dfEmpty: dfEmpty,
       sleepTotalMin: Math.round(st.sleepTotalMin * 10) / 10,
       sleepRecoveredPts: Math.round(st.sleepRecoveredPts * 10) / 10,
       bounds: wakeDayBounds(atMs),
     };
   }
 
-  /** 累積能量快照（Model 5.0；無 03:00 FP reset） */
   function calculateEnergyAt_(atMs, opts) {
     const t = atMs != null ? atMs : Date.now();
     const st = replayEnergyTo_(t, opts || {});
     return buildEnergySnapFromState_(st, t);
   }
 
-  /** 兼容舊名：而家係累積 FP，唔再按 wake-day 重置 */
   function calculateWakeDayEnergy_(refMs, opts) {
     const o = opts || {};
     const at = o.endAtMs != null ? o.endAtMs : refMs != null ? refMs : Date.now();
@@ -2392,7 +2331,8 @@
     if (days <= 1) {
       return { mode: "minute", bucketMs: 5 * 60000, days: days, label: "每 5 分鐘" };
     }
-    if (days <= 14) {
+    // 月度（約 31 日）都用每小時；更長先至日線（日線 chart 會隱藏）
+    if (days <= 45) {
       return { mode: "hour", bucketMs: 3600000, days: days, label: "每小時" };
     }
     return { mode: "day", bucketMs: 86400000, days: days, label: "每日" };
@@ -2403,23 +2343,24 @@
     const last = points.length ? points[points.length - 1] : null;
     const act = meta && meta.activity ? String(meta.activity) : "";
     const remark = meta && meta.remark ? String(meta.remark) : "";
+    const df = meta && meta.df != null ? meta.df : null;
     if (last && last.t === bt) {
       last.fp = Math.round(fp * 10) / 10;
       if (act) last.activity = act;
       if (remark) last.remark = remark;
+      if (df != null) last.df = df;
       return;
     }
-    points.push({
+    const row = {
       t: bt,
       fp: Math.round(fp * 10) / 10,
       activity: act,
       remark: remark,
-    });
+    };
+    if (df != null) row.df = df;
+    points.push(row);
   }
 
-  /**
-   * Report 用：累積 FP 曲線（跨日連續，唔喺 03:00 重置）。
-   */
   function buildFocusEnergySeries_(fromYmd, toYmd) {
     const gran = energyChartGranularity_(fromYmd, toYmd);
     const nowMs = Date.now();
@@ -2431,18 +2372,7 @@
     );
 
     if (gran.mode === "day") {
-      let cursor = new Date(fromYmd + "T12:00:00");
-      const end = new Date(toYmd + "T12:00:00");
-      let guard = 0;
-      while (cursor.getTime() <= end.getTime() && guard < 800) {
-        guard++;
-        const bounds = wakeDayBounds(cursor.getTime());
-        const at = Math.min(bounds.endMs - 1, nowMs);
-        const snap = calculateEnergyAt_(at, { nowMs: nowMs });
-        points.push({ t: bounds.startMs, fp: snap.fp });
-        cursor.setDate(cursor.getDate() + 1);
-      }
-      return { mode: gran.mode, label: gran.label, bucketMs: gran.bucketMs, points: points };
+      return { mode: gran.mode, label: gran.label, bucketMs: gran.bucketMs, points: [] };
     }
 
     const tipOn = gran.mode === "minute" || gran.mode === "hour";
@@ -2451,20 +2381,21 @@
       sampleFromMs: rangeStart,
       sampleStepMin: gran.mode === "minute" ? 1 : 5,
       historyStepMin: 5,
-      onSample: (fp, step, wall, ev) => {
+      onSample: (sf, step, wall, ev, state) => {
         const tipMeta = tipOn
           ? {
               activity: activityDisplayName(ev.activityId) || "",
               remark: String(ev.remark || "").trim(),
+              df: state ? Math.round(state.df * 10) / 10 : null,
             }
-          : null;
-        pushEnergySample_(points, gran.bucketMs, wall, fp, tipMeta);
+          : { df: state ? Math.round(state.df * 10) / 10 : null };
+        pushEnergySample_(points, gran.bucketMs, wall, sf, tipMeta);
       },
     });
     if (!points.length) {
-      pushEnergySample_(points, gran.bucketMs, rangeStart, st.fp);
+      pushEnergySample_(points, gran.bucketMs, rangeStart, st.sf, { df: st.df });
     }
-    pushEnergySample_(points, gran.bucketMs, rangeEnd - 1, st.fp);
+    pushEnergySample_(points, gran.bucketMs, rangeEnd - 1, st.sf, { df: st.df });
     return { mode: gran.mode, label: gran.label, bucketMs: gran.bucketMs, points: points };
   }
 
@@ -2638,9 +2569,12 @@
       let html =
         '<div class="energy-chart-tip-line">' +
         escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
-        " · " +
-        escapeHtml(String(p.fp)) +
-        " FP</div>";
+        " · SF " +
+        escapeHtml(String(p.fp));
+      if (p.df != null) {
+        html += " · DF " + escapeHtml(String(p.df));
+      }
+      html += "</div>";
       if (showActRemark) {
         const act = String(p.activity || "").trim() || "—";
         const rm = String(p.remark || "").trim();
@@ -2755,18 +2689,48 @@
     );
     banner.classList.add("energy-banner--" + snap.level);
 
+    const shell = document.getElementById("energyBarShell");
+    const track = document.getElementById("energyBarTrack");
     const fill = document.getElementById("energyBarFill");
     const msg = document.getElementById("energyBannerMsg");
     const sug = document.getElementById("energyBannerSuggest");
     const lockEl = document.getElementById("energyBannerLock");
     const meta = document.getElementById("energyBannerMeta");
     const tempEl = document.getElementById("energyBannerTemp");
-    const maxCap = ENERGY_FP_CAP;
-    const pct = Math.max(
-      0,
-      Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (maxCap - ENERGY_FP_FLOOR)) * 100),
-    );
-    if (fill) fill.style.width = pct.toFixed(1) + "%";
+
+    // Shrinking container：外框寬度 = DF / dfMaxCap；填色 = SF
+    const dfMax = snap.dfMaxCap > 0 ? snap.dfMaxCap : ENERGY_DF_CAP;
+    const dfVis = Math.max(0, Math.min(dfMax, snap.df != null ? snap.df : 0));
+    const trackPct = Math.max(8, Math.min(100, (dfVis / dfMax) * 100));
+    if (track) {
+      track.style.width = trackPct.toFixed(1) + "%";
+      track.classList.toggle("energy-bar-track--thin", trackPct < 40);
+    }
+    if (shell) shell.classList.toggle("energy-bar-shell--df-low", dfVis < 300);
+
+    const sf = snap.sf != null ? snap.sf : snap.fp;
+    if (fill) {
+      fill.classList.remove(
+        "energy-bar-fill--neg",
+        "energy-bar-fill--falsefire",
+        "energy-bar-fill--pos",
+      );
+      if (sf < 0) {
+        // 負數：由右邊向左邊伸
+        const negPct = Math.max(0, Math.min(100, (Math.abs(sf) / Math.abs(ENERGY_FP_FLOOR)) * 100));
+        fill.style.width = negPct.toFixed(1) + "%";
+        fill.style.marginLeft = "auto";
+        fill.style.marginRight = "0";
+        fill.classList.add("energy-bar-fill--neg");
+      } else {
+        const posPct = Math.max(0, Math.min(100, (sf / ENERGY_SF_CAP) * 100));
+        fill.style.width = posPct.toFixed(1) + "%";
+        fill.style.marginLeft = "0";
+        fill.style.marginRight = "auto";
+        fill.classList.add("energy-bar-fill--pos");
+      }
+      if (dfVis < 300) fill.classList.add("energy-bar-fill--falsefire");
+    }
 
     const emotionLock = snap.emotionLock && snap.tradeLockUntilMs > nowMs;
     if (msg) {
@@ -2782,15 +2746,9 @@
         msg.classList.toggle("hidden", !snap.message);
       }
     }
-    // 唔再顯示「建議下一個活動」；只保留 overheating 系統提示
     if (sug) {
-      if (emotionLock) {
-        sug.textContent = "";
-        sug.classList.add("hidden");
-      } else {
-        sug.textContent = snap.suggest || "";
-        sug.classList.toggle("hidden", !snap.suggest);
-      }
+      sug.textContent = "";
+      sug.classList.add("hidden");
     }
     if (lockEl) {
       if (emotionLock) {
@@ -2803,19 +2761,8 @@
       }
     }
     if (tempEl) {
-      const t = snap.systemTemp || "idle";
-      // 只顯示 Cold／Overheating；Optimal／Idle／Cooldown 隱藏
-      const showTemp = t === "cold" || t === "overheating";
-      tempEl.textContent = showTemp ? "Temp: " + energyTempLabel_(t) : "";
-      tempEl.classList.remove(
-        "energy-temp--cold",
-        "energy-temp--optimal",
-        "energy-temp--overheating",
-        "energy-temp--cooldown",
-        "energy-temp--idle",
-      );
-      if (showTemp) tempEl.classList.add("energy-temp--" + t);
-      tempEl.classList.toggle("hidden", !showTemp);
+      tempEl.textContent = "";
+      tempEl.classList.add("hidden");
     }
     if (meta) {
       meta.textContent = "";

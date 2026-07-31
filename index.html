@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=185" />
+  <link rel="stylesheet" href="styles.css?v=186" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -54,10 +54,12 @@
   </div>
   <div id="energyBanner" class="energy-banner hidden" role="status" aria-live="polite">
     <div class="energy-banner-row">
-      <div class="energy-bar-track" aria-hidden="true">
-        <div id="energyBarFill" class="energy-bar-fill"></div>
+      <div id="energyBarShell" class="energy-bar-shell" aria-hidden="true">
+        <div id="energyBarTrack" class="energy-bar-track">
+          <div id="energyBarFill" class="energy-bar-fill"></div>
+        </div>
       </div>
-      <div id="energyBannerTemp" class="energy-banner-temp energy-temp--idle" title="System Temperature">Temp: Idle</div>
+      <div id="energyBannerTemp" class="energy-banner-temp energy-temp--idle hidden" title="System Temperature"></div>
     </div>
     <div id="energyBannerMsg" class="energy-banner-msg"></div>
     <div id="energyBannerLock" class="energy-banner-lock hidden" aria-live="assertive"></div>
@@ -308,6 +310,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=185"></script>
+  <script src="app.js?v=186"></script>
 </body>
 </html>
