@@ -1663,6 +1663,15 @@
     "hiking",
     "fooding",
   ]);
+  /** Friending / Familying / Socialing → Social Battery / Toxic Interaction */
+  const ENERGY_SOCIAL_KEYS = new Set(["friending", "familying", "socialing"]);
+  const ENERGY_SOCIAL_EFFICIENT_MIN = 120;
+  const ENERGY_SOCIAL_SATURATED_MIN = 240;
+  const ENERGY_SOCIAL_EFFICIENT_RATE = 5.0;
+  const ENERGY_SOCIAL_SATURATED_RATE = 1.0;
+  const ENERGY_SOCIAL_FATIGUE_DRAIN = 2.0;
+  const ENERGY_SOCIAL_TOXIC_SF = ENERGY_HIGH_BASE;
+  const ENERGY_SOCIAL_TOXIC_DF = 0.5;
   const ENERGY_SLEEP_FULL_MIN = 480;
   const ENERGY_SLEEP_POWER_DEFAULT = 1.5;
   const ENERGY_SLEEP_POWER_FRAGMENTED = 1.1;
@@ -1759,6 +1768,7 @@
       return energyReadingIsLeisure_(ev) ? "recover" : "medium";
     }
     if (ENERGY_RECOVERY_KEYS.has(key)) return "recover";
+    if (ENERGY_SOCIAL_KEYS.has(key)) return "social";
     if (ENERGY_HIGH_KEYS.has(key)) return "high";
     if (ENERGY_MED_KEYS.has(key)) return "medium";
     if (ENERGY_LOW_KEYS.has(key)) return "low";
@@ -1947,6 +1957,7 @@
       df: ENERGY_DF_CAP,
       dfMaxCap: ENERGY_DF_CAP,
       dailyWorkMin: 0,
+      socialMin: 0,
       highMin: 0,
       medMin: 0,
       lowMin: 0,
@@ -1996,6 +2007,7 @@
       }
       st.df = clampEnergyDf_(st.df, st.dfMaxCap);
       st.dailyWorkMin = 0;
+      st.socialMin = 0;
       st.wakeHighMin = 0;
       st.wakeHighTradingMin = 0;
     }
@@ -2030,6 +2042,73 @@
     const gain = rate * s;
     st.sf = clampEnergySf_(st.sf + gain);
     st.recoveredPts += gain;
+  }
+
+  /**
+   * Social Battery / Toxic Interaction（Friending／Familying／Socialing）。
+   * score > 0：按當日累積社交分鐘分段恢復／疲勞；
+   * score < 0：雙重懲罰（SF + DF）；
+   * score = 0：當日社交計時仍累積，SF 不加減。
+   */
+  function energyApplySocialMinute_(st, step, score) {
+    const s = Math.max(0, step);
+    if (s <= 0) return;
+    const sc = Number(score);
+    const scoreN = Number.isFinite(sc) ? Math.max(-2, Math.min(2, sc)) : 0;
+
+    if (scoreN < 0) {
+      const abs = Math.abs(scoreN);
+      const sfLoss = ENERGY_SOCIAL_TOXIC_SF * abs * s;
+      const dfLoss = ENERGY_SOCIAL_TOXIC_DF * abs * s;
+      st.sf = clampEnergySf_(st.sf - sfLoss);
+      st.df = clampEnergyDf_(st.df - dfLoss, st.dfMaxCap);
+      st.drainedPts += sfLoss + dfLoss;
+      st.socialMin += s;
+      if (st.df <= 1e-9) {
+        st.falseFire = true;
+        st.coreDebt = true;
+      }
+      return;
+    }
+
+    // 正向／中性：先按「累積前」所處區間結算，再累加社交分鐘
+    const before = st.socialMin;
+    st.socialMin += s;
+
+    if (scoreN <= 0) {
+      // score = 0：唔恢復、唔消耗，只累積社交時數
+      return;
+    }
+
+    const mult = 1 + scoreN;
+    // 可能橫跨 2h／4h 邊界：按分鐘區間拆
+    let left = s;
+    let cursor = before;
+    while (left > 1e-9) {
+      let rate = 0;
+      let slice = left;
+      if (cursor < ENERGY_SOCIAL_EFFICIENT_MIN) {
+        rate = ENERGY_SOCIAL_EFFICIENT_RATE * mult;
+        slice = Math.min(left, ENERGY_SOCIAL_EFFICIENT_MIN - cursor);
+      } else if (cursor < ENERGY_SOCIAL_SATURATED_MIN) {
+        rate = ENERGY_SOCIAL_SATURATED_RATE * mult;
+        slice = Math.min(left, ENERGY_SOCIAL_SATURATED_MIN - cursor);
+      } else {
+        rate = -ENERGY_SOCIAL_FATIGUE_DRAIN;
+        slice = left;
+      }
+      if (rate > 0) {
+        const gain = rate * slice;
+        st.sf = clampEnergySf_(st.sf + gain);
+        st.recoveredPts += gain;
+      } else if (rate < 0) {
+        const loss = -rate * slice;
+        st.sf = clampEnergySf_(st.sf - loss);
+        st.drainedPts += loss;
+      }
+      cursor += slice;
+      left -= slice;
+    }
   }
 
   /**
@@ -2180,6 +2259,8 @@
         }
       } else if (tier === "recover") {
         energyApplyRecoverMinute_(st, step, durationMin);
+      } else if (tier === "social") {
+        energyApplySocialMinute_(st, step, sem.score);
       } else if (energyIsWorkTier_(tier)) {
         energyApplyWorkMinute_(st, tier, step, isTrading);
       }
