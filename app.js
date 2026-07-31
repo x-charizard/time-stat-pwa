@@ -2443,11 +2443,14 @@
       const c = Math.max(ymin, Math.min(ymax, fp));
       return padT + (1 - (c - ymin) / (ymax - ymin)) * (h - padT - padB);
     };
-    let d = "";
+    let dSf = "";
+    let dDf = "";
     for (let i = 0; i < pts.length; i++) {
       const x = xOf(pts[i].t);
-      const y = yOf(pts[i].fp);
-      d += (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1) + " ";
+      const ySf = yOf(pts[i].fp);
+      const yDf = yOf(pts[i].df != null ? pts[i].df : pts[i].fp);
+      dSf += (i === 0 ? "M" : "L") + x.toFixed(1) + "," + ySf.toFixed(1) + " ";
+      dDf += (i === 0 ? "M" : "L") + x.toFixed(1) + "," + yDf.toFixed(1) + " ";
     }
     const y0 = yOf(0);
     const tickIdx = [0];
@@ -2472,6 +2475,8 @@
       '<div class="energy-chart-head">' +
       '<h2 class="report-h" style="margin:0;">Focus Energy</h2>' +
       '<span class="muted energy-chart-gran">' +
+      '<span class="energy-chart-legend"><i class="energy-chart-swatch energy-chart-swatch--sf"></i>SF</span> · ' +
+      '<span class="energy-chart-legend"><i class="energy-chart-swatch energy-chart-swatch--df"></i>DF</span> · ' +
       escapeHtml(pack.label) +
       " · " +
       escapeHtml(fromYmd) +
@@ -2483,7 +2488,7 @@
       w +
       " " +
       h +
-      '" role="img" aria-label="Focus energy chart">' +
+      '" role="img" aria-label="Focus energy chart SF and DF">' +
       '<line x1="' +
       padL +
       '" y1="' +
@@ -2503,14 +2508,18 @@
       (h - padB) +
       '" class="energy-chart-tick">-500</text>' +
       '<path d="' +
-      d.trim() +
+      dDf.trim() +
+      '" fill="none" stroke="#5c9ce6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<path d="' +
+      dSf.trim() +
       '" fill="none" stroke="#ee8326" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
       '<line class="energy-chart-crosshair hidden" x1="0" y1="' +
       padT +
       '" x2="0" y2="' +
       (h - padB) +
       '" stroke="rgba(255,255,255,0.35)" stroke-width="1"/>' +
-      '<circle class="energy-chart-dot hidden" r="4" fill="#ee8326" stroke="#fff" stroke-width="1.5"/>' +
+      '<circle class="energy-chart-dot energy-chart-dot--df hidden" r="3.5" fill="#5c9ce6" stroke="#fff" stroke-width="1.5"/>' +
+      '<circle class="energy-chart-dot energy-chart-dot--sf hidden" r="3.5" fill="#ee8326" stroke="#fff" stroke-width="1.5"/>' +
       ticks +
       "</svg>" +
       '<div class="energy-chart-tooltip hidden" role="tooltip"></div>' +
@@ -2524,7 +2533,8 @@
     const svg = host.querySelector(".energy-chart-svg");
     const tip = host.querySelector(".energy-chart-tooltip");
     const cross = host.querySelector(".energy-chart-crosshair");
-    const dot = host.querySelector(".energy-chart-dot");
+    const dotSf = host.querySelector(".energy-chart-dot--sf");
+    const dotDf = host.querySelector(".energy-chart-dot--df");
     const pts = (pack && pack.points) || [];
     if (!card || !wrap || !svg || !tip || pts.length < 2) return;
 
@@ -2544,7 +2554,8 @@
     const hide = () => {
       tip.classList.add("hidden");
       if (cross) cross.classList.add("hidden");
-      if (dot) dot.classList.add("hidden");
+      if (dotSf) dotSf.classList.add("hidden");
+      if (dotDf) dotDf.classList.add("hidden");
     };
 
     const onMove = (ev) => {
@@ -2564,17 +2575,18 @@
       }
       const p = pts[best];
       const x = xOf(p.t);
-      const y = yOf(p.fp);
+      const ySf = yOf(p.fp);
+      const yDf = yOf(p.df != null ? p.df : p.fp);
 
       let html =
         '<div class="energy-chart-tip-line">' +
         escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
-        " · SF " +
-        escapeHtml(String(p.fp));
-      if (p.df != null) {
-        html += " · DF " + escapeHtml(String(p.df));
-      }
-      html += "</div>";
+        "</div>" +
+        '<div class="energy-chart-tip-line">SF ' +
+        escapeHtml(String(p.fp)) +
+        " · DF " +
+        escapeHtml(String(p.df != null ? p.df : "—")) +
+        "</div>";
       if (showActRemark) {
         const act = String(p.activity || "").trim() || "—";
         const rm = String(p.remark || "").trim();
@@ -2593,9 +2605,9 @@
       tip.innerHTML = html;
       tip.classList.remove("hidden");
 
-      // FP≈1000 近頂：tooltip 改顯示喺點下方，避免被裁切
-      const yPx = (y / h) * rect.height;
-      const showBelow = y < padT + 36 || yPx < 48;
+      const yTip = Math.min(ySf, yDf);
+      const yPx = (yTip / h) * rect.height;
+      const showBelow = yTip < padT + 36 || yPx < 48;
       tip.classList.toggle("energy-chart-tooltip--below", showBelow);
       const tipX = clientX - cardRect.left;
       const tipY = rect.top - cardRect.top + yPx;
@@ -2607,10 +2619,15 @@
         cross.setAttribute("x2", String(x));
         cross.classList.remove("hidden");
       }
-      if (dot) {
-        dot.setAttribute("cx", String(x));
-        dot.setAttribute("cy", String(y));
-        dot.classList.remove("hidden");
+      if (dotSf) {
+        dotSf.setAttribute("cx", String(x));
+        dotSf.setAttribute("cy", String(ySf));
+        dotSf.classList.remove("hidden");
+      }
+      if (dotDf) {
+        dotDf.setAttribute("cx", String(x));
+        dotDf.setAttribute("cy", String(yDf));
+        dotDf.classList.remove("hidden");
       }
     };
 
@@ -2689,47 +2706,63 @@
     );
     banner.classList.add("energy-banner--" + snap.level);
 
-    const shell = document.getElementById("energyBarShell");
-    const track = document.getElementById("energyBarTrack");
-    const fill = document.getElementById("energyBarFill");
+    const bars = document.getElementById("energyBars");
+    const sfFill = document.getElementById("energyBarSfFill");
+    const dfFill = document.getElementById("energyBarDfFill");
+    const barTip = document.getElementById("energyBarHoverTip");
     const msg = document.getElementById("energyBannerMsg");
     const sug = document.getElementById("energyBannerSuggest");
     const lockEl = document.getElementById("energyBannerLock");
     const meta = document.getElementById("energyBannerMeta");
     const tempEl = document.getElementById("energyBannerTemp");
 
-    // Shrinking container：外框寬度 = DF / dfMaxCap；填色 = SF
-    const dfMax = snap.dfMaxCap > 0 ? snap.dfMaxCap : ENERGY_DF_CAP;
-    const dfVis = Math.max(0, Math.min(dfMax, snap.df != null ? snap.df : 0));
-    const trackPct = Math.max(8, Math.min(100, (dfVis / dfMax) * 100));
-    if (track) {
-      track.style.width = trackPct.toFixed(1) + "%";
-      track.classList.toggle("energy-bar-track--thin", trackPct < 40);
-    }
-    if (shell) shell.classList.toggle("energy-bar-shell--df-low", dfVis < 300);
-
     const sf = snap.sf != null ? snap.sf : snap.fp;
-    if (fill) {
-      fill.classList.remove(
-        "energy-bar-fill--neg",
-        "energy-bar-fill--falsefire",
-        "energy-bar-fill--pos",
-      );
-      if (sf < 0) {
-        // 負數：由右邊向左邊伸
-        const negPct = Math.max(0, Math.min(100, (Math.abs(sf) / Math.abs(ENERGY_FP_FLOOR)) * 100));
-        fill.style.width = negPct.toFixed(1) + "%";
-        fill.style.marginLeft = "auto";
-        fill.style.marginRight = "0";
-        fill.classList.add("energy-bar-fill--neg");
+    const df = snap.df != null ? snap.df : 0;
+    const dfMax = snap.dfMaxCap > 0 ? snap.dfMaxCap : ENERGY_DF_CAP;
+
+    function paintEnergyFill_(el, value, maxPos, isDf) {
+      if (!el) return;
+      el.classList.remove("energy-bar-fill--neg", "energy-bar-fill--falsefire", "energy-bar-fill--pos");
+      if (value < 0) {
+        const negPct = Math.max(0, Math.min(100, (Math.abs(value) / Math.abs(ENERGY_FP_FLOOR)) * 100));
+        el.style.width = negPct.toFixed(1) + "%";
+        el.style.marginLeft = "auto";
+        el.style.marginRight = "0";
+        el.classList.add("energy-bar-fill--neg");
       } else {
-        const posPct = Math.max(0, Math.min(100, (sf / ENERGY_SF_CAP) * 100));
-        fill.style.width = posPct.toFixed(1) + "%";
-        fill.style.marginLeft = "0";
-        fill.style.marginRight = "auto";
-        fill.classList.add("energy-bar-fill--pos");
+        const posPct = Math.max(0, Math.min(100, (value / maxPos) * 100));
+        el.style.width = posPct.toFixed(1) + "%";
+        el.style.marginLeft = "0";
+        el.style.marginRight = "auto";
+        el.classList.add("energy-bar-fill--pos");
       }
-      if (dfVis < 300) fill.classList.add("energy-bar-fill--falsefire");
+      if (isDf && value < 300) el.classList.add("energy-bar-fill--falsefire");
+    }
+    paintEnergyFill_(sfFill, sf, ENERGY_SF_CAP, false);
+    paintEnergyFill_(dfFill, df, dfMax, true);
+
+    if (bars && barTip) {
+      const tipHtml =
+        "SF " +
+        (Math.round(sf * 10) / 10) +
+        " · DF " +
+        (Math.round(df * 10) / 10) +
+        (dfMax < ENERGY_DF_CAP ? " (cap " + dfMax + ")" : "");
+      bars.setAttribute("title", tipHtml);
+      bars.onmouseenter = () => {
+        barTip.textContent = tipHtml;
+        barTip.classList.remove("hidden");
+      };
+      bars.onmouseleave = () => {
+        barTip.classList.add("hidden");
+      };
+      bars.onfocus = () => {
+        barTip.textContent = tipHtml;
+        barTip.classList.remove("hidden");
+      };
+      bars.onblur = () => {
+        barTip.classList.add("hidden");
+      };
     }
 
     const emotionLock = snap.emotionLock && snap.tradeLockUntilMs > nowMs;
