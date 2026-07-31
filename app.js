@@ -1606,7 +1606,7 @@
     return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  // —— Xavier Energy Model 7.0（SF / DF + Fatigue Ramp + Shrinking Bar）——
+  // —— Xavier Energy Model 7.1（SF / DF + Core Debt Protection）——
   const ENERGY_FP_CAP = 1000;
   const ENERGY_FP_FLOOR = -500;
   const ENERGY_SF_CAP = 1000;
@@ -1967,6 +1967,7 @@
       wakeHighTradingMin: 0,
       wakeKey: "",
       falseFire: false,
+      coreDebt: false,
       lastDrainMult: 1,
     };
   }
@@ -1974,19 +1975,22 @@
   function energySyncWakeDay_(st, t0) {
     const wk = wakeDayKey_(t0);
     if (st.wakeKey === wk) return;
-    // 跨清醒日：負 DF → 下調當日 DF Max Cap；Daily Work 歸零
+    // 跨清醒日：Today_Start_DF = 前一日結束 DF + 已計入嘅 Sleep 回復；
+    // 若 Start < 1000 → 當日 DF Max Cap = Start（正數）或 1000+Start（負債）
     if (st.wakeKey) {
-      if (st.df < -1e-9) {
-        st.dfMaxCap = Math.max(
-          ENERGY_MIN_DF_CAP,
-          Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + st.df)),
-        );
-      } else if (st.sf < -1e-9) {
-        // DF 已空而 SF 借支為負：視作 Deep 債，縮翌日 DF 容量
-        st.dfMaxCap = Math.max(
-          ENERGY_MIN_DF_CAP,
-          Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + st.sf)),
-        );
+      const startDf = st.df;
+      if (startDf < ENERGY_DF_CAP - 1e-9) {
+        if (startDf > 0) {
+          st.dfMaxCap = Math.max(
+            ENERGY_MIN_DF_CAP,
+            Math.min(ENERGY_DF_CAP, Math.round(startDf)),
+          );
+        } else {
+          st.dfMaxCap = Math.max(
+            ENERGY_MIN_DF_CAP,
+            Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + startDf)),
+          );
+        }
       } else {
         st.dfMaxCap = ENERGY_DF_CAP;
       }
@@ -2010,7 +2014,12 @@
       st.sleepRecoveredPts += gain;
       st.recoveredPts += gain;
     }
-    st.falseFire = st.df <= 0;
+    if (st.df > 1e-9) {
+      st.falseFire = false;
+      st.coreDebt = false;
+    } else {
+      st.falseFire = true;
+    }
   }
 
   function energyApplyRecoverMinute_(st, step, segmentMin) {
@@ -2023,6 +2032,11 @@
     st.recoveredPts += gain;
   }
 
+  /**
+   * Model 7.1 Core Debt Protection：
+   * DF>0 → DF 同 SF 都以 Base×Fatigue×Sentiment 扣；
+   * DF≤0 → Med/Low 凍結 DF、SF×3；High 繼續扣 DF 入負數（floor −500）、SF×3。
+   */
   function energyApplyWorkMinute_(st, tier, step, isTrading) {
     const s = Math.max(0, step);
     if (s <= 0) return;
@@ -2031,32 +2045,45 @@
     const fat = energyFatigueFactor_(st.dailyWorkMin);
     st.dailyWorkMin += s;
     const sent = st.sessionDrainMult;
+    const normalLoss = base * fat * sent * s;
+    const isHigh = tier === "high";
     let drained = 0;
 
     if (st.df > 1e-9) {
-      const dfLoss = base * fat * sent * s;
-      if (st.df >= dfLoss) {
-        st.df = clampEnergyDf_(st.df - dfLoss, st.dfMaxCap);
-        drained = dfLoss;
+      if (st.df >= normalLoss) {
+        st.df = clampEnergyDf_(st.df - normalLoss, st.dfMaxCap);
+        st.sf = clampEnergySf_(st.sf - normalLoss);
+        drained = normalLoss;
         st.lastDrainMult = fat * sent;
+        st.falseFire = false;
+        st.coreDebt = false;
       } else {
+        // 呢分鐘內 DF 見底
         const used = st.df;
+        const remRatio = (normalLoss - used) / normalLoss;
         st.df = 0;
-        const remRatio = (dfLoss - used) / dfLoss;
-        const sfLoss = base * ENERGY_DF_EMPTY_SF_MULT * sent * s * remRatio;
-        st.sf = clampEnergySf_(st.sf - sfLoss);
-        drained = used + sfLoss;
+        const sfNormal = used;
+        const sfX3 = base * ENERGY_DF_EMPTY_SF_MULT * sent * s * remRatio;
+        st.sf = clampEnergySf_(st.sf - sfNormal - sfX3);
+        if (isHigh) {
+          st.df = clampEnergyDf_(-(normalLoss - used), st.dfMaxCap);
+        }
+        drained = sfNormal + sfX3;
         st.lastDrainMult = ENERGY_DF_EMPTY_SF_MULT * sent;
         st.falseFire = true;
+        st.coreDebt = true;
       }
     } else {
-      const sfLoss = base * ENERGY_DF_EMPTY_SF_MULT * sent * s;
-      st.sf = clampEnergySf_(st.sf - sfLoss);
-      // Deep 債：DF 已空時繼續累積負 DF，供翌日 Max Cap 下調
-      st.df = clampEnergyDf_(st.df - base * fat * sent * s, st.dfMaxCap);
-      drained = sfLoss;
+      const sfX3 = base * ENERGY_DF_EMPTY_SF_MULT * sent * s;
+      st.sf = clampEnergySf_(st.sf - sfX3);
+      if (isHigh) {
+        st.df = clampEnergyDf_(st.df - normalLoss, st.dfMaxCap);
+      }
+      // Med / Low：DF 凍結喺而家（通常 0；唔再惡化）
+      drained = sfX3;
       st.lastDrainMult = ENERGY_DF_EMPTY_SF_MULT * sent;
       st.falseFire = true;
+      st.coreDebt = true;
     }
 
     st.drainedPts += drained;
@@ -2249,7 +2276,8 @@
     const blockHigh = highMin >= 240;
     const systemCrash = st.sf <= ENERGY_FP_FLOOR + 1e-9;
     const dfEmpty = st.df <= 1e-9;
-    const falseFire = dfEmpty || st.falseFire || st.df < 300;
+    const coreDebt = !!st.coreDebt || dfEmpty;
+    const falseFire = coreDebt || st.df < 300;
 
     let level = "green";
     let message = "System Stable. High-bandwidth tasks allowed.";
@@ -2259,10 +2287,10 @@
     } else if (emotionLock) {
       level = "red";
       message = "Emotional Interference Detected. Trading Locked for 3 hours.";
-    } else if (dfEmpty) {
+    } else if (coreDebt) {
       level = "red";
       message =
-        "Deep Focus exhausted. System is borrowing from Surface Focus at 3x cost. Decisions will be erratic.";
+        "Core Capacity Depleted. High-level tasks are now incurring DEBT for tomorrow. Switch to Low-Drain tasks to protect your system.";
     } else if (st.sf < 0) {
       level = "red";
       message = "Surface Focus in debt. Recover or sleep.";
@@ -2302,6 +2330,7 @@
       systemTemp: dfEmpty ? "overheating" : st.df < 300 ? "cold" : "idle",
       falseFire: falseFire && st.df < 300,
       dfEmpty: dfEmpty,
+      coreDebt: coreDebt,
       sleepTotalMin: Math.round(st.sleepTotalMin * 10) / 10,
       sleepRecoveredPts: Math.round(st.sleepRecoveredPts * 10) / 10,
       bounds: wakeDayBounds(atMs),
@@ -2419,6 +2448,24 @@
     padT: 16,
     padB: 36,
   };
+  const ENERGY_CHART_LINE_PREF_KEY = "timeStatEnergyChartLinesV1";
+
+  function getEnergyChartLinePrefs_() {
+    try {
+      const raw = localStorage.getItem(ENERGY_CHART_LINE_PREF_KEY);
+      if (raw) {
+        const o = JSON.parse(raw);
+        return { sf: o.sf !== false, df: o.df !== false };
+      }
+    } catch (e) {}
+    return { sf: true, df: true };
+  }
+
+  function setEnergyChartLinePrefs_(prefs) {
+    try {
+      localStorage.setItem(ENERGY_CHART_LINE_PREF_KEY, JSON.stringify(prefs));
+    } catch (e) {}
+  }
 
   /** 純 SVG 專注力曲線（唔引入 chart library） */
   function buildFocusEnergyChartHtmlFromPack_(pack, fromYmd, toYmd) {
@@ -2470,19 +2517,30 @@
         escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
         "</text>";
     }
+    const linePrefs = getEnergyChartLinePrefs_();
     return (
       '<div class="energy-chart-card">' +
       '<div class="energy-chart-head">' +
       '<h2 class="report-h" style="margin:0;">Focus Energy</h2>' +
       '<span class="muted energy-chart-gran">' +
-      '<span class="energy-chart-legend"><i class="energy-chart-swatch energy-chart-swatch--sf"></i>SF</span> · ' +
-      '<span class="energy-chart-legend"><i class="energy-chart-swatch energy-chart-swatch--df"></i>DF</span> · ' +
       escapeHtml(pack.label) +
       " · " +
       escapeHtml(fromYmd) +
       " → " +
       escapeHtml(toYmd) +
       "</span></div>" +
+      '<div class="energy-chart-toggles" role="group" aria-label="Chart lines">' +
+      '<label class="energy-chart-toggle">' +
+      '<input type="checkbox" id="energyChartToggleSf" ' +
+      (linePrefs.sf ? "checked " : "") +
+      '/>' +
+      '<i class="energy-chart-swatch energy-chart-swatch--sf"></i>SF</label>' +
+      '<label class="energy-chart-toggle">' +
+      '<input type="checkbox" id="energyChartToggleDf" ' +
+      (linePrefs.df ? "checked " : "") +
+      '/>' +
+      '<i class="energy-chart-swatch energy-chart-swatch--df"></i>DF</label>' +
+      "</div>" +
       '<div class="energy-chart-svg-wrap">' +
       '<svg class="energy-chart-svg" viewBox="0 0 ' +
       w +
@@ -2507,10 +2565,14 @@
       '<text x="8" y="' +
       (h - padB) +
       '" class="energy-chart-tick">-500</text>' +
-      '<path d="' +
+      '<path class="energy-chart-path energy-chart-path--df' +
+      (linePrefs.df ? "" : " hidden") +
+      '" d="' +
       dDf.trim() +
       '" fill="none" stroke="#5c9ce6" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
-      '<path d="' +
+      '<path class="energy-chart-path energy-chart-path--sf' +
+      (linePrefs.sf ? "" : " hidden") +
+      '" d="' +
       dSf.trim() +
       '" fill="none" stroke="#ee8326" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
       '<line class="energy-chart-crosshair hidden" x1="0" y1="' +
@@ -2551,6 +2613,11 @@
     };
     const showActRemark = pack.mode === "minute" || pack.mode === "hour";
 
+    const lineVisible_ = () => {
+      const prefs = getEnergyChartLinePrefs_();
+      return prefs;
+    };
+
     const hide = () => {
       tip.classList.add("hidden");
       if (cross) cross.classList.add("hidden");
@@ -2577,16 +2644,17 @@
       const x = xOf(p.t);
       const ySf = yOf(p.fp);
       const yDf = yOf(p.df != null ? p.df : p.fp);
+      const vis = lineVisible_();
 
       let html =
         '<div class="energy-chart-tip-line">' +
         escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
         "</div>" +
-        '<div class="energy-chart-tip-line">SF ' +
-        escapeHtml(String(p.fp)) +
-        " · DF " +
-        escapeHtml(String(p.df != null ? p.df : "—")) +
-        "</div>";
+        '<div class="energy-chart-tip-line">';
+      const bits = [];
+      if (vis.sf) bits.push("SF " + p.fp);
+      if (vis.df) bits.push("DF " + (p.df != null ? p.df : "—"));
+      html += escapeHtml(bits.join(" · ") || "—") + "</div>";
       if (showActRemark) {
         const act = String(p.activity || "").trim() || "—";
         const rm = String(p.remark || "").trim();
@@ -2605,7 +2673,7 @@
       tip.innerHTML = html;
       tip.classList.remove("hidden");
 
-      const yTip = Math.min(ySf, yDf);
+      const yTip = vis.sf && vis.df ? Math.min(ySf, yDf) : vis.sf ? ySf : yDf;
       const yPx = (yTip / h) * rect.height;
       const showBelow = yTip < padT + 36 || yPx < 48;
       tip.classList.toggle("energy-chart-tooltip--below", showBelow);
@@ -2620,14 +2688,22 @@
         cross.classList.remove("hidden");
       }
       if (dotSf) {
-        dotSf.setAttribute("cx", String(x));
-        dotSf.setAttribute("cy", String(ySf));
-        dotSf.classList.remove("hidden");
+        if (vis.sf) {
+          dotSf.setAttribute("cx", String(x));
+          dotSf.setAttribute("cy", String(ySf));
+          dotSf.classList.remove("hidden");
+        } else {
+          dotSf.classList.add("hidden");
+        }
       }
       if (dotDf) {
-        dotDf.setAttribute("cx", String(x));
-        dotDf.setAttribute("cy", String(yDf));
-        dotDf.classList.remove("hidden");
+        if (vis.df) {
+          dotDf.setAttribute("cx", String(x));
+          dotDf.setAttribute("cy", String(yDf));
+          dotDf.classList.remove("hidden");
+        } else {
+          dotDf.classList.add("hidden");
+        }
       }
     };
 
@@ -2638,6 +2714,29 @@
         onMove(ev.touches[0]);
       }
     };
+  }
+
+  function bindFocusEnergyChartLineToggles_(host) {
+    const togSf = host.querySelector("#energyChartToggleSf");
+    const togDf = host.querySelector("#energyChartToggleDf");
+    const pathSf = host.querySelector(".energy-chart-path--sf");
+    const pathDf = host.querySelector(".energy-chart-path--df");
+    if (!togSf || !togDf || !pathSf || !pathDf) return;
+
+    const apply = () => {
+      let showSf = !!togSf.checked;
+      let showDf = !!togDf.checked;
+      if (!showSf && !showDf) {
+        // 至少留一條
+        showSf = true;
+        togSf.checked = true;
+      }
+      pathSf.classList.toggle("hidden", !showSf);
+      pathDf.classList.toggle("hidden", !showDf);
+      setEnergyChartLinePrefs_({ sf: showSf, df: showDf });
+    };
+    togSf.onchange = apply;
+    togDf.onchange = apply;
   }
 
   function mountFocusEnergyChart_(fromYmd, toYmd) {
@@ -2662,6 +2761,7 @@
       return;
     }
     host.innerHTML = buildFocusEnergyChartHtmlFromPack_(pack, fromYmd, toYmd);
+    bindFocusEnergyChartLineToggles_(host);
     bindFocusEnergyChartTooltip_(host, pack);
   }
 

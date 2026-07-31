@@ -1823,14 +1823,26 @@ body.auth-locked [data-panel] {
 .energy-chart-gran {
   font-size: 0.8rem;
 }
-.energy-chart-legend {
+.energy-chart-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+}
+.energy-chart-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  cursor: pointer;
+  user-select: none;
+}
+.energy-chart-toggle input {
+  margin: 0;
 }
 .energy-chart-swatch {
   display: inline-block;
-  width: 10px;
+  width: 12px;
   height: 3px;
   border-radius: 2px;
   vertical-align: middle;
@@ -1840,6 +1852,9 @@ body.auth-locked [data-panel] {
 }
 .energy-chart-swatch--df {
   background: #5c9ce6;
+}
+.energy-chart-path.hidden {
+  display: none !important;
 }
 .energy-chart-svg-wrap {
   position: relative;
