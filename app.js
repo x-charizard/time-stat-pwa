@@ -2084,14 +2084,23 @@
     delete st._segMinIndex;
   }
 
-  function pushEnergySample_(points, bucketMs, t, fp) {
+  function pushEnergySample_(points, bucketMs, t, fp, meta) {
     const bt = Math.floor(t / bucketMs) * bucketMs;
     const last = points.length ? points[points.length - 1] : null;
+    const act = meta && meta.activity ? String(meta.activity) : "";
+    const remark = meta && meta.remark ? String(meta.remark) : "";
     if (last && last.t === bt) {
       last.fp = Math.round(fp * 10) / 10;
+      if (act) last.activity = act;
+      if (remark) last.remark = remark;
       return;
     }
-    points.push({ t: bt, fp: Math.round(fp * 10) / 10 });
+    points.push({
+      t: bt,
+      fp: Math.round(fp * 10) / 10,
+      activity: act,
+      remark: remark,
+    });
   }
 
   /**
@@ -2176,12 +2185,20 @@
           liveDay,
         );
         if (cred.durationMin <= 0) continue;
-        pushEnergySample_(points, gran.bucketMs, row.t0, st.fp);
+        // 只有「小時以下」（minute）曲線先附活動／remark 去 tooltip
+        const tipMeta =
+          gran.mode === "minute"
+            ? {
+                activity: activityDisplayName(row.ev.activityId) || "",
+                remark: String(row.ev.remark || "").trim(),
+              }
+            : null;
+        pushEnergySample_(points, gran.bucketMs, row.t0, st.fp, tipMeta);
         let elapsed = 0;
         applyEnergySegmentByMinutes_(st, row.ev, cred.durationMin, () => {
           elapsed += 1;
           const wall = row.t0 + elapsed * 60000;
-          pushEnergySample_(points, gran.bucketMs, wall, st.fp);
+          pushEnergySample_(points, gran.bucketMs, wall, st.fp, tipMeta);
         });
       }
       const endFpT = liveDay ? Math.min(nowMs, endAt) : endAt;
@@ -2272,7 +2289,6 @@
       escapeHtml(toYmd) +
       "</span></div>" +
       '<div class="energy-chart-svg-wrap">' +
-      '<div class="energy-chart-tooltip hidden" role="tooltip"></div>' +
       '<svg class="energy-chart-svg" viewBox="0 0 ' +
       w +
       " " +
@@ -2306,18 +2322,21 @@
       '" stroke="rgba(255,255,255,0.35)" stroke-width="1"/>' +
       '<circle class="energy-chart-dot hidden" r="4" fill="#ee8326" stroke="#fff" stroke-width="1.5"/>' +
       ticks +
-      "</svg></div></div>"
+      "</svg>" +
+      '<div class="energy-chart-tooltip hidden" role="tooltip"></div>' +
+      "</div></div>"
     );
   }
 
   function bindFocusEnergyChartTooltip_(host, pack) {
+    const card = host.querySelector(".energy-chart-card");
     const wrap = host.querySelector(".energy-chart-svg-wrap");
     const svg = host.querySelector(".energy-chart-svg");
     const tip = host.querySelector(".energy-chart-tooltip");
     const cross = host.querySelector(".energy-chart-crosshair");
     const dot = host.querySelector(".energy-chart-dot");
     const pts = (pack && pack.points) || [];
-    if (!wrap || !svg || !tip || pts.length < 2) return;
+    if (!card || !wrap || !svg || !tip || pts.length < 2) return;
 
     const { w, h, padL, padR, padT, padB } = ENERGY_CHART_LAYOUT_;
     const ymin = ENERGY_FP_FLOOR;
@@ -2330,6 +2349,7 @@
       const c = Math.max(ymin, Math.min(ymax, fp));
       return padT + (1 - (c - ymin) / (ymax - ymin)) * (h - padT - padB);
     };
+    const showActRemark = pack.mode === "minute";
 
     const hide = () => {
       tip.classList.add("hidden");
@@ -2338,9 +2358,11 @@
     };
 
     const onMove = (ev) => {
+      const clientX = ev.clientX != null ? ev.clientX : 0;
       const rect = svg.getBoundingClientRect();
+      const cardRect = card.getBoundingClientRect();
       if (!rect.width) return;
-      const xSvg = ((ev.clientX - rect.left) / rect.width) * w;
+      const xSvg = ((clientX - rect.left) / rect.width) * w;
       let best = 0;
       let bestDx = Infinity;
       for (let i = 0; i < pts.length; i++) {
@@ -2353,12 +2375,40 @@
       const p = pts[best];
       const x = xOf(p.t);
       const y = yOf(p.fp);
-      tip.textContent =
-        formatEnergyChartTick_(p.t, pack.mode) + " · " + p.fp + " FP";
+
+      let html =
+        '<div class="energy-chart-tip-line">' +
+        escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
+        " · " +
+        escapeHtml(String(p.fp)) +
+        " FP</div>";
+      if (showActRemark) {
+        const act = String(p.activity || "").trim() || "—";
+        const rm = String(p.remark || "").trim();
+        html +=
+          '<div class="energy-chart-tip-line energy-chart-tip-act">' +
+          escapeHtml(act) +
+          "</div>";
+        if (rm) {
+          const rmShort = rm.length > 120 ? rm.slice(0, 120) + "…" : rm;
+          html +=
+            '<div class="energy-chart-tip-line energy-chart-tip-remark">' +
+            escapeHtml(rmShort) +
+            "</div>";
+        }
+      }
+      tip.innerHTML = html;
       tip.classList.remove("hidden");
-      const tipX = Math.max(8, Math.min(rect.width - 8, (x / w) * rect.width));
-      tip.style.left = tipX + "px";
-      tip.style.top = Math.max(8, (y / h) * rect.height - 28) + "px";
+
+      // FP≈1000 近頂：tooltip 改顯示喺點下方，避免被裁切
+      const yPx = (y / h) * rect.height;
+      const showBelow = y < padT + 36 || yPx < 48;
+      tip.classList.toggle("energy-chart-tooltip--below", showBelow);
+      const tipX = clientX - cardRect.left;
+      const tipY = rect.top - cardRect.top + yPx;
+      tip.style.left = Math.max(12, Math.min(cardRect.width - 12, tipX)) + "px";
+      tip.style.top = tipY + "px";
+
       if (cross) {
         cross.setAttribute("x1", String(x));
         cross.setAttribute("x2", String(x));

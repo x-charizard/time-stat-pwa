@@ -1684,7 +1684,12 @@ body.auth-locked [data-panel] {
   background: #9e9e9e;
 }
 
+.report-energy-chart-host {
+  overflow: visible;
+}
 .energy-chart-card {
+  position: relative;
+  overflow: visible;
   margin: 0 0 18px;
   padding: 12px 12px 8px;
   border: 1px solid var(--border, #333);
@@ -1705,23 +1710,38 @@ body.auth-locked [data-panel] {
 .energy-chart-svg-wrap {
   position: relative;
   width: 100%;
-  overflow-x: auto;
+  overflow: visible;
   cursor: crosshair;
 }
 .energy-chart-tooltip {
   position: absolute;
-  z-index: 5;
-  transform: translate(-50%, -100%);
-  padding: 5px 8px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  z-index: 20;
+  transform: translate(-50%, calc(-100% - 10px));
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   color: #fff;
   font-size: 0.75rem;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  max-width: min(280px, 70vw);
   pointer-events: none;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+  line-height: 1.35;
+}
+.energy-chart-tooltip--below {
+  transform: translate(-50%, 12px);
+}
+.energy-chart-tip-line + .energy-chart-tip-line {
+  margin-top: 3px;
+}
+.energy-chart-tip-act {
+  font-weight: 650;
+}
+.energy-chart-tip-remark {
+  opacity: 0.88;
+  white-space: normal;
+  word-break: break-word;
 }
 .energy-chart-tooltip.hidden,
 .energy-chart-crosshair.hidden,
