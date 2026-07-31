@@ -298,6 +298,12 @@ function attachAiComparisons_(state, stats) {
     stats.comparisonNote = "自訂範圍唔附帶連續週期對比。";
     return stats;
   }
+  // checklist 關閉 comparisons → 唔算上兩期（減 token／時間）
+  if (stats.enabledSections && stats.enabledSections.comparisons === false) {
+    stats.comparisons = [];
+    stats.comparisonNote = "enabledSections.comparisons=false，今次唔附連續週期對比。";
+    return stats;
+  }
   var count = 2; // 本期 + 上 2 期 = 連續 3 個週期對比
   var comparisons = [];
   for (var i = 1; i <= count; i++) {

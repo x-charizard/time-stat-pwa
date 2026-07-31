@@ -254,6 +254,7 @@ function aiBuildDailySeries_(state, range) {
     var meditateMs = 0;
     var exerciseMs = 0;
     var workMs = 0;
+    var restMs = 0;
     var tradeMs = 0;
     var socialMs = 0;
     var negHits = [];
@@ -267,6 +268,7 @@ function aiBuildDailySeries_(state, range) {
       var nm = aiNormKey_(actName);
       var gg = String(list[j].group || list[j].category || "").trim();
       if (gg === "Work") workMs += seg;
+      if (gg === "Rest") restMs += seg;
       if (AI_TRADING_KEYS[nm]) tradeMs += seg;
       if (AI_SOCIAL_KEYS[nm]) socialMs += seg;
       if (nm === AI_SLEEP_KEY) sleepMs += seg;
@@ -304,6 +306,7 @@ function aiBuildDailySeries_(state, range) {
       ymd: dayYmd,
       weekday: aiWeekdayName_(dayCursor),
       workHours: aiHours_(workMs),
+      restHours: aiHours_(restMs),
       tradingHours: aiHours_(tradeMs),
       sleepHours: aiHours_(sleepMs),
       sleepShort: sleepMs > 0 && sleepMs < AI_SLEEP_SHORT_MS,
@@ -353,19 +356,252 @@ function aiContext72hBefore_(state, centerMs) {
   return out.slice(-40);
 }
 
+/**
+ * 未勾選章節：刪走對應重列表，減 token；summary／passFail／targets 一律保留。
+ */
 function aiFilterEnabledKpis_(obj, sections) {
-  if (!sections || typeof sections !== "object") return obj;
-  // keep structural keys always
-  var keep = {
-    periodType: obj.periodType,
-    periodKey: obj.periodKey,
-    targets: obj.targets,
-    passFail: obj.passFail,
-    enabledSections: obj.enabledSections,
-    daily: obj.daily,
-    summary: obj.summary,
+  if (!obj || !sections || typeof sections !== "object") return obj;
+  function off(k) {
+    return sections[k] === false;
+  }
+  if (off("negativeRemarks72h") && off("chaosStreak") && off("emotionFactors") && off("emotionUpsDowns")) {
+    obj.negativeRemarks = [];
+  }
+  if (off("positiveRemarks") && off("positiveEmotionDays") && off("emotionUpsDowns")) {
+    obj.positiveRemarks = [];
+  }
+  if (off("emotionUpsDowns") && off("emotionFactors")) {
+    obj.emotionUpsDowns = [];
+  }
+  if (off("exerciseGaps") && off("exerciseDays")) {
+    obj.exerciseGaps = [];
+  }
+  if (off("patternsWeekday")) {
+    obj.byWeekday = {};
+  }
+  if (off("placeHabits") && off("placeEmotion")) {
+    obj.placeCounts = {};
+  }
+  if (off("weeklyPassFail") && off("rhythmRegularity")) {
+    obj.weeklyEval = [];
+  }
+  if (off("habitChanges")) {
+    obj.habitChanges = null;
+  }
+  if (off("emotionFactors")) {
+    obj.emotionFactors = null;
+  }
+  if (off("monthlyWorkRest") && off("passFailTrend") && off("changePoints") && off("monthStories")) {
+    obj.monthlySeries = [];
+  }
+  if (off("comparisons")) {
+    /* comparisons 喺 stats 頂層，唔喺 kpis */
+  }
+  return obj;
+}
+
+/** 活動按 ISO 週出現集合 → 新增／消失 */
+function aiHabitChangesFromDaily_(daily, state, range) {
+  var list = aiSortedEvents_(state);
+  var nowMs = Date.now();
+  var byWeek = {};
+  for (var i = 0; i < list.length; i++) {
+    var st = aiParseStartMs_(list[i].start);
+    if (isNaN(st) || st < range.fromMs || st > range.toMs) continue;
+    var wk = typeof aiIsoWeekKeyFromDate_ === "function" ? aiIsoWeekKeyFromDate_(new Date(st)) : aiYmdLocal_(st).slice(0, 7);
+    if (!byWeek[wk]) byWeek[wk] = {};
+    var nm = aiNormKey_(aiActivityName_(state, list[i].activityId) || "");
+    if (nm) byWeek[wk][nm] = 1;
+  }
+  var keys = Object.keys(byWeek).sort();
+  var appeared = [];
+  var disappeared = [];
+  for (var w = 1; w < keys.length; w++) {
+    var prev = byWeek[keys[w - 1]];
+    var cur = byWeek[keys[w]];
+    for (var a in cur) {
+      if (Object.prototype.hasOwnProperty.call(cur, a) && !prev[a]) {
+        appeared.push({ weekKey: keys[w], activity: a, afterWeek: keys[w - 1] });
+      }
+    }
+    for (var b in prev) {
+      if (Object.prototype.hasOwnProperty.call(prev, b) && !cur[b]) {
+        disappeared.push({ weekKey: keys[w], activity: b, afterWeek: keys[w - 1] });
+      }
+    }
+  }
+  return {
+    weekKeys: keys,
+    appeared: appeared.slice(0, 40),
+    disappeared: disappeared.slice(0, 40),
   };
-  return obj; // full kpis for AI evidence; prompt tells which sections to write
+}
+
+/** 負面／正面 keyword × activity／place 共現 */
+function aiEmotionFactorsFromRemarks_(negAll, posAll) {
+  function accum(rows) {
+    var byAct = {};
+    var byPlace = {};
+    var byKw = {};
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      var act = String(r.activity || "(unknown)");
+      byAct[act] = (byAct[act] || 0) + 1;
+      var places = {};
+      if (r.context72h) {
+        for (var c = 0; c < r.context72h.length; c++) {
+          var pl = String(r.context72h[c].place || "").trim();
+          if (pl) places[pl] = 1;
+        }
+      }
+      for (var p in places) {
+        if (Object.prototype.hasOwnProperty.call(places, p)) byPlace[p] = (byPlace[p] || 0) + 1;
+      }
+      var kws = r.keywords || [];
+      for (var k = 0; k < kws.length; k++) {
+        var kw = String(kws[k]);
+        byKw[kw] = (byKw[kw] || 0) + 1;
+      }
+    }
+    function top(map, n) {
+      var arr = [];
+      for (var key in map) {
+        if (Object.prototype.hasOwnProperty.call(map, key)) arr.push({ key: key, count: map[key] });
+      }
+      arr.sort(function (x, y) {
+        return y.count - x.count;
+      });
+      return arr.slice(0, n || 8);
+    }
+    return { byActivity: top(byAct, 10), byPlace: top(byPlace, 10), byKeyword: top(byKw, 12) };
+  }
+  return { negative: accum(negAll || []), positive: accum(posAll || []) };
+}
+
+/** 年／季：按曆月 Work／Rest 時數 + 粗略合格 */
+function aiMonthlySeriesFromDaily_(daily) {
+  var months = {};
+  for (var i = 0; i < daily.length; i++) {
+    var ym = String(daily[i].ymd || "").slice(0, 7);
+    if (!ym || ym.length < 7) continue;
+    if (!months[ym]) {
+      months[ym] = {
+        monthKey: ym,
+        days: 0,
+        workHours: 0,
+        restHours: 0,
+        overWorkDays: 0,
+        workOver6hDays: 0,
+        negativeDays: 0,
+        positiveDays: 0,
+        socialDays: 0,
+        meditateDays: 0,
+        exerciseDays: 0,
+        vacationDays: 0,
+      };
+    }
+    var m = months[ym];
+    m.days++;
+    m.workHours += Number(daily[i].workHours) || 0;
+    m.restHours += Number(daily[i].restHours) || 0;
+    if (daily[i].overWork) m.overWorkDays++;
+    if (daily[i].workOver6h) m.workOver6hDays++;
+    if (daily[i].hasNegative) m.negativeDays++;
+    if (daily[i].hasPositive) m.positiveDays++;
+    if (daily[i].social) m.socialDays++;
+    if (daily[i].meditate) m.meditateDays++;
+    if (daily[i].exerciseOver30m) m.exerciseDays++;
+    if (daily[i].vacation) m.vacationDays++;
+  }
+  var keys = Object.keys(months).sort();
+  var out = [];
+  for (var j = 0; j < keys.length; j++) {
+    var row = months[keys[j]];
+    row.workHours = Math.round(row.workHours * 10) / 10;
+    row.restHours = Math.round(row.restHours * 10) / 10;
+    row.avgWorkHoursPerDay = row.days ? Math.round((row.workHours / row.days) * 10) / 10 : 0;
+    var fails = [];
+    if (row.workOver6hDays >= 2) fails.push("work6hDays");
+    if (row.negativeDays >= 3) fails.push("chaosDays");
+    if (row.overWorkDays > Math.ceil(row.days * 0.35)) fails.push("overWorkHeavy");
+    row.pass = fails.length === 0;
+    row.fails = fails;
+    out.push(row);
+  }
+  return out;
+}
+
+/** 找出 overWork／chaos 比率跳升嘅月份 */
+function aiChangePointsFromMonthly_(monthly) {
+  var points = [];
+  for (var i = 1; i < monthly.length; i++) {
+    var a = monthly[i - 1];
+    var b = monthly[i];
+    var owA = a.days ? a.overWorkDays / a.days : 0;
+    var owB = b.days ? b.overWorkDays / b.days : 0;
+    var negA = a.days ? a.negativeDays / a.days : 0;
+    var negB = b.days ? b.negativeDays / b.days : 0;
+    if (owB - owA >= 0.2) {
+      points.push({
+        monthKey: b.monthKey,
+        type: "overWorkSpike",
+        fromRate: Math.round(owA * 100) / 100,
+        toRate: Math.round(owB * 100) / 100,
+      });
+    }
+    if (negB - negA >= 0.2) {
+      points.push({
+        monthKey: b.monthKey,
+        type: "chaosSpike",
+        fromRate: Math.round(negA * 100) / 100,
+        toRate: Math.round(negB * 100) / 100,
+      });
+    }
+    if (a.pass && !b.pass) {
+      points.push({ monthKey: b.monthKey, type: "passToFail", fails: b.fails });
+    }
+  }
+  return points.slice(0, 12);
+}
+
+/** 週序列節奏：workHours／socialDays 變異（愈細愈規律） */
+function aiRhythmRegularityFromWeekly_(weeklyEval) {
+  if (!weeklyEval || weeklyEval.length < 2) {
+    return { weekCount: weeklyEval ? weeklyEval.length : 0, note: "樣本不足" };
+  }
+  var works = [];
+  var socials = [];
+  for (var i = 0; i < weeklyEval.length; i++) {
+    works.push(Number(weeklyEval[i].workHours) || 0);
+    socials.push(Number(weeklyEval[i].socialDays) || 0);
+  }
+  function stats(arr) {
+    var n = arr.length;
+    var sum = 0;
+    for (var i = 0; i < n; i++) sum += arr[i];
+    var mean = sum / n;
+    var v = 0;
+    for (var j = 0; j < n; j++) v += (arr[j] - mean) * (arr[j] - mean);
+    var variance = v / n;
+    return {
+      mean: Math.round(mean * 10) / 10,
+      stdev: Math.round(Math.sqrt(variance) * 10) / 10,
+    };
+  }
+  var w = stats(works);
+  var s = stats(socials);
+  var passN = 0;
+  for (var p = 0; p < weeklyEval.length; p++) {
+    if (weeklyEval[p].pass) passN++;
+  }
+  return {
+    weekCount: weeklyEval.length,
+    workHours: w,
+    socialDays: s,
+    weeksPassed: passN,
+    regularityHint:
+      w.stdev <= 4 && s.stdev <= 1.2 ? "relatively_steady" : w.stdev >= 8 || s.stdev >= 2 ? "chaotic" : "mixed",
+  };
 }
 
 /**
@@ -575,6 +811,39 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     });
   }
 
+  var habitChanges = null;
+  var emotionFactors = null;
+  var monthlySeries = [];
+  var changePoints = [];
+  var rhythmRegularity = null;
+  var meditateKeep = null;
+  if (pType === "quarter" || pType === "year" || sections.habitChanges) {
+    habitChanges = aiHabitChangesFromDaily_(daily, state, range);
+  }
+  if (pType === "quarter" || pType === "year" || sections.emotionFactors) {
+    emotionFactors = aiEmotionFactorsFromRemarks_(negAll, posAll);
+  }
+  if (pType === "month" || pType === "quarter" || pType === "year" || sections.monthlyWorkRest) {
+    monthlySeries = aiMonthlySeriesFromDaily_(daily);
+    changePoints = aiChangePointsFromMonthly_(monthlySeries);
+  }
+  if (pType === "quarter" || sections.rhythmRegularity || sections.weeklyPassFail) {
+    rhythmRegularity = aiRhythmRegularityFromWeekly_(weeklyEval);
+  }
+  if (pType === "month" || sections.meditateKeep) {
+    var medFlags = daily.map(function (x) {
+      return !!x.meditate;
+    });
+    var medStreak = aiConsecutiveTrueStreaks_(medFlags);
+    meditateKeep = {
+      meditateDays: meditateDays.length,
+      dayCount: daily.length,
+      coverage: daily.length ? Math.round((meditateDays.length / daily.length) * 100) / 100 : 0,
+      maxStreak: medStreak.maxStreak,
+      kept: meditateDays.length >= Math.max(1, Math.floor(daily.length * 0.6)),
+    };
+  }
+
   var kpis = {
     periodType: pType,
     periodKey: stats.periodKey,
@@ -665,6 +934,12 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     byWeekday: byWeekday,
     placeCounts: placeCounts,
     weeklyEval: weeklyEval,
+    rhythmRegularity: rhythmRegularity,
+    habitChanges: habitChanges,
+    emotionFactors: emotionFactors,
+    monthlySeries: monthlySeries,
+    changePoints: changePoints,
+    meditateKeep: meditateKeep,
     emotionUpsDowns: daily.map(function (x) {
       return {
         ymd: x.ymd,
@@ -680,6 +955,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
         ymd: x.ymd,
         weekday: x.weekday,
         workHours: x.workHours,
+        restHours: x.restHours,
         sleepHours: x.sleepHours,
         overWork: x.overWork,
         workOver6h: x.workOver6h,
@@ -714,6 +990,10 @@ function enrichStatsWithPeriodKpis_(state, stats) {
   stats.termGlossary["OverWork"] = "當日 Work Group > 4 小時";
   stats.termGlossary["運動日"] =
     "gyming／hiking／yogaing／running 等合計 ≥ 30 分鐘；Photoing 暫時唔計，除非 remark 注明高強度";
+  stats.termGlossary["habitChanges"] = "相鄰兩週活動出現／消失（appeared／disappeared）";
+  stats.termGlossary["emotionFactors"] = "情緒 keyword 與 activity／place 共現次數";
+  stats.termGlossary["rhythmRegularity"] =
+    "週序列 workHours／socialDays 標準差；relatively_steady／mixed／chaotic";
   return stats;
 }
 

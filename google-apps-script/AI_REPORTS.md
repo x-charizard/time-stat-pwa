@@ -61,12 +61,20 @@ PWA 連嘅 URL（`config.remote.json` / app 內 default）必須係呢個部署�
 
 AI Settings → **Period content**（Week／Month／Quarter／Year checklist + Notes；section labels 英文 + 定義）。  
 Generate 只輸出已勾選章節；KPI 喺 `DATA_JSON.kpis`（含 `passFail`／targets）。  
+未勾選章節會刪走對應重列表（減 token）；`comparisons` 關閉則唔計上兩期。
+
+**季／年額外 KPI**
+- `habitChanges`：相鄰週活動出現／消失  
+- `emotionFactors`：情緒 keyword × activity／place  
+- `monthlySeries`／`changePoints`：每月 Work／Rest、合格跳變  
+- `rhythmRegularity`：週序列穩定度（steady／mixed／chaotic）
+
 Diffused Mode（前稱 DMN）：Reading／Friending 按 remark 判定；Photoing 唔計運動除非 remark 注明高強度。  
 週期顯示用 `periodLabel`／`weekLabel`（月-日），唔用 W29。
 
 人手 Report：日期範圍自動對應 `week`／`month`／`quarter`／`year`（掣旁有 badge）。
 
-連續 **3 個同類型週期**對比（本期 + 上 2 期）。
+連續 **3 個同類型週期**對比（本期 + 上 2 期；可喺 checklist 關閉）。
 
 ## 4. 情緒 brief（即時）
 

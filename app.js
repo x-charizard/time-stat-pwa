@@ -1606,9 +1606,413 @@
     return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
+  // —— Xavier Energy Model 2.0（Focus Points / FP）——
+  const ENERGY_FP_CAP = 1000;
+  const ENERGY_FP_FLOOR = -500;
+  const ENERGY_HIGH_RATE = 4.17;
+  const ENERGY_MED_RATE = 2.08;
+  const ENERGY_LOW_RATE = 1.39;
+  const ENERGY_HIGH_KEYS = new Set([
+    "trading",
+    "trading practice",
+    "programming",
+    "timing",
+    "financing",
+    "web",
+    "webing",
+    "web development",
+    "system",
+    "systeming",
+    "system development",
+    "apping",
+    "app development",
+  ]);
+  const ENERGY_MED_KEYS = new Set([
+    "reviewing",
+    "planning",
+    "trading planning",
+    "mind mapping",
+    "mindmapping",
+    "aiing",
+    "ai",
+    "code",
+    "obsidianing",
+    "notioning",
+    "reading",
+  ]);
+  const ENERGY_LOW_KEYS = new Set([
+    "photoing",
+    "photography",
+    "photo editing",
+    "photoediting",
+    "editing",
+    "transporting",
+  ]);
+  const ENERGY_RECOVERY = {
+    meditating: { rate: 3.0, cap: 90 },
+    gyming: { rate: 2.0, cap: 120 },
+    yogaing: { rate: 2.0, cap: 120 },
+    showering: { rate: 2.0, cap: 30 },
+    resting: { rate: 1.5, cap: 120 },
+    walking: { rate: 1.2, cap: 90 },
+    hiking: { rate: 1.0, cap: 150 },
+    fooding: { rate: 0.8, cap: 60 },
+  };
+  const ENERGY_SLEEP_GATE_MIN = 180;
+  const ENERGY_SLEEP_POSITIVE_MIN = 600;
+  const ENERGY_SLEEP_POS_RATE = 1.5;
+  const ENERGY_SLEEP_NEG_RATE = 3.0;
+  let _energyRefreshTimer_ = null;
+  let _lastEnergySnap_ = null;
+
+  function clampEnergyFp_(fp) {
+    return Math.max(ENERGY_FP_FLOOR, Math.min(ENERGY_FP_CAP, fp));
+  }
+
+  function energyDrainMultiplier_(fp) {
+    if (fp < 200) return 1.5;
+    if (fp < 500) return 1.2;
+    return 1;
+  }
+
+  /** 小說／放鬆閱讀 → Recover；非小說／預設 reading → Medium Drain */
+  function energyReadingIsLeisure_(ev) {
+    const blob = String((ev && ev.remark) || "").toLowerCase();
+    if (/小說|novel|fiction|harry\s*potter|漫畫|comic|輕小說|romance|thriller/.test(blob)) {
+      return true;
+    }
+    if (
+      /非小說|non-?fiction|原子習慣|trading\s*in\s*the\s*zone|成長|教科書|textbook|technical|論文/.test(
+        blob,
+      )
+    ) {
+      return false;
+    }
+    return false;
+  }
+
+  /** Fooding 期間有冇標明同 AI 傾偈／Aiing */
+  function energyRemarkSuggestsAiing_(ev) {
+    const r = String((ev && ev.remark) || "").toLowerCase();
+    if (!r) return false;
+    return /aiing|\bai\b|chatgpt|claude|gemini|\bgpt\b|同\s*ai|同ai|問\s*ai|傾.*ai|chat\s*with\s*ai|cursor\b|copilot|llm/.test(
+      r,
+    );
+  }
+
+  /**
+   * Fooding 內嵌 Aiing 分鐘：優先 distractionSec；remark 有「AI + N 分」亦可。
+   * Recover 只用 duration − aiMin（真·食飯時間）。
+   */
+  function energyFoodingEmbeddedAiMinutes_(ev, durationMin) {
+    const dur = Math.max(0, Number(durationMin) || 0);
+    if (dur <= 0 || !energyRemarkSuggestsAiing_(ev)) return 0;
+    let aiMin = 0;
+    const dSec = Number(ev && ev.distractionSec) || 0;
+    if (dSec > 0) aiMin = dSec / 60;
+    const remark = String((ev && ev.remark) || "");
+    const m1 = remark.match(/(?:aiing|\bai\b)[^\d]{0,16}(\d{1,3})\s*(?:m|min|mins|分鐘|分)\b/i);
+    const m2 = remark.match(/(\d{1,3})\s*(?:m|min|mins|分鐘|分)[^\d]{0,16}(?:aiing|\bai\b)/i);
+    if (m1) aiMin = Math.max(aiMin, parseInt(m1[1], 10));
+    if (m2) aiMin = Math.max(aiMin, parseInt(m2[1], 10));
+    if (aiMin <= 0) return 0;
+    return Math.max(0, Math.min(dur, aiMin));
+  }
+
+  /**
+   * @returns {"high"|"medium"|"low"|"recover"|"sleep"|"none"}
+   */
+  function energyTierOfEvent_(ev) {
+    const key = activityKeyOfEv_(ev);
+    if (key === "sleeping") return "sleep";
+    if (key === "reading") {
+      return energyReadingIsLeisure_(ev) ? "recover" : "medium";
+    }
+    if (ENERGY_RECOVERY[key]) return "recover";
+    if (ENERGY_HIGH_KEYS.has(key)) return "high";
+    if (ENERGY_MED_KEYS.has(key)) return "medium";
+    if (ENERGY_LOW_KEYS.has(key)) return "low";
+    // photo books via remark on reading already handled; photoing = low
+    return "none";
+  }
+
+  function energyIsHighActivityEv_(ev) {
+    return energyTierOfEvent_(ev) === "high";
+  }
+
+  function applySleepMinute_(st) {
+    st.sleepTotalMin += 1;
+    if (st.sleepTotalMin <= ENERGY_SLEEP_GATE_MIN) return;
+    const afterGate = st.sleepTotalMin - ENERGY_SLEEP_GATE_MIN;
+    if (afterGate <= ENERGY_SLEEP_POSITIVE_MIN) {
+      st.fp = clampEnergyFp_(st.fp + ENERGY_SLEEP_POS_RATE);
+      st.sleepRecoveredPts += ENERGY_SLEEP_POS_RATE;
+    } else {
+      st.fp = clampEnergyFp_(st.fp - ENERGY_SLEEP_NEG_RATE);
+      st.sleepPenaltyPts += ENERGY_SLEEP_NEG_RATE;
+    }
+  }
+
+  /** Sleeping：每半小時一批，但閾值按分鐘精確 */
+  function applySleepDuration_(st, durationMin) {
+    let left = Math.max(0, durationMin);
+    while (left > 0) {
+      const chunk = Math.min(30, left);
+      for (let i = 0; i < chunk; i++) applySleepMinute_(st);
+      left -= chunk;
+    }
+  }
+
+  function applyRecoverDuration_(st, key, durationMin) {
+    const cfg = ENERGY_RECOVERY[key];
+    if (!cfg || durationMin <= 0) return;
+    let rate = cfg.rate;
+    if (key !== "fooding" && durationMin < 15) rate *= 0.5;
+    const used = st.recoverUsed[key] || 0;
+    const room = Math.max(0, cfg.cap - used);
+    if (room <= 0) return;
+    const rawGain = rate * durationMin;
+    const gain = Math.min(room, rawGain);
+    st.fp = clampEnergyFp_(st.fp + gain);
+    st.recoverUsed[key] = used + gain;
+    st.recoveredPts += gain;
+  }
+
+  function applyDrainDuration_(st, ratePerMin, durationMin, bucket) {
+    let left = Math.max(0, durationMin);
+    while (left > 0) {
+      const step = Math.min(1, left);
+      const mult = energyDrainMultiplier_(st.fp);
+      const loss = ratePerMin * mult * step;
+      st.fp = clampEnergyFp_(st.fp - loss);
+      st.drainedPts += loss;
+      if (bucket === "high") st.highMin += step;
+      else if (bucket === "medium") st.medMin += step;
+      else if (bucket === "low") st.lowMin += step;
+      left -= step;
+    }
+  }
+
+  /**
+   * 計算某一 wake-day 結束時嘅 FP 快照。
+   * @param {number} refMs
+   * @param {{ inheritPrev?: boolean, endAtMs?: number, nowMs?: number, depth?: number }} [opts]
+   */
+  function calculateWakeDayEnergy_(refMs, opts) {
+    const o = opts || {};
+    const bounds = wakeDayBounds(refMs);
+    const endAt = o.endAtMs != null ? o.endAtMs : bounds.endMs;
+    const nowMs = o.nowMs != null ? o.nowMs : Date.now();
+    const depth = o.depth || 0;
+    const list = sortedEventsUniqueById();
+
+    let startFp = ENERGY_FP_CAP;
+    // 繼承上一日結束 FP（最多回溯 14 個 wake-day，表達惡性循環）
+    if (o.inheritPrev !== false && depth < 14) {
+      const prevSnap = calculateWakeDayEnergy_(bounds.startMs - 1, {
+        inheritPrev: true,
+        depth: depth + 1,
+        endAtMs: bounds.startMs,
+        nowMs: bounds.startMs,
+      });
+      startFp = clampEnergyFp_(prevSnap.fp);
+    }
+
+    const st = {
+      fp: startFp,
+      startFp: startFp,
+      highMin: 0,
+      medMin: 0,
+      lowMin: 0,
+      highTradingMin: 0,
+      drainedPts: 0,
+      recoveredPts: 0,
+      sleepTotalMin: 0,
+      sleepRecoveredPts: 0,
+      sleepPenaltyPts: 0,
+      recoverUsed: Object.create(null),
+      foodingAiMin: 0,
+    };
+
+    const dayEv = [];
+    for (let i = 0; i < list.length; i++) {
+      const ev = list[i];
+      const t0 = new Date(ev.start).getTime();
+      if (Number.isNaN(t0) || t0 < bounds.startMs || t0 >= endAt) continue;
+      dayEv.push({ ev: ev, index: i, t0: t0 });
+    }
+    dayEv.sort((a, b) => a.t0 - b.t0);
+
+    for (let i = 0; i < dayEv.length; i++) {
+      const row = dayEv[i];
+      const t0 = row.t0;
+      let t1;
+      if (i + 1 < dayEv.length) t1 = dayEv[i + 1].t0;
+      else t1 = Math.min(endAt, Math.max(t0, nowMs));
+      if (t1 > endAt) t1 = endAt;
+      const durationMin = Math.max(0, (t1 - t0) / 60000);
+      if (durationMin <= 0) continue;
+
+      const tier = energyTierOfEvent_(row.ev);
+      const key = activityKeyOfEv_(row.ev);
+      if (tier === "sleep") {
+        applySleepDuration_(st, durationMin);
+      } else if (tier === "recover") {
+        if (key === "fooding") {
+          // Fooding + remark/distraction 標明 Aiing：嗰段當 Medium Drain；Recover 只用真·食飯時間
+          const aiMin = energyFoodingEmbeddedAiMinutes_(row.ev, durationMin);
+          const foodMin = Math.max(0, durationMin - aiMin);
+          if (aiMin > 0) {
+            applyDrainDuration_(st, ENERGY_MED_RATE, aiMin, "medium");
+            st.foodingAiMin = (st.foodingAiMin || 0) + aiMin;
+          }
+          if (foodMin > 0) applyRecoverDuration_(st, "fooding", foodMin);
+        } else if (key === "reading") {
+          // Leisure reading：+1.0／分、每日上限 60；適用 15-min 半額規則
+          let rate = 1.0;
+          if (durationMin < 15) rate *= 0.5;
+          const used = st.recoverUsed.leisure_reading || 0;
+          const room = Math.max(0, 60 - used);
+          const gain = Math.min(room, rate * durationMin);
+          st.fp = clampEnergyFp_(st.fp + gain);
+          st.recoverUsed.leisure_reading = used + gain;
+          st.recoveredPts += gain;
+        } else {
+          applyRecoverDuration_(st, key, durationMin);
+        }
+      } else if (tier === "high") {
+        const beforeHigh = st.highMin;
+        applyDrainDuration_(st, ENERGY_HIGH_RATE, durationMin, "high");
+        if (isTradingActivityEv_(row.ev)) {
+          st.highTradingMin += st.highMin - beforeHigh;
+        }
+      } else if (tier === "medium") {
+        applyDrainDuration_(st, ENERGY_MED_RATE, durationMin, "medium");
+      } else if (tier === "low") {
+        applyDrainDuration_(st, ENERGY_LOW_RATE, durationMin, "low");
+      }
+    }
+
+    const highMin = st.highMin;
+    const highTradingMin = st.highTradingMin;
+    const nonTradeHigh = highMin - highTradingMin;
+    // 2h High 禁 trade（除非嗰 2h 都係 trading）；4h High 一律禁 trade + 禁再入 High
+    const banTrade = highMin >= 240 || (highMin >= 120 && nonTradeHigh > 0.01);
+    const blockHigh = highMin >= 240;
+    const systemCrash = st.fp <= ENERGY_FP_FLOOR + 1e-9;
+
+    let level = "green";
+    let message = "System Stable. High-bandwidth tasks allowed.";
+    if (systemCrash) {
+      level = "black";
+      message = "System Crash (−500 FP). All Work hard-blocked. Stop immediately.";
+    } else if (st.fp < 0) {
+      level = "red";
+      message = "System Overload. All focus tasks forbidden. Please sleep or rest immediately.";
+    } else if (st.fp <= 300) {
+      level = "orange";
+      message =
+        "Critical: Cognitive lock risk! Mandatory 15min Resting/Meditating recommended.";
+    } else if (st.fp <= 700) {
+      level = "yellow";
+      message =
+        "Warning: Cognitive load increasing. Suggest switching to Medium/Low drain tasks.";
+    }
+
+    let suggest = "建議下一個活動：";
+    if (systemCrash || st.fp < 0) {
+      suggest += "Sleeping／Resting（修復）";
+    } else if (blockHigh || banTrade) {
+      suggest += banTrade && !blockHigh ? "Medium／Low（禁 Trading）" : "Recover／Low（禁 High／Trading）";
+    } else if (st.fp > 700 && highMin < 90) {
+      suggest += "Deep／High（Trading／Programming）";
+    } else if (st.fp > 300) {
+      suggest += "Medium（Reviewing／Planning）或 15min+ Meditating";
+    } else {
+      suggest += "15min+ Resting／Meditating／Walking";
+    }
+
+    return {
+      fp: Math.round(st.fp * 10) / 10,
+      startFp: Math.round(startFp * 10) / 10,
+      level: level,
+      message: message,
+      suggest: suggest,
+      highMin: Math.round(highMin * 10) / 10,
+      medMin: Math.round(st.medMin * 10) / 10,
+      lowMin: Math.round(st.lowMin * 10) / 10,
+      highTradingMin: Math.round(highTradingMin * 10) / 10,
+      foodingAiMin: Math.round((st.foodingAiMin || 0) * 10) / 10,
+      banTrade: banTrade,
+      blockHigh: blockHigh,
+      systemCrash: systemCrash,
+      blockAllWork: systemCrash,
+      drainMult: energyDrainMultiplier_(st.fp),
+      sleepTotalMin: Math.round(st.sleepTotalMin * 10) / 10,
+      bounds: bounds,
+    };
+  }
+
+  /** 公開別名（方便之後擴展／測試） */
+  function calculateEnergy(refMs) {
+    return calculateWakeDayEnergy_(refMs != null ? refMs : Date.now());
+  }
+
+  function refreshEnergyBanner_() {
+    const banner = document.getElementById("energyBanner");
+    if (!banner) return;
+    const snap = calculateEnergy(Date.now());
+    _lastEnergySnap_ = snap;
+    banner.classList.remove("hidden", "energy-banner--green", "energy-banner--yellow", "energy-banner--orange", "energy-banner--red", "energy-banner--black");
+    banner.classList.add("energy-banner--" + snap.level);
+
+    const fill = document.getElementById("energyBarFill");
+    const fpLab = document.getElementById("energyFpLabel");
+    const msg = document.getElementById("energyBannerMsg");
+    const sug = document.getElementById("energyBannerSuggest");
+    const meta = document.getElementById("energyBannerMeta");
+    const pct = Math.max(0, Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (ENERGY_FP_CAP - ENERGY_FP_FLOOR)) * 100));
+    if (fill) fill.style.width = pct.toFixed(1) + "%";
+    if (fpLab) fpLab.textContent = snap.fp.toFixed(0) + " FP";
+    if (msg) msg.textContent = snap.message;
+    if (sug) sug.textContent = snap.suggest;
+    if (meta) {
+      const bits = [
+        "High " + formatCapClock_(snap.highMin * 60000),
+        "Med " + formatCapClock_(snap.medMin * 60000),
+        "Low " + formatCapClock_(snap.lowMin * 60000),
+        "start " + snap.startFp.toFixed(0),
+      ];
+      if (snap.banTrade) bits.push("Trading forbidden");
+      if (snap.blockHigh) bits.push("High blocked");
+      if (snap.drainMult > 1) bits.push("drain ×" + snap.drainMult);
+      if (snap.foodingAiMin > 0) {
+        bits.push("Fooding→Aiing " + formatCapClock_(snap.foodingAiMin * 60000));
+      }
+      meta.textContent = bits.join(" · ");
+    }
+
+    // Sleeping 進行中：約每 30s 刷新（半小時結算感 + 即時條）
+    const list = sortedEventsUniqueById();
+    const last = list.length ? list[list.length - 1] : null;
+    const sleepingNow = last && activityKeyOfEv_(last) === "sleeping";
+    if (sleepingNow) {
+      if (!_energyRefreshTimer_) {
+        _energyRefreshTimer_ = setInterval(() => {
+          refreshEnergyBanner_();
+          refreshSoftCapBanner();
+        }, 30000);
+      }
+    } else if (_energyRefreshTimer_) {
+      clearInterval(_energyRefreshTimer_);
+      _energyRefreshTimer_ = null;
+    }
+  }
+
   /**
    * 超限後仍可入 Work／Trading，但 Remark 必填（當 Reason）。
    * 17:00 起至翌日 wake：硬性唔准入 Work。
+   * Energy：−500 硬擋所有 Work；4h High 硬擋再入 High；Trading 禁令跟 2h／4h High 規則。
    * @returns {{ ok: boolean, message?: string, needsReason?: boolean, workOver?: boolean, tradingOver?: boolean, hardBlock?: boolean }}
    */
   function softCapGateForEvent(ev) {
@@ -1617,6 +2021,9 @@
     const remark = String(ev.remark || "").trim();
     const isWork = eventWorkRestGroupForCap_(ev) === "Work";
     const isTrading = isTradingActivityEv_(ev);
+    const tier = energyTierOfEvent_(ev);
+    const energy = calculateWakeDayEnergy_(refMs);
+
     if (isWork && isInWorkHardBlockWindow_(refMs)) {
       return {
         ok: false,
@@ -1625,6 +2032,33 @@
         needsReason: false,
       };
     }
+    if (isWork && energy.blockAllWork) {
+      return {
+        ok: false,
+        hardBlock: true,
+        message: "FP at floor (−500). All Work hard-blocked. Rest / sleep first.",
+        needsReason: false,
+      };
+    }
+    if (energy.blockHigh && tier === "high") {
+      return {
+        ok: false,
+        hardBlock: true,
+        message:
+          "High Drain ≥ 4h today. No more High work (incl. Trading). Switch to Recover / Low.",
+        needsReason: false,
+      };
+    }
+    if (energy.banTrade && isTrading) {
+      return {
+        ok: false,
+        hardBlock: true,
+        message:
+          "Trading forbidden: High Drain ≥ 2h (non-trading High) or ≥ 4h total High. Cognitive overload.",
+        needsReason: false,
+      };
+    }
+
     const workPack = sumWorkMsInWakeDay(refMs);
     const tradePack = sumTradingMsInWakeDay(refMs);
     const workCap = getWorkCapMs_();
@@ -1671,6 +2105,7 @@
   }
 
   function refreshSoftCapBanner() {
+    refreshEnergyBanner_();
     const el = document.getElementById("softCapBanner");
     if (!el) return;
     const now = Date.now();
@@ -1684,15 +2119,21 @@
     const tradingOver = tradePack.ms > tradeCap;
     const noTradesToday =
       transportPack.ms > NO_TRADES_BANNER_MS || socialPack.ms > NO_TRADES_BANNER_MS;
+    const energy = _lastEnergySnap_ || calculateEnergy(now);
     // 17:00 唔做常駐 banner；只喺嘗試入 Work 時 modal + 硬擋
-    // Banner／Reasons：清醒日 Work >4h 或 Trading >2h；Transport／Social >2h → no Trades today（唔擋入）
+    // 舊 soft-cap 字條：Work／Trading 鐘數超標、Transport／Social → no Trades；Energy 禁令另見主 Banner
     syncRemarkFieldLabels_(workOver || tradingOver);
-    if (!workOver && !tradingOver && !noTradesToday) {
+    const showSoft =
+      workOver || tradingOver || noTradesToday || energy.banTrade || energy.blockHigh || energy.systemCrash;
+    if (!showSoft) {
       el.classList.add("hidden");
       el.classList.remove("soft-cap-banner--warn", "soft-cap-banner--danger");
       el.textContent = "";
     } else {
       const lines = [];
+      if (energy.systemCrash) lines.push("Energy crash: Work hard-blocked");
+      else if (energy.blockHigh) lines.push("High Drain ≥4h: High/Trading blocked");
+      else if (energy.banTrade) lines.push("Trading forbidden (High Drain rule)");
       if (workOver) lines.push("Today's Work: " + formatCapClock_(workPack.ms));
       if (tradingOver) lines.push("Today's Trading: " + formatCapClock_(tradePack.ms));
       if (noTradesToday) lines.push(MSG_NO_TRADES_TODAY);
