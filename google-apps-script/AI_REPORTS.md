@@ -87,3 +87,12 @@ Remark 含 negative keywords（可 Settings 改，預設含 chaos／頭痛／焦
 - 揀 Mon–Sun → badge 顯示 `week · YYYY-Www`
 - 打含 `chaos` 嘅 remark 並 sync → 應收到 Emotion brief
 - 自動報告只 email + 歷史，無 Obsidian 檔
+
+
+## 6. Energy Model 5.0 — Semantic Lite
+
+PWA action：`analyzeEnergySemantic`（`activity` + `remark`）→ `{ score, sleep_base, is_fragmented }`。
+
+- 只用 `gemini-3.5-flash-lite` + `thinking_level: minimal`
+- PWA 按 remark 文字 cache，避免 reload 重複燒 token
+- 部署：更新 `TimeStatAiReports.gs` + `TimeStatSync.gs` → **新版本**

@@ -2185,3 +2185,79 @@ function handleMarkAiReportSynced_(body) {
   if (!ok) return authFail_("not_found");
   return jsonOut_(authOkFields_({ synced: true, id: String(body.id) }));
 }
+
+
+/**
+ * Energy Model 5.0 — Semantic Lite（只用 flash-lite，慳 token）
+ * body: { activity, remark }
+ * → { score, sleep_base, is_fragmented, model, tier }
+ */
+function handleAnalyzeEnergySemantic_(body) {
+  var activity = String((body && body.activity) || "").trim();
+  var remark = String((body && body.remark) || "").trim();
+  if (!activity && !remark) {
+    return jsonOut_(
+      authOkFields_({
+        score: 0,
+        sleep_base: 1,
+        is_fragmented: false,
+        skipped: true,
+      }),
+    );
+  }
+  var props = PropertiesService.getScriptProperties();
+  var apiKey = String(props.getProperty("GEMINI_API_KEY") || "").trim();
+  if (!apiKey) return authFail_("missing_GEMINI_API_KEY");
+
+  var system =
+    "You are a mental-energy semantic scorer for a personal time log. " +
+    "Return ONLY compact JSON (no markdown) with keys: " +
+    'score (number -2..+2), sleep_base (number 0.7..1.3), is_fragmented (boolean). ' +
+    "score: emotional/cognitive drain vs recovery for THIS activity+remark. " +
+    "-2 extreme drain/anger; 0 neutral; +2 extreme joy/recovery. " +
+    "If activity is Sleeping (or sleep): set sleep_base for quality " +
+    "(disturbed/nightmare/mosquitoes/woke up → ~0.7 and is_fragmented true; " +
+    "deep sleep/rested → ~1.3 and is_fragmented false; default 1.0). " +
+    "For non-sleep, sleep_base=1.0 and is_fragmented=false unless remark clearly about sleep quality.";
+  var user =
+    "Activity: " +
+    activity +
+    "\nRemark: " +
+    (remark || "(empty)") +
+    "\nJSON:";
+
+  var model = GEMINI_MODEL_FREE_LITE;
+  var r = callGeminiOnce_(apiKey, model, "minimal", 0.2, system, user);
+  if (!(r && r.ok && r.markdown)) {
+    var detail = r && r.body ? String(r.body).slice(0, 200) : "empty";
+    var code = r && r.code ? r.code : 0;
+    if (r && r.quota) return authFail_("gemini_quota_exhausted:lite:" + detail);
+    return authFail_("gemini_http_" + code + ":" + detail);
+  }
+  var raw = String(r.markdown || "").trim();
+  var m = raw.match(/\{[\s\S]*\}/);
+  if (!m) return authFail_("semantic_bad_json");
+  var obj;
+  try {
+    obj = JSON.parse(m[0]);
+  } catch (eParse) {
+    return authFail_("semantic_bad_json");
+  }
+  var score = Number(obj.score);
+  if (!isFinite(score)) score = 0;
+  score = Math.max(-2, Math.min(2, score));
+  var sleepBase = Number(obj.sleep_base);
+  if (!isFinite(sleepBase)) sleepBase = 1;
+  sleepBase = Math.max(0.7, Math.min(1.3, sleepBase));
+  var frag = obj.is_fragmented === true || obj.is_fragmented === "true" || obj.is_fragmented === 1;
+  return jsonOut_(
+    authOkFields_({
+      score: Math.round(score * 100) / 100,
+      sleep_base: Math.round(sleepBase * 100) / 100,
+      is_fragmented: !!frag,
+      model: model,
+      tier: "free-lite",
+      via: r.via || "",
+    }),
+  );
+}

@@ -1280,6 +1280,17 @@ function doPost(e) {
     }
   }
 
+  if (String(body.action || "") === "analyzeEnergySemantic") {
+    try {
+      if (typeof handleAnalyzeEnergySemantic_ !== "function") {
+        return authFail_("missing_TimeStatAiReports_gs");
+      }
+      return handleAnalyzeEnergySemantic_(body);
+    } catch (errSem) {
+      return authFail_(String(errSem && errSem.message ? errSem.message : errSem));
+    }
+  }
+
   if (String(body.action || "") === "markAiReportSynced") {
     try {
       if (typeof handleMarkAiReportSynced_ !== "function") {
