@@ -1662,9 +1662,13 @@
   const ENERGY_SLEEP_POSITIVE_MIN = 600;
   const ENERGY_SLEEP_POS_RATE = 1.5;
   const ENERGY_SLEEP_NEG_RATE = 3.0;
-  /** 下一筆距離超過呢個 → 當漏打卡／過夜，非 Sleep 最多計 2h（避免假 System Crash） */
-  const ENERGY_ORPHAN_GAP_MIN = 6 * 60;
-  const ENERGY_ORPHAN_CREDIT_CAP_MIN = 2 * 60;
+  /** 下一筆距離超過呢個 → 當漏打卡／過夜，非 Sleep 最多計呢啲分鐘（避免假 System Crash） */
+  const ENERGY_ORPHAN_GAP_MIN = 4 * 60;
+  const ENERGY_ORPHAN_CREDIT_CAP_MIN = 90;
+  /** 單一 punch 非 Sleep 最多計入 FP 嘅分鐘（含「而家仲進行中」；對齊 High 4h 上限） */
+  const ENERGY_MAX_SEGMENT_NON_SLEEP_MIN = 4 * 60;
+  /** 承襲上一日時，起床 FP 唔低過呢個（避免一開 app 就 −500 Crash） */
+  const ENERGY_WAKE_START_FLOOR = 300;
   let _energyRefreshTimer_ = null;
   let _lastEnergySnap_ = null;
 
@@ -1810,15 +1814,21 @@
     const list = sortedEventsUniqueById();
 
     let startFp = ENERGY_FP_CAP;
-    // 繼承上一日結束 FP（最多回溯 14 個 wake-day，表達惡性循環）
-    if (o.inheritPrev !== false && depth < 14) {
+    // 只睇「昨日」一層；撞過 −500 地板唔繼承；起床最少 ENERGY_WAKE_START_FLOOR
+    if (o.inheritPrev !== false && depth < 1) {
       const prevSnap = calculateWakeDayEnergy_(bounds.startMs - 1, {
-        inheritPrev: true,
+        inheritPrev: false,
         depth: depth + 1,
         endAtMs: bounds.startMs,
         nowMs: bounds.startMs,
       });
-      startFp = clampEnergyFp_(prevSnap.fp);
+      if (prevSnap.systemCrash || prevSnap.fp <= ENERGY_FP_FLOOR + 1e-9) {
+        startFp = ENERGY_FP_CAP;
+      } else if (prevSnap.fp < ENERGY_FP_CAP) {
+        startFp = clampEnergyFp_(Math.max(ENERGY_WAKE_START_FLOOR, prevSnap.fp));
+      } else {
+        startFp = ENERGY_FP_CAP;
+      }
     }
 
     const st = {
@@ -1867,12 +1877,20 @@
 
       const tier = energyTierOfEvent_(row.ev);
       const key = activityKeyOfEv_(row.ev);
-      // 過夜／超長空窗：非 Sleep 唔好一路扣到 wake（常見假 −500 Crash）
+      // 過夜／超長空窗／最後一筆接到 wake／開住唔打卡：非 Sleep 封頂，避免假 −500 Crash
       if (tier !== "sleep") {
         const gapMin =
           nextGlobal != null ? (nextGlobal - t0) / 60000 : (endAt - t0) / 60000;
-        if (gapMin > ENERGY_ORPHAN_GAP_MIN && durationMin > ENERGY_ORPHAN_CREDIT_CAP_MIN) {
+        const endsAtWake = t1 >= endAt - 1;
+        const orphan =
+          gapMin > ENERGY_ORPHAN_GAP_MIN ||
+          (endsAtWake && nextGlobal != null && nextGlobal > endAt) ||
+          (nextGlobal == null && !liveDay);
+        if (orphan && durationMin > ENERGY_ORPHAN_CREDIT_CAP_MIN) {
           durationMin = ENERGY_ORPHAN_CREDIT_CAP_MIN;
+        }
+        if (durationMin > ENERGY_MAX_SEGMENT_NON_SLEEP_MIN) {
+          durationMin = ENERGY_MAX_SEGMENT_NON_SLEEP_MIN;
         }
       }
       if (tier === "sleep") {
