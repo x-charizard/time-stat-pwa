@@ -1619,10 +1619,11 @@ body.auth-locked [data-panel] {
   margin-bottom: 8px;
 }
 .energy-bar-track {
+  position: relative;
   flex: 1;
-  height: 10px;
+  height: 22px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
 }
 .energy-bar-fill {
@@ -1632,13 +1633,20 @@ body.auth-locked [data-panel] {
   background: #4caf50;
   transition: width 0.25s ease, background 0.25s ease;
 }
-.energy-fp-label {
-  flex: 0 0 auto;
+.energy-fp-onbar {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  font-size: 0.92rem;
-  min-width: 4.5rem;
-  text-align: right;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+  pointer-events: none;
+  z-index: 1;
 }
 .energy-banner-msg {
   font-weight: 600;
@@ -1930,16 +1938,23 @@ body.auth-locked [data-panel] {
     transform: rotate(360deg);
   }
 }
-/* Generate 期間：暫緩繪製巨型 Raw Data／匯總表，保持捲動順暢 */
-html.ai-report-busy #reportSummary {
+/* Generate 期間：只收起巨型表，唔好收埋 Focus Energy chart */
+html.ai-report-busy #reportSummary > table,
+html.ai-report-busy #reportSummary .report-records-wrap,
+html.ai-report-busy #reportSummary > p.muted {
   content-visibility: hidden;
-  contain-intrinsic-size: 0 120px;
   max-height: 0;
-  margin: 0;
-  padding: 0;
+  margin: 0 !important;
+  padding: 0 !important;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
+}
+.report-energy-chart-host {
+  margin: 0 0 12px;
+}
+.report-energy-chart-host:empty {
+  display: none;
 }
 html.ai-report-busy .report-sidebar {
   pointer-events: none;

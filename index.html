@@ -19,7 +19,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Time Log</title>
-  <link rel="stylesheet" href="styles.css?v=178" />
+  <link rel="stylesheet" href="styles.css?v=179" />
   <link rel="manifest" href="manifest.json" />
   <link rel="icon" type="image/svg+xml" href="icon.svg" />
   <link rel="apple-touch-icon" href="icon.svg" />
@@ -54,10 +54,10 @@
   </div>
   <div id="energyBanner" class="energy-banner hidden" role="status" aria-live="polite">
     <div class="energy-banner-row">
-      <div class="energy-bar-track" aria-hidden="true">
+      <div class="energy-bar-track">
         <div id="energyBarFill" class="energy-bar-fill"></div>
+        <span id="energyFpLabel" class="energy-fp-onbar">—</span>
       </div>
-      <span id="energyFpLabel" class="energy-fp-label">— FP</span>
     </div>
     <div id="energyBannerMsg" class="energy-banner-msg"></div>
     <div id="energyBannerSuggest" class="energy-banner-suggest"></div>
@@ -248,6 +248,7 @@
               </div>
             </div>
           </div>
+          <div id="reportEnergyChart" class="report-energy-chart-host" aria-live="polite"></div>
           <div class="report-results" id="reportSummary"></div>
         </div>
       </div>
@@ -306,6 +307,6 @@
 
   <div id="toast" class="toast" role="status"></div>
 
-  <script src="app.js?v=178"></script>
+  <script src="app.js?v=179"></script>
 </body>
 </html>

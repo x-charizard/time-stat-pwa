@@ -2310,15 +2310,32 @@
       '" class="energy-chart-tick">-500</text>' +
       '<path d="' +
       d.trim() +
-      '" class="energy-chart-line" fill="none"/>' +
+      '" fill="none" stroke="#ee8326" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
       ticks +
       "</svg></div></div>"
     );
   }
 
+  function mountFocusEnergyChart_(fromYmd, toYmd) {
+    const host = document.getElementById("reportEnergyChart");
+    if (!host) return;
+    if (!fromYmd || !toYmd) {
+      host.innerHTML = "";
+      return;
+    }
+    host.innerHTML = buildFocusEnergyChartHtml_(fromYmd, toYmd);
+  }
+
   function refreshEnergyBanner_() {
     const banner = document.getElementById("energyBanner");
     if (!banner) return;
+    // 防止 Generate 中斷後 ai-report-busy 殘留，連 Report／chart 都睇唔到
+    if (
+      document.documentElement.classList.contains("ai-report-busy") &&
+      !document.getElementById("btnAiReportGenerate")?.disabled
+    ) {
+      document.documentElement.classList.remove("ai-report-busy");
+    }
     const snap = calculateEnergy(Date.now());
     _lastEnergySnap_ = snap;
     banner.classList.remove("hidden", "energy-banner--green", "energy-banner--yellow", "energy-banner--orange", "energy-banner--red", "energy-banner--black");
@@ -2331,7 +2348,10 @@
     const meta = document.getElementById("energyBannerMeta");
     const pct = Math.max(0, Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (ENERGY_FP_CAP - ENERGY_FP_FLOOR)) * 100));
     if (fill) fill.style.width = pct.toFixed(1) + "%";
-    if (fpLab) fpLab.textContent = snap.fp.toFixed(0) + " FP";
+    if (fpLab) {
+      const n = Number(snap.fp);
+      fpLab.textContent = Number.isFinite(n) ? String(Math.round(n)) : "—";
+    }
     if (msg) {
       msg.textContent = snap.message || "";
       msg.classList.toggle("hidden", !snap.message);
@@ -4817,15 +4837,19 @@
     if (!box) return;
     try {
     if (!from || !to) {
+      mountFocusEnergyChart_("", "");
       box.innerHTML = `<p class="muted">Please Set The <strong>Date Range</strong> (Start ～ End).</p>`;
       return;
     }
     const t0 = new Date(from + "T00:00:00").getTime();
     const t1 = new Date(to + "T23:59:59.999").getTime();
     if (t0 > t1) {
+      mountFocusEnergyChart_("", "");
       box.innerHTML = `<p class="muted">Start Date Must Be On Or Before End Date.</p>`;
       return;
     }
+    // Chart 獨立 host，唔放喺 #reportSummary（免被 AI busy／innerHTML 清走）
+    mountFocusEnergyChart_(from, to);
     const f = readReportFilters();
     const list = sortedEventsUniqueById();
     const reportCtx = buildReportMappingContext(list);
@@ -4967,22 +4991,19 @@
 
       const focusFrom = slices.ranges[0].from;
       const focusTo = slices.ranges[0].to;
-      html =
-        buildFocusEnergyChartHtml_(focusFrom, focusTo) +
-        html +
+      html +=
         `<p class="muted" style="margin:16px 0 8px;">Raw Data · focus period ${escapeHtml(focusFrom)} ～ ${escapeHtml(focusTo)}（comparison columns stay 3 periods）</p>` +
         buildReportRawDataHtml_(ag[0].rawSegmentRows, reportCtx);
 
+      mountFocusEnergyChart_(focusFrom, focusTo);
       box.innerHTML = html;
       bindReportRawDayFilter_();
       return;
     }
 
     const agg = aggregateReportForRange(from, to, list, f, showByDay, reportCtx);
-    const energyChartHtml = buildFocusEnergyChartHtml_(from, to);
     if (agg.segmentsInRange === 0) {
-      box.innerHTML =
-        energyChartHtml + `<p class="muted">No Billable Segments In This Range.</p>`;
+      box.innerHTML = `<p class="muted">No Billable Segments In This Range.</p>`;
       return;
     }
     if (agg.segmentsKept === 0) {
@@ -4997,7 +5018,6 @@
           ? `<p class="muted" style="margin-top:8px;">${escapeHtml(nf)}</p>`
           : `<p class="muted" style="margin-top:8px;">No Group, Layers, Category, Sub Category, Project, Activity, Or People Filters Are Set — Only Search Narrows Results.</p>`;
       box.innerHTML =
-        energyChartHtml +
         `<p class="muted">There Are Records With Duration In This Range, But <strong>None Match Your Filters</strong>.</p>` +
         kwHint +
         other;
@@ -5060,7 +5080,7 @@
     html += tbl("People", byPerson);
     html += buildReportRawDataHtml_(rawSegmentRows, reportCtx);
 
-    box.innerHTML = energyChartHtml + html;
+    box.innerHTML = html;
     bindReportRawDayFilter_();
     } finally {
       syncReportUnitToggleButtons();
