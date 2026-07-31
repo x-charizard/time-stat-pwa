@@ -2185,9 +2185,9 @@
           liveDay,
         );
         if (cred.durationMin <= 0) continue;
-        // 只有「小時以下」（minute）曲線先附活動／remark 去 tooltip
+        // 小時或以下（minute / hour）曲線先附活動／remark 去 tooltip
         const tipMeta =
-          gran.mode === "minute"
+          gran.mode === "minute" || gran.mode === "hour"
             ? {
                 activity: activityDisplayName(row.ev.activityId) || "",
                 remark: String(row.ev.remark || "").trim(),
@@ -2349,7 +2349,7 @@
       const c = Math.max(ymin, Math.min(ymax, fp));
       return padT + (1 - (c - ymin) / (ymax - ymin)) * (h - padT - padB);
     };
-    const showActRemark = pack.mode === "minute";
+    const showActRemark = pack.mode === "minute" || pack.mode === "hour";
 
     const hide = () => {
       tip.classList.add("hidden");
