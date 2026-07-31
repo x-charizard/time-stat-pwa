@@ -1662,6 +1662,9 @@
   const ENERGY_SLEEP_POSITIVE_MIN = 600;
   const ENERGY_SLEEP_POS_RATE = 1.5;
   const ENERGY_SLEEP_NEG_RATE = 3.0;
+  /** 下一筆距離超過呢個 → 當漏打卡／過夜，非 Sleep 最多計 2h（避免假 System Crash） */
+  const ENERGY_ORPHAN_GAP_MIN = 6 * 60;
+  const ENERGY_ORPHAN_CREDIT_CAP_MIN = 2 * 60;
   let _energyRefreshTimer_ = null;
   let _lastEnergySnap_ = null;
 
@@ -1842,19 +1845,36 @@
       dayEv.push({ ev: ev, index: i, t0: t0 });
     }
     dayEv.sort((a, b) => a.t0 - b.t0);
+    const liveDay = nowMs >= bounds.startMs && nowMs < endAt;
 
     for (let i = 0; i < dayEv.length; i++) {
       const row = dayEv[i];
       const t0 = row.t0;
-      let t1;
-      if (i + 1 < dayEv.length) t1 = dayEv[i + 1].t0;
-      else t1 = Math.min(endAt, Math.max(t0, nowMs));
+      // 用全域下一筆（唔好淨睇同日），先至係真正 segment
+      let nextGlobal = null;
+      for (let j = row.index + 1; j < list.length; j++) {
+        const tj = new Date(list[j].start).getTime();
+        if (!Number.isNaN(tj) && tj > t0) {
+          nextGlobal = tj;
+          break;
+        }
+      }
+      let t1 =
+        nextGlobal != null ? nextGlobal : liveDay ? Math.max(t0, nowMs) : endAt;
       if (t1 > endAt) t1 = endAt;
-      const durationMin = Math.max(0, (t1 - t0) / 60000);
+      let durationMin = Math.max(0, (t1 - t0) / 60000);
       if (durationMin <= 0) continue;
 
       const tier = energyTierOfEvent_(row.ev);
       const key = activityKeyOfEv_(row.ev);
+      // 過夜／超長空窗：非 Sleep 唔好一路扣到 wake（常見假 −500 Crash）
+      if (tier !== "sleep") {
+        const gapMin =
+          nextGlobal != null ? (nextGlobal - t0) / 60000 : (endAt - t0) / 60000;
+        if (gapMin > ENERGY_ORPHAN_GAP_MIN && durationMin > ENERGY_ORPHAN_CREDIT_CAP_MIN) {
+          durationMin = ENERGY_ORPHAN_CREDIT_CAP_MIN;
+        }
+      }
       if (tier === "sleep") {
         applySleepDuration_(st, durationMin);
       } else if (tier === "recover") {
@@ -1977,19 +1997,8 @@
     if (msg) msg.textContent = snap.message;
     if (sug) sug.textContent = snap.suggest;
     if (meta) {
-      const bits = [
-        "High " + formatCapClock_(snap.highMin * 60000),
-        "Med " + formatCapClock_(snap.medMin * 60000),
-        "Low " + formatCapClock_(snap.lowMin * 60000),
-        "start " + snap.startFp.toFixed(0),
-      ];
-      if (snap.banTrade) bits.push("Trading forbidden");
-      if (snap.blockHigh) bits.push("High blocked");
-      if (snap.drainMult > 1) bits.push("drain ×" + snap.drainMult);
-      if (snap.foodingAiMin > 0) {
-        bits.push("Fooding→Aiing " + formatCapClock_(snap.foodingAiMin * 60000));
-      }
-      meta.textContent = bits.join(" · ");
+      meta.textContent = "";
+      meta.classList.add("hidden");
     }
 
     // Sleeping 進行中：約每 30s 刷新（半小時結算感 + 即時條）
