@@ -2204,32 +2204,28 @@
     return pad(d.getHours()) + ":" + pad(d.getMinutes());
   }
 
+  const ENERGY_CHART_LAYOUT_ = {
+    w: 720,
+    h: 220,
+    padL: 44,
+    padR: 12,
+    padT: 16,
+    padB: 36,
+  };
+
   /** 純 SVG 專注力曲線（唔引入 chart library） */
-  function buildFocusEnergyChartHtml_(fromYmd, toYmd) {
-    let pack;
-    try {
-      pack = buildFocusEnergySeries_(fromYmd, toYmd);
-    } catch (e) {
-      return (
-        '<div class="energy-chart-card"><p class="muted">Focus energy chart unavailable.</p></div>'
-      );
-    }
-    const pts = pack.points || [];
+  function buildFocusEnergyChartHtmlFromPack_(pack, fromYmd, toYmd) {
+    const pts = (pack && pack.points) || [];
     if (pts.length < 2) {
       return (
         '<div class="energy-chart-card">' +
         '<h2 class="report-h">Focus Energy</h2>' +
         '<p class="muted">Not enough points for ' +
-        escapeHtml(pack.label || "") +
+        escapeHtml((pack && pack.label) || "") +
         " chart.</p></div>"
       );
     }
-    const w = 720;
-    const h = 220;
-    const padL = 44;
-    const padR = 12;
-    const padT = 16;
-    const padB = 36;
+    const { w, h, padL, padR, padT, padB } = ENERGY_CHART_LAYOUT_;
     const ymin = ENERGY_FP_FLOOR;
     const ymax = ENERGY_FP_CAP;
     const t0 = pts[0].t;
@@ -2264,8 +2260,6 @@
         escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
         "</text>";
     }
-    const fpFirst = pts[0].fp;
-    const fpLast = pts[pts.length - 1].fp;
     return (
       '<div class="energy-chart-card">' +
       '<div class="energy-chart-head">' +
@@ -2277,14 +2271,8 @@
       " → " +
       escapeHtml(toYmd) +
       "</span></div>" +
-      '<p class="muted energy-chart-summary">Start ' +
-      fpFirst +
-      " FP → End " +
-      fpLast +
-      " FP · " +
-      pts.length +
-      " points</p>" +
       '<div class="energy-chart-svg-wrap">' +
+      '<div class="energy-chart-tooltip hidden" role="tooltip"></div>' +
       '<svg class="energy-chart-svg" viewBox="0 0 ' +
       w +
       " " +
@@ -2298,7 +2286,7 @@
       (w - padR) +
       '" y2="' +
       y0.toFixed(1) +
-      '" class="energy-chart-zero"/>' +
+      '" class="energy-chart-zero" stroke="rgba(255,255,255,0.22)" stroke-width="1" stroke-dasharray="4 4"/>' +
       '<text x="8" y="' +
       (padT + 4) +
       '" class="energy-chart-tick">1000</text>' +
@@ -2311,9 +2299,85 @@
       '<path d="' +
       d.trim() +
       '" fill="none" stroke="#ee8326" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>' +
+      '<line class="energy-chart-crosshair hidden" x1="0" y1="' +
+      padT +
+      '" x2="0" y2="' +
+      (h - padB) +
+      '" stroke="rgba(255,255,255,0.35)" stroke-width="1"/>' +
+      '<circle class="energy-chart-dot hidden" r="4" fill="#ee8326" stroke="#fff" stroke-width="1.5"/>' +
       ticks +
       "</svg></div></div>"
     );
+  }
+
+  function bindFocusEnergyChartTooltip_(host, pack) {
+    const wrap = host.querySelector(".energy-chart-svg-wrap");
+    const svg = host.querySelector(".energy-chart-svg");
+    const tip = host.querySelector(".energy-chart-tooltip");
+    const cross = host.querySelector(".energy-chart-crosshair");
+    const dot = host.querySelector(".energy-chart-dot");
+    const pts = (pack && pack.points) || [];
+    if (!wrap || !svg || !tip || pts.length < 2) return;
+
+    const { w, h, padL, padR, padT, padB } = ENERGY_CHART_LAYOUT_;
+    const ymin = ENERGY_FP_FLOOR;
+    const ymax = ENERGY_FP_CAP;
+    const t0 = pts[0].t;
+    const t1 = pts[pts.length - 1].t;
+    const spanT = Math.max(1, t1 - t0);
+    const xOf = (t) => padL + ((t - t0) / spanT) * (w - padL - padR);
+    const yOf = (fp) => {
+      const c = Math.max(ymin, Math.min(ymax, fp));
+      return padT + (1 - (c - ymin) / (ymax - ymin)) * (h - padT - padB);
+    };
+
+    const hide = () => {
+      tip.classList.add("hidden");
+      if (cross) cross.classList.add("hidden");
+      if (dot) dot.classList.add("hidden");
+    };
+
+    const onMove = (ev) => {
+      const rect = svg.getBoundingClientRect();
+      if (!rect.width) return;
+      const xSvg = ((ev.clientX - rect.left) / rect.width) * w;
+      let best = 0;
+      let bestDx = Infinity;
+      for (let i = 0; i < pts.length; i++) {
+        const dx = Math.abs(xOf(pts[i].t) - xSvg);
+        if (dx < bestDx) {
+          bestDx = dx;
+          best = i;
+        }
+      }
+      const p = pts[best];
+      const x = xOf(p.t);
+      const y = yOf(p.fp);
+      tip.textContent =
+        formatEnergyChartTick_(p.t, pack.mode) + " · " + p.fp + " FP";
+      tip.classList.remove("hidden");
+      const tipX = Math.max(8, Math.min(rect.width - 8, (x / w) * rect.width));
+      tip.style.left = tipX + "px";
+      tip.style.top = Math.max(8, (y / h) * rect.height - 28) + "px";
+      if (cross) {
+        cross.setAttribute("x1", String(x));
+        cross.setAttribute("x2", String(x));
+        cross.classList.remove("hidden");
+      }
+      if (dot) {
+        dot.setAttribute("cx", String(x));
+        dot.setAttribute("cy", String(y));
+        dot.classList.remove("hidden");
+      }
+    };
+
+    wrap.onmousemove = onMove;
+    wrap.onmouseleave = hide;
+    wrap.ontouchstart = (ev) => {
+      if (ev.touches && ev.touches[0]) {
+        onMove(ev.touches[0]);
+      }
+    };
   }
 
   function mountFocusEnergyChart_(fromYmd, toYmd) {
@@ -2323,7 +2387,16 @@
       host.innerHTML = "";
       return;
     }
-    host.innerHTML = buildFocusEnergyChartHtml_(fromYmd, toYmd);
+    let pack;
+    try {
+      pack = buildFocusEnergySeries_(fromYmd, toYmd);
+    } catch (e) {
+      host.innerHTML =
+        '<div class="energy-chart-card"><p class="muted">Focus energy chart unavailable.</p></div>';
+      return;
+    }
+    host.innerHTML = buildFocusEnergyChartHtmlFromPack_(pack, fromYmd, toYmd);
+    bindFocusEnergyChartTooltip_(host, pack);
   }
 
   function refreshEnergyBanner_() {
@@ -2342,16 +2415,11 @@
     banner.classList.add("energy-banner--" + snap.level);
 
     const fill = document.getElementById("energyBarFill");
-    const fpLab = document.getElementById("energyFpLabel");
     const msg = document.getElementById("energyBannerMsg");
     const sug = document.getElementById("energyBannerSuggest");
     const meta = document.getElementById("energyBannerMeta");
     const pct = Math.max(0, Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (ENERGY_FP_CAP - ENERGY_FP_FLOOR)) * 100));
     if (fill) fill.style.width = pct.toFixed(1) + "%";
-    if (fpLab) {
-      const n = Number(snap.fp);
-      fpLab.textContent = Number.isFinite(n) ? String(Math.round(n)) : "—";
-    }
     if (msg) {
       msg.textContent = snap.message || "";
       msg.classList.toggle("hidden", !snap.message);

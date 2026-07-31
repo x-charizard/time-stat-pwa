@@ -1621,7 +1621,7 @@ body.auth-locked [data-panel] {
 .energy-bar-track {
   position: relative;
   flex: 1;
-  height: 22px;
+  height: 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.1);
   overflow: hidden;
@@ -1632,21 +1632,6 @@ body.auth-locked [data-panel] {
   border-radius: 999px;
   background: #4caf50;
   transition: width 0.25s ease, background 0.25s ease;
-}
-.energy-fp-onbar {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  font-size: 0.8rem;
-  letter-spacing: 0.02em;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
-  pointer-events: none;
-  z-index: 1;
 }
 .energy-banner-msg {
   font-weight: 600;
@@ -1717,13 +1702,31 @@ body.auth-locked [data-panel] {
 .energy-chart-gran {
   font-size: 0.8rem;
 }
-.energy-chart-summary {
-  margin: 0 0 8px;
-  font-size: 0.8rem;
-}
 .energy-chart-svg-wrap {
+  position: relative;
   width: 100%;
   overflow-x: auto;
+  cursor: crosshair;
+}
+.energy-chart-tooltip {
+  position: absolute;
+  z-index: 5;
+  transform: translate(-50%, -100%);
+  padding: 5px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+.energy-chart-tooltip.hidden,
+.energy-chart-crosshair.hidden,
+.energy-chart-dot.hidden {
+  display: none !important;
 }
 .energy-chart-svg {
   width: 100%;
