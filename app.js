@@ -1952,22 +1952,21 @@
         "Critical: Cognitive lock risk! Mandatory 15min Resting/Meditating recommended.";
     } else if (st.fp <= 700) {
       level = "yellow";
-      message =
-        "Warning: Cognitive load increasing. Suggest switching to Medium/Low drain tasks.";
+      // Yellow：只變色／顯示 FP，唔出 warning 文案
+      message = "";
     }
 
-    let suggest = "建議下一個活動：";
+    let suggest = "";
     if (systemCrash || st.fp < 0) {
-      suggest += "Sleeping／Resting（修復）";
+      suggest = "建議下一個活動：Sleeping／Resting（修復）";
     } else if (blockHigh || banTrade) {
-      suggest += banTrade && !blockHigh ? "Medium／Low（禁 Trading）" : "Recover／Low（禁 High／Trading）";
-    } else if (st.fp > 700 && highMin < 90) {
-      suggest += "Deep／High（Trading／Programming）";
-    } else if (st.fp > 300) {
-      suggest += "Medium（Reviewing／Planning）或 15min+ Meditating";
-    } else {
-      suggest += "15min+ Resting／Meditating／Walking";
+      suggest =
+        "建議下一個活動：" +
+        (banTrade && !blockHigh ? "Medium／Low（禁 Trading）" : "Recover／Low（禁 High／Trading）");
+    } else if (st.fp <= 300) {
+      suggest = "建議下一個活動：15min+ Resting／Meditating／Walking";
     }
+    // Green／Yellow：唔推「下一個活動」文案
 
     return {
       fp: Math.round(st.fp * 10) / 10,
@@ -2011,8 +2010,14 @@
     const pct = Math.max(0, Math.min(100, ((snap.fp - ENERGY_FP_FLOOR) / (ENERGY_FP_CAP - ENERGY_FP_FLOOR)) * 100));
     if (fill) fill.style.width = pct.toFixed(1) + "%";
     if (fpLab) fpLab.textContent = snap.fp.toFixed(0) + " FP";
-    if (msg) msg.textContent = snap.message;
-    if (sug) sug.textContent = snap.suggest;
+    if (msg) {
+      msg.textContent = snap.message || "";
+      msg.classList.toggle("hidden", !snap.message);
+    }
+    if (sug) {
+      sug.textContent = snap.suggest || "";
+      sug.classList.toggle("hidden", !snap.suggest);
+    }
     if (meta) {
       meta.textContent = "";
       meta.classList.add("hidden");
