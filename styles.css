@@ -1691,6 +1691,54 @@ body.auth-locked [data-panel] {
   background: #9e9e9e;
 }
 
+.energy-chart-card {
+  margin: 0 0 18px;
+  padding: 12px 12px 8px;
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 10px);
+  background: rgba(255, 255, 255, 0.02);
+}
+.energy-chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.energy-chart-gran {
+  font-size: 0.8rem;
+}
+.energy-chart-summary {
+  margin: 0 0 8px;
+  font-size: 0.8rem;
+}
+.energy-chart-svg-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.energy-chart-svg {
+  width: 100%;
+  min-width: 280px;
+  height: auto;
+  display: block;
+}
+.energy-chart-line {
+  stroke: #ee8326;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.energy-chart-zero {
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+}
+.energy-chart-tick {
+  fill: var(--muted, #888);
+  font-size: 10px;
+}
+
 .soft-cap-banner {
   margin: 0 0 12px;
   padding: 12px 14px;

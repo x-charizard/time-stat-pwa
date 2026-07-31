@@ -1994,6 +1994,328 @@
     return calculateWakeDayEnergy_(refMs != null ? refMs : Date.now());
   }
 
+  /** 按 Report 日期跨度揀曲線粒度 */
+  function energyChartGranularity_(fromYmd, toYmd) {
+    const a = new Date(fromYmd + "T12:00:00").getTime();
+    const b = new Date(toYmd + "T12:00:00").getTime();
+    const days = Math.max(1, Math.round((b - a) / 86400000) + 1);
+    if (days <= 1) {
+      return { mode: "minute", bucketMs: 5 * 60000, days: days, label: "每 5 分鐘" };
+    }
+    if (days <= 14) {
+      return { mode: "hour", bucketMs: 3600000, days: days, label: "每小時" };
+    }
+    return { mode: "day", bucketMs: 86400000, days: days, label: "每日" };
+  }
+
+  function energySegmentCreditMinutes_(ev, t0, nextGlobal, endAt, nowMs, liveDay) {
+    let t1 = nextGlobal != null ? nextGlobal : liveDay ? Math.max(t0, nowMs) : endAt;
+    if (t1 > endAt) t1 = endAt;
+    let durationMin = Math.max(0, (t1 - t0) / 60000);
+    const tier = energyTierOfEvent_(ev);
+    if (tier !== "sleep") {
+      const gapMin =
+        nextGlobal != null ? (nextGlobal - t0) / 60000 : (endAt - t0) / 60000;
+      const endsAtWake = t1 >= endAt - 1;
+      const orphan =
+        gapMin > ENERGY_ORPHAN_GAP_MIN ||
+        (endsAtWake && nextGlobal != null && nextGlobal > endAt) ||
+        (nextGlobal == null && !liveDay);
+      if (orphan && durationMin > ENERGY_ORPHAN_CREDIT_CAP_MIN) {
+        durationMin = ENERGY_ORPHAN_CREDIT_CAP_MIN;
+      }
+      if (durationMin > ENERGY_MAX_SEGMENT_NON_SLEEP_MIN) {
+        durationMin = ENERGY_MAX_SEGMENT_NON_SLEEP_MIN;
+      }
+    }
+    return { durationMin: durationMin, t1: t1, tier: tier };
+  }
+
+  /** 將一段活動按「分鐘」推進 st（供曲線取樣） */
+  function applyEnergySegmentByMinutes_(st, ev, durationMin, onMin) {
+    const tier = energyTierOfEvent_(ev);
+    const key = activityKeyOfEv_(ev);
+    const n = Math.max(0, Math.floor(durationMin));
+    const frac = durationMin - n;
+    const aiMin =
+      tier === "recover" && key === "fooding"
+        ? energyFoodingEmbeddedAiMinutes_(ev, durationMin)
+        : 0;
+
+    function stepOne(isFrac) {
+      const step = isFrac ? frac : 1;
+      if (step <= 0) return;
+      if (tier === "sleep") {
+        applySleepDuration_(st, step);
+      } else if (tier === "recover" && key === "fooding") {
+        const idx = st._segMinIndex || 0;
+        if (idx < aiMin) {
+          applyDrainDuration_(st, ENERGY_MED_RATE, step, "medium");
+          st.foodingAiMin = (st.foodingAiMin || 0) + step;
+        } else {
+          applyRecoverDuration_(st, "fooding", step);
+        }
+        st._segMinIndex = idx + step;
+      } else if (tier === "recover" && key === "reading") {
+        let rate = 1.0;
+        if (durationMin < 15) rate *= 0.5;
+        const used = st.recoverUsed.leisure_reading || 0;
+        const room = Math.max(0, 60 - used);
+        const gain = Math.min(room, rate * step);
+        st.fp = clampEnergyFp_(st.fp + gain);
+        st.recoverUsed.leisure_reading = used + gain;
+      } else if (tier === "recover") {
+        applyRecoverDuration_(st, key, step);
+      } else if (tier === "high") {
+        const before = st.highMin;
+        applyDrainDuration_(st, ENERGY_HIGH_RATE, step, "high");
+        if (isTradingActivityEv_(ev)) st.highTradingMin += st.highMin - before;
+      } else if (tier === "medium") {
+        applyDrainDuration_(st, ENERGY_MED_RATE, step, "medium");
+      } else if (tier === "low") {
+        applyDrainDuration_(st, ENERGY_LOW_RATE, step, "low");
+      }
+      if (typeof onMin === "function") onMin(st.fp, step);
+    }
+
+    st._segMinIndex = 0;
+    for (let i = 0; i < n; i++) stepOne(false);
+    if (frac > 0.01) stepOne(true);
+    delete st._segMinIndex;
+  }
+
+  function pushEnergySample_(points, bucketMs, t, fp) {
+    const bt = Math.floor(t / bucketMs) * bucketMs;
+    const last = points.length ? points[points.length - 1] : null;
+    if (last && last.t === bt) {
+      last.fp = Math.round(fp * 10) / 10;
+      return;
+    }
+    points.push({ t: bt, fp: Math.round(fp * 10) / 10 });
+  }
+
+  /**
+   * Report 用：由 from～to 產生 FP 時間序列。
+   * @returns {{ mode: string, label: string, points: {t:number,fp:number}[] }}
+   */
+  function buildFocusEnergySeries_(fromYmd, toYmd) {
+    const gran = energyChartGranularity_(fromYmd, toYmd);
+    const list = sortedEventsUniqueById();
+    const nowMs = Date.now();
+    const points = [];
+
+    if (gran.mode === "day") {
+      let cursor = new Date(fromYmd + "T12:00:00");
+      const end = new Date(toYmd + "T12:00:00");
+      let guard = 0;
+      while (cursor.getTime() <= end.getTime() && guard < 800) {
+        guard++;
+        const snap = calculateWakeDayEnergy_(cursor.getTime(), {
+          inheritPrev: false,
+          nowMs: nowMs,
+        });
+        points.push({
+          t: snap.bounds.startMs,
+          fp: snap.fp,
+        });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      return { mode: gran.mode, label: gran.label, bucketMs: gran.bucketMs, points: points };
+    }
+
+    // minute / hour：逐個 wake-day 模擬
+    let dayCursor = wakeDayBounds(new Date(fromYmd + "T12:00:00")).startMs;
+    const rangeEnd = wakeDayBounds(new Date(toYmd + "T12:00:00")).endMs;
+    let guard = 0;
+    while (dayCursor < rangeEnd && guard < 40) {
+      guard++;
+      const bounds = wakeDayBounds(dayCursor);
+      const endAt = Math.min(bounds.endMs, rangeEnd);
+      const liveDay = nowMs >= bounds.startMs && nowMs < bounds.endMs;
+      const st = {
+        fp: ENERGY_FP_CAP,
+        startFp: ENERGY_FP_CAP,
+        highMin: 0,
+        medMin: 0,
+        lowMin: 0,
+        highTradingMin: 0,
+        drainedPts: 0,
+        recoveredPts: 0,
+        sleepTotalMin: 0,
+        sleepRecoveredPts: 0,
+        sleepPenaltyPts: 0,
+        recoverUsed: Object.create(null),
+        foodingAiMin: 0,
+      };
+      pushEnergySample_(points, gran.bucketMs, bounds.startMs, st.fp);
+
+      const dayEv = [];
+      for (let i = 0; i < list.length; i++) {
+        const t0 = new Date(list[i].start).getTime();
+        if (Number.isNaN(t0) || t0 < bounds.startMs || t0 >= endAt) continue;
+        dayEv.push({ ev: list[i], index: i, t0: t0 });
+      }
+      dayEv.sort((a, b) => a.t0 - b.t0);
+
+      for (let i = 0; i < dayEv.length; i++) {
+        const row = dayEv[i];
+        let nextGlobal = null;
+        for (let j = row.index + 1; j < list.length; j++) {
+          const tj = new Date(list[j].start).getTime();
+          if (!Number.isNaN(tj) && tj > row.t0) {
+            nextGlobal = tj;
+            break;
+          }
+        }
+        const cred = energySegmentCreditMinutes_(
+          row.ev,
+          row.t0,
+          nextGlobal,
+          endAt,
+          nowMs,
+          liveDay,
+        );
+        if (cred.durationMin <= 0) continue;
+        pushEnergySample_(points, gran.bucketMs, row.t0, st.fp);
+        let elapsed = 0;
+        applyEnergySegmentByMinutes_(st, row.ev, cred.durationMin, () => {
+          elapsed += 1;
+          const wall = row.t0 + elapsed * 60000;
+          pushEnergySample_(points, gran.bucketMs, wall, st.fp);
+        });
+      }
+      const endFpT = liveDay ? Math.min(nowMs, endAt) : endAt;
+      pushEnergySample_(points, gran.bucketMs, endFpT - 1, st.fp);
+      dayCursor = bounds.endMs;
+    }
+
+    return { mode: gran.mode, label: gran.label, bucketMs: gran.bucketMs, points: points };
+  }
+
+  function formatEnergyChartTick_(t, mode) {
+    const d = new Date(t);
+    const pad = (n) => String(n).padStart(2, "0");
+    if (mode === "day") {
+      return pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    }
+    if (mode === "hour") {
+      return pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + " " + pad(d.getHours()) + ":00";
+    }
+    return pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+
+  /** 純 SVG 專注力曲線（唔引入 chart library） */
+  function buildFocusEnergyChartHtml_(fromYmd, toYmd) {
+    let pack;
+    try {
+      pack = buildFocusEnergySeries_(fromYmd, toYmd);
+    } catch (e) {
+      return (
+        '<div class="energy-chart-card"><p class="muted">Focus energy chart unavailable.</p></div>'
+      );
+    }
+    const pts = pack.points || [];
+    if (pts.length < 2) {
+      return (
+        '<div class="energy-chart-card">' +
+        '<h2 class="report-h">Focus Energy</h2>' +
+        '<p class="muted">Not enough points for ' +
+        escapeHtml(pack.label || "") +
+        " chart.</p></div>"
+      );
+    }
+    const w = 720;
+    const h = 220;
+    const padL = 44;
+    const padR = 12;
+    const padT = 16;
+    const padB = 36;
+    const ymin = ENERGY_FP_FLOOR;
+    const ymax = ENERGY_FP_CAP;
+    const t0 = pts[0].t;
+    const t1 = pts[pts.length - 1].t;
+    const spanT = Math.max(1, t1 - t0);
+    const xOf = (t) => padL + ((t - t0) / spanT) * (w - padL - padR);
+    const yOf = (fp) => {
+      const c = Math.max(ymin, Math.min(ymax, fp));
+      return padT + (1 - (c - ymin) / (ymax - ymin)) * (h - padT - padB);
+    };
+    let d = "";
+    for (let i = 0; i < pts.length; i++) {
+      const x = xOf(pts[i].t);
+      const y = yOf(pts[i].fp);
+      d += (i === 0 ? "M" : "L") + x.toFixed(1) + "," + y.toFixed(1) + " ";
+    }
+    const y0 = yOf(0);
+    const tickIdx = [0];
+    if (pts.length > 2) tickIdx.push(Math.floor((pts.length - 1) / 2));
+    tickIdx.push(pts.length - 1);
+    const uniq = [...new Set(tickIdx)];
+    let ticks = "";
+    for (let i = 0; i < uniq.length; i++) {
+      const p = pts[uniq[i]];
+      const x = xOf(p.t);
+      ticks +=
+        '<text x="' +
+        x.toFixed(1) +
+        '" y="' +
+        (h - 8) +
+        '" text-anchor="middle" class="energy-chart-tick">' +
+        escapeHtml(formatEnergyChartTick_(p.t, pack.mode)) +
+        "</text>";
+    }
+    const fpFirst = pts[0].fp;
+    const fpLast = pts[pts.length - 1].fp;
+    return (
+      '<div class="energy-chart-card">' +
+      '<div class="energy-chart-head">' +
+      '<h2 class="report-h" style="margin:0;">Focus Energy</h2>' +
+      '<span class="muted energy-chart-gran">' +
+      escapeHtml(pack.label) +
+      " · " +
+      escapeHtml(fromYmd) +
+      " → " +
+      escapeHtml(toYmd) +
+      "</span></div>" +
+      '<p class="muted energy-chart-summary">Start ' +
+      fpFirst +
+      " FP → End " +
+      fpLast +
+      " FP · " +
+      pts.length +
+      " points</p>" +
+      '<div class="energy-chart-svg-wrap">' +
+      '<svg class="energy-chart-svg" viewBox="0 0 ' +
+      w +
+      " " +
+      h +
+      '" role="img" aria-label="Focus energy chart">' +
+      '<line x1="' +
+      padL +
+      '" y1="' +
+      y0.toFixed(1) +
+      '" x2="' +
+      (w - padR) +
+      '" y2="' +
+      y0.toFixed(1) +
+      '" class="energy-chart-zero"/>' +
+      '<text x="8" y="' +
+      (padT + 4) +
+      '" class="energy-chart-tick">1000</text>' +
+      '<text x="8" y="' +
+      y0.toFixed(1) +
+      '" class="energy-chart-tick">0</text>' +
+      '<text x="8" y="' +
+      (h - padB) +
+      '" class="energy-chart-tick">-500</text>' +
+      '<path d="' +
+      d.trim() +
+      '" class="energy-chart-line" fill="none"/>' +
+      ticks +
+      "</svg></div></div>"
+    );
+  }
+
   function refreshEnergyBanner_() {
     const banner = document.getElementById("energyBanner");
     if (!banner) return;
@@ -4645,9 +4967,11 @@
 
       const focusFrom = slices.ranges[0].from;
       const focusTo = slices.ranges[0].to;
-      html +=
-        `<p class="muted" style="margin:16px 0 8px;">Raw Data · focus period ${escapeHtml(focusFrom)} ～ ${escapeHtml(focusTo)}（comparison columns stay 3 periods）</p>`;
-      html += buildReportRawDataHtml_(ag[0].rawSegmentRows, reportCtx);
+      html =
+        buildFocusEnergyChartHtml_(focusFrom, focusTo) +
+        html +
+        `<p class="muted" style="margin:16px 0 8px;">Raw Data · focus period ${escapeHtml(focusFrom)} ～ ${escapeHtml(focusTo)}（comparison columns stay 3 periods）</p>` +
+        buildReportRawDataHtml_(ag[0].rawSegmentRows, reportCtx);
 
       box.innerHTML = html;
       bindReportRawDayFilter_();
@@ -4655,8 +4979,10 @@
     }
 
     const agg = aggregateReportForRange(from, to, list, f, showByDay, reportCtx);
+    const energyChartHtml = buildFocusEnergyChartHtml_(from, to);
     if (agg.segmentsInRange === 0) {
-      box.innerHTML = `<p class="muted">No Billable Segments In This Range.</p>`;
+      box.innerHTML =
+        energyChartHtml + `<p class="muted">No Billable Segments In This Range.</p>`;
       return;
     }
     if (agg.segmentsKept === 0) {
@@ -4671,7 +4997,10 @@
           ? `<p class="muted" style="margin-top:8px;">${escapeHtml(nf)}</p>`
           : `<p class="muted" style="margin-top:8px;">No Group, Layers, Category, Sub Category, Project, Activity, Or People Filters Are Set — Only Search Narrows Results.</p>`;
       box.innerHTML =
-        `<p class="muted">There Are Records With Duration In This Range, But <strong>None Match Your Filters</strong>.</p>` + kwHint + other;
+        energyChartHtml +
+        `<p class="muted">There Are Records With Duration In This Range, But <strong>None Match Your Filters</strong>.</p>` +
+        kwHint +
+        other;
       return;
     }
 
@@ -4731,7 +5060,7 @@
     html += tbl("People", byPerson);
     html += buildReportRawDataHtml_(rawSegmentRows, reportCtx);
 
-    box.innerHTML = html;
+    box.innerHTML = energyChartHtml + html;
     bindReportRawDayFilter_();
     } finally {
       syncReportUnitToggleButtons();
