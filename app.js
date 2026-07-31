@@ -1667,8 +1667,11 @@
   const ENERGY_ORPHAN_CREDIT_CAP_MIN = 90;
   /** 單一 punch 非 Sleep 最多計入 FP 嘅分鐘（含「而家仲進行中」；對齊 High 4h 上限） */
   const ENERGY_MAX_SEGMENT_NON_SLEEP_MIN = 4 * 60;
-  /** 承襲上一日時，起床 FP 唔低過呢個（避免一開 app 就 −500 Crash） */
-  const ENERGY_WAKE_START_FLOOR = 300;
+  /**
+   * 跨日繼承暫時關閉：每日 wake 由 1000 起步。
+   * （舊繼承 + drain×1.2/1.5 會令「一開 app」就負 FP；等 Sleep 橋接穩定再開）
+   */
+  const ENERGY_INHERIT_PREV_DAY = false;
   let _energyRefreshTimer_ = null;
   let _lastEnergySnap_ = null;
 
@@ -1814,20 +1817,16 @@
     const list = sortedEventsUniqueById();
 
     let startFp = ENERGY_FP_CAP;
-    // 只睇「昨日」一層；撞過 −500 地板唔繼承；起床最少 ENERGY_WAKE_START_FLOOR
-    if (o.inheritPrev !== false && depth < 1) {
+    if (ENERGY_INHERIT_PREV_DAY && o.inheritPrev !== false && depth < 1) {
       const prevSnap = calculateWakeDayEnergy_(bounds.startMs - 1, {
         inheritPrev: false,
         depth: depth + 1,
         endAtMs: bounds.startMs,
         nowMs: bounds.startMs,
       });
-      if (prevSnap.systemCrash || prevSnap.fp <= ENERGY_FP_FLOOR + 1e-9) {
-        startFp = ENERGY_FP_CAP;
-      } else if (prevSnap.fp < ENERGY_FP_CAP) {
-        startFp = clampEnergyFp_(Math.max(ENERGY_WAKE_START_FLOOR, prevSnap.fp));
-      } else {
-        startFp = ENERGY_FP_CAP;
+      if (!prevSnap.systemCrash && prevSnap.fp > ENERGY_FP_FLOOR + 1e-9) {
+        // 只繼承正數／輕微虧損；唔帶負起始入新一日
+        startFp = clampEnergyFp_(Math.max(0, prevSnap.fp));
       }
     }
 
