@@ -1765,6 +1765,43 @@
     return Math.max(0.4, Math.min(1.8, 1 + s * 0.25));
   }
 
+  /** Remark 入面「唔適／干擾」分鐘，例如 "Bali belly for 10 mins"。 */
+  function energyParseRemarkDisruptionMinutes_(ev) {
+    const remark = String((ev && ev.remark) || "");
+    if (!remark.trim()) return 0;
+    const patterns = [
+      /(?:for|約|大概|近)\s*(\d{1,3})\s*(?:m|min|mins|minutes|分鐘|分)\b/i,
+      /(\d{1,3})\s*(?:m|min|mins|minutes|分鐘|分)\b/i,
+    ];
+    for (let i = 0; i < patterns.length; i++) {
+      const m = remark.match(patterns[i]);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n) && n > 0) return Math.min(24 * 60, n);
+      }
+    }
+    return 0;
+  }
+
+  /**
+   * Sleep DF 回復倍率：唔好用成段 Sleep 食滿負面 score（一般可去到 0.4）。
+   * - 若 remark 有唔適分鐘（如 Bali belly for 10 mins）：按佔比混合 (1−w)×1 + w×scoreMult
+   * - Sleep 情緒倍率最低 0.7；短時唔適按佔比通常接近 1（例如 10/482 ≈ 0.99）
+   */
+  function energySleepRecoverMult_(sem, sleepDurationMin, ev) {
+    const scoreMult = energySentimentRecoverMult_(sem && sem.score);
+    const dur = Math.max(0, Number(sleepDurationMin) || 0);
+    const badMin = energyParseRemarkDisruptionMinutes_(ev);
+    let mult;
+    if (badMin > 0 && dur > 0) {
+      const w = Math.min(1, badMin / dur);
+      mult = (1 - w) * 1 + w * scoreMult;
+    } else {
+      mult = scoreMult;
+    }
+    return Math.max(0.7, Math.min(1.8, mult));
+  }
+
   function energyReadingIsLeisure_(ev) {
     const blob = String((ev && ev.remark) || "").toLowerCase();
     if (/小說|novel|fiction|harry\s*potter|漫畫|comic|輕小說|romance|thriller/.test(blob)) {
@@ -2271,7 +2308,10 @@
     const t0 = t0Ms != null ? t0Ms : 0;
     const sem = getEnergySemanticForEv_(ev);
     st.sessionDrainMult = energySentimentDrainMult_(sem.score);
-    st.sessionRecoverMult = energySentimentRecoverMult_(sem.score);
+    st.sessionRecoverMult =
+      tier === "sleep"
+        ? energySleepRecoverMult_(sem, durationMin, ev)
+        : energySentimentRecoverMult_(sem.score);
     if (tier === "sleep") {
       st.sleepPower = sem.is_fragmented
         ? ENERGY_SLEEP_POWER_FRAGMENTED
