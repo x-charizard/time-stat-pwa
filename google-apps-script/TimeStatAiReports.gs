@@ -9,10 +9,13 @@
  */
 
 var AI_REPORTS_SHEET = "TimeStatAIReports";
-/** 優先：普通 Flash；無 quota／唔支援 → Flash-Lite（唔再用 Pro） */
+/** 優先：普通 Flash；忙碌／唔支援 → 舊 Flash → Flash-Lite（唔再用 Pro） */
 var GEMINI_MODEL_PRIMARY = "gemini-3.6-flash";
+var GEMINI_MODEL_FLASH_FALLBACK = "gemini-2.5-flash";
 var GEMINI_MODEL_FREE_LITE = "gemini-3.5-flash-lite";
 var GEMINI_MODEL = GEMINI_MODEL_PRIMARY;
+var GEMINI_TRANSIENT_RETRIES = 2;
+var GEMINI_TRANSIENT_SLEEP_MS = 1500;
 /** Lite／共享額度熔斷（epoch ms）；撞 429／RPD 後暫停打 Flash Lite */
 var GEMINI_LITE_CIRCUIT_PROP = "GEMINI_LITE_CIRCUIT_UNTIL";
 var GEMINI_LITE_CIRCUIT_MS = 6 * 3600000;
@@ -1326,11 +1329,12 @@ function aiUserPrompt_(stats) {
 }
 
 /**
- * 模型鏈：普通 Flash → Flash-Lite（撞 RPD／quota／唔支援就下一檔；唔用 Pro）
+ * 模型鏈：3.6 Flash → 2.5 Flash → Flash-Lite（唔用 Pro）
  */
 function aiGeminiModelChain_() {
   return [
     { model: GEMINI_MODEL_PRIMARY, thinkingLevel: "medium", tier: "flash" },
+    { model: GEMINI_MODEL_FLASH_FALLBACK, thinkingLevel: "medium", tier: "flash-fallback" },
     { model: GEMINI_MODEL_FREE_LITE, thinkingLevel: "minimal", tier: "free-lite" },
   ];
 }
@@ -1355,6 +1359,14 @@ function aiIsGeminiHardQuota_(code, text) {
   );
 }
 
+/** 503／高負載暫時不可用（應重試或換模型，唔好當硬額度熔斷） */
+function aiIsGeminiTransient_(code, text) {
+  var c = Number(code) || 0;
+  var t = String(text || "").toLowerCase();
+  if (c === 503 || c === 502 || c === 504) return true;
+  return /high demand|try again later|unavailable|temporarily|overloaded|deadline exceeded/i.test(t);
+}
+
 function aiGeminiLiteCircuitUntil_() {
   var props = PropertiesService.getScriptProperties();
   return Number(props.getProperty(GEMINI_LITE_CIRCUIT_PROP) || 0) || 0;
@@ -1371,15 +1383,16 @@ function aiGeminiTripLiteCircuit_(ms) {
 }
 
 /**
- * 單次呼叫：預設 Interactions 優先，再 generateContent。
- * opts.skipInteractions=true → 只打 generateContent（semantic 用，避免雙重計 RPM）。
- * @returns {{ok:boolean, markdown?:string, via?:string, code?:number, body?:string, quota?:boolean, hardQuota?:boolean}}
+ * 單次呼叫：預設只打 generateContent（減 RPM／避免 3.6 雙重打 Interactions）。
+ * opts.useInteractions=true 先試 Interactions。
+ * 503／high demand 會短重試。
+ * @returns {{ok:boolean, markdown?:string, via?:string, code?:number, body?:string, quota?:boolean, hardQuota?:boolean, transient?:boolean}}
  */
 function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user, opts) {
   opts = opts || {};
   var think = String(thinkingLevel || "high").toLowerCase();
 
-  if (!opts.skipInteractions) {
+  if (opts.useInteractions) {
     var urlI = "https://generativelanguage.googleapis.com/v1beta/interactions";
     var bodyI = {
       model: model,
@@ -1417,7 +1430,7 @@ function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user
           body: String(textI).slice(0, 400),
         };
       }
-      if (aiIsGeminiQuotaOrUnavailable_(codeI, textI)) {
+      if (aiIsGeminiQuotaOrUnavailable_(codeI, textI) && !aiIsGeminiTransient_(codeI, textI)) {
         return { ok: false, quota: true, code: codeI, body: String(textI).slice(0, 400) };
       }
     } catch (eI) {}
@@ -1436,26 +1449,59 @@ function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user
       thinkingConfig: { thinkingLevel: think.toUpperCase() },
     },
   };
-  var resG = UrlFetchApp.fetch(urlG, {
-    method: "post",
-    contentType: "application/json",
-    payload: JSON.stringify(bodyG),
-    muteHttpExceptions: true,
-  });
-  var codeG = resG.getResponseCode();
-  var textG = resG.getContentText();
-  if (codeG >= 200 && codeG < 300) {
-    var jG = JSON.parse(textG);
-    var outG = extractGeminiTextFallback_(jG);
-    if (outG) return { ok: true, markdown: String(outG), via: "generateContent", code: codeG };
-    return { ok: false, code: codeG, body: "empty_output" };
+
+  var maxAttempts = 1 + (Number(GEMINI_TRANSIENT_RETRIES) || 0);
+  var lastCode = 0;
+  var lastBody = "";
+  for (var attempt = 0; attempt < maxAttempts; attempt++) {
+    if (attempt > 0) {
+      try {
+        Utilities.sleep(GEMINI_TRANSIENT_SLEEP_MS * attempt);
+      } catch (eSleep) {}
+    }
+    var resG = UrlFetchApp.fetch(urlG, {
+      method: "post",
+      contentType: "application/json",
+      payload: JSON.stringify(bodyG),
+      muteHttpExceptions: true,
+    });
+    var codeG = resG.getResponseCode();
+    var textG = resG.getContentText();
+    lastCode = codeG;
+    lastBody = String(textG).slice(0, 400);
+    if (codeG >= 200 && codeG < 300) {
+      var jG = JSON.parse(textG);
+      var outG = extractGeminiTextFallback_(jG);
+      if (outG) return { ok: true, markdown: String(outG), via: "generateContent", code: codeG };
+      return { ok: false, code: codeG, body: "empty_output" };
+    }
+    if (aiIsGeminiHardQuota_(codeG, textG)) {
+      return {
+        ok: false,
+        quota: true,
+        hardQuota: true,
+        code: codeG,
+        body: lastBody,
+      };
+    }
+    if (aiIsGeminiTransient_(codeG, textG)) {
+      if (attempt < maxAttempts - 1) continue;
+      return {
+        ok: false,
+        transient: true,
+        code: codeG,
+        body: lastBody,
+      };
+    }
+    break;
   }
   return {
     ok: false,
-    quota: aiIsGeminiQuotaOrUnavailable_(codeG, textG),
-    hardQuota: aiIsGeminiHardQuota_(codeG, textG),
-    code: codeG,
-    body: String(textG).slice(0, 400),
+    quota: aiIsGeminiQuotaOrUnavailable_(lastCode, lastBody),
+    hardQuota: aiIsGeminiHardQuota_(lastCode, lastBody),
+    transient: aiIsGeminiTransient_(lastCode, lastBody),
+    code: lastCode,
+    body: lastBody,
   };
 }
 
@@ -1467,8 +1513,8 @@ function aiSemanticCacheKey_(activity, remark) {
 }
 
 /**
- * Flash 優先；無 quota／唔支援 → Flash-Lite。
- * 主模型撞硬額度或 Lite 熔斷開啟時，唔再打 Lite（避免雪崩）。
+ * Flash 優先；503／忙碌 → 換模型重試；硬額度先熔斷 Lite。
+ * 主模型暫時 503 時：即使 Lite 熔斷開啟都允許打下一檔（503 ≠ RPD）。
  */
 function callGeminiWithMessages_(system, user) {
   var props = PropertiesService.getScriptProperties();
@@ -1480,17 +1526,21 @@ function callGeminiWithMessages_(system, user) {
   var chain = aiGeminiModelChain_();
   var last = null;
   var attempted = [];
+  var prevTransient = false;
 
   for (var i = 0; i < chain.length; i++) {
     var step = chain[i];
     if (step.tier === "free-lite") {
-      if (aiGeminiLiteCircuitOpen_()) {
+      // 硬額度熔斷時跳過 Lite；但上一檔係 503 高負載則放行
+      if (aiGeminiLiteCircuitOpen_() && !prevTransient) {
         attempted.push(step.model + "@circuit-open");
         break;
       }
     }
     attempted.push(step.model + "@" + step.thinkingLevel);
-    var r = callGeminiOnce_(apiKey, step.model, step.thinkingLevel, temperature, system, user);
+    var r = callGeminiOnce_(apiKey, step.model, step.thinkingLevel, temperature, system, user, {
+      skipInteractions: true,
+    });
     last = r;
     if (r && r.ok && r.markdown) {
       return {
@@ -1503,14 +1553,16 @@ function callGeminiWithMessages_(system, user) {
         attempted: attempted,
       };
     }
+    prevTransient = !!(r && r.transient);
     if (r && r.hardQuota) {
       aiGeminiTripLiteCircuit_();
-      if (step.tier === "flash" || step.tier === "pro") {
+      if (step.tier === "flash" || step.tier === "flash-fallback" || step.tier === "pro") {
         attempted.push(GEMINI_MODEL_FREE_LITE + "@skipped-after-primary-hard-quota");
         break;
       }
     }
-    if (!(r && (r.quota || r.code >= 400))) break;
+    // 503／quota／4xx／5xx → 試下一檔；其他就停
+    if (!(r && (r.quota || r.transient || r.code >= 400))) break;
   }
 
   var detail = last && last.body ? String(last.body).slice(0, 240) : "unknown";
