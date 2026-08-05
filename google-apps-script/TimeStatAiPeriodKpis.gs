@@ -75,13 +75,15 @@ function aiDefaultPeriodSections_(periodType) {
   var t = String(periodType || "").toLowerCase();
   if (t === "week") {
     return {
-      cognitiveLock: true,
-      switchFail: true,
+      fatigueSwitch: true,
       socialDays: true,
       negativeRemarks72h: true,
       positiveRemarks: true,
       vacationDays: true,
-      overWorkDays: true,
+      heaDays: true,
+      idealFocusDays: true,
+      overloadDays: true,
+      startQuality: true,
       sleepAnomalies: true,
       meditateDays: true,
       exerciseDays: true,
@@ -92,14 +94,14 @@ function aiDefaultPeriodSections_(periodType) {
   }
   if (t === "month") {
     return {
-      switchFailDays: true,
+      fatigueSwitch: true,
       overSocialWeeks: true,
       chaosStreak: true,
       sleepAnomalies: true,
       meditateKeep: true,
       exerciseGaps: true,
-      workOver4h: true,
-      workOver6h: true,
+      dayTypeCounts: true,
+      startQuality: true,
       tradingOver2h: true,
       positiveEmotionDays: true,
       emotionUpsDowns: true,
@@ -144,16 +146,18 @@ function aiDefaultPeriodConfig_() {
 function aiPeriodSectionLabels_() {
   return {
     week: {
-      cognitiveLock:
-        "Cognitive Lock — continuous trusted Work >60m closed by a real rest/non-Work log (ideal <3 / week)",
-      switchFail:
-        "Switch Fail — Diffused Mode between two trusted Work blocks <15m (ideal <3 / week)",
-      socialDays: "Social days — Friending+Familying+Socialing total >2h that day (ideal <3 / week)",
+      fatigueSwitch:
+        "Fatigue switch after High Work — ≤1.4 ideal; 1.4–1.6 good; ≥1.6 poor (also report Fatigue reduction from recover/sleep)",
+      socialDays:
+        "Social battery days — Friending+Familying+Socialing total >2h that day (≤2h does not consume; ideal <3 / week)",
       negativeRemarks72h:
         "Negative emotion remarks — list hits + what happened in the prior 72h",
       positiveRemarks: "Positive emotion remarks — highlight matching remarks",
-      vacationDays: "Vacation days — Work Group <2h (ideal 1–2 / week)",
-      overWorkDays: "Over-work days — Work Group >4h (ideal ≤2 / week, not consecutive)",
+      vacationDays: "Vacation days — DF drain <300 and end DF >500 (ideal 1–2 / week)",
+      heaDays: "Hea days — end DF >0 and DF drain <700",
+      idealFocusDays: "Ideal focus days — end DF >0 and DF drain ≥700",
+      overloadDays: "Overload/Critical days — end DF <0 or DF drain >1000, or end DF ≤500",
+      startQuality: "Wake DF start quality — Good(=cap) / Moderate(≥700) / Bad(500<wake<700) / Terrible(≤500)",
       sleepAnomalies:
         "Sleep anomalies — Sleeping <6h or >10h when logged (max consecutive ≤2 days)",
       meditateDays: "Meditate days — Meditating >0 (ideal ≥6 / week)",
@@ -164,14 +168,16 @@ function aiPeriodSectionLabels_() {
       comparisons: "3-week comparison — current + prior 2 weeks",
     },
     month: {
-      switchFailDays: "Switch-fail days — days with Diffused Mode gap <15m between Work (ideal ≤4 / month)",
+      fatigueSwitch:
+        "Fatigue switch after High Work — count ideal/good/poor; report how much Fatigue_Factor was reduced",
       overSocialWeeks: "Over-social weeks — socialDays (>2h) >3; must not be two weeks in a row",
       chaosStreak: "Chaos streak — negative-emotion days must not run ≥3 consecutive",
       sleepAnomalies: "Sleep anomalies — short/long sleep must not be two consecutive days",
       meditateKeep: "Meditate keep — whether Meditating days stay consistent",
       exerciseGaps: "Exercise gaps — spacing between ≥30m exercise days / recovery",
-      workOver4h: "Work >4h days — count and distribution",
-      workOver6h: "Work ≥6h days — must not be two consecutive days",
+      dayTypeCounts:
+        "DF day types — vacation / hea / idealFocus / overload / critical day counts (see Energy definitions)",
+      startQuality: "Wake DF start quality — Good / Moderate / Bad / Terrible day counts",
       tradingOver2h: "Trading >2h days — must not be two consecutive days",
       positiveEmotionDays: "Positive emotion days — days with positive keyword hits",
       emotionUpsDowns: "Emotion ups and downs — daily positive/negative sequence",
@@ -329,6 +335,28 @@ function aiBuildDailySeries_(state, range) {
       places: places,
     });
     dayCursor = dayEnd;
+  }
+
+  // 用 Energy DF 日型覆寫 vacation／overWork（若重播可用）
+  if (typeof aiEnergyReplayDayMetrics_ === "function") {
+    try {
+      var em = aiEnergyReplayDayMetrics_(state, range.fromMs, range.toMs, 14);
+      var by = (em && em.byYmd) || {};
+      for (var di = 0; di < days.length; di++) {
+        var er = by[days[di].ymd];
+        if (!er || er.noData) continue;
+        days[di].dayType = er.dayType;
+        days[di].startQuality = er.startQuality;
+        days[di].wakeDf = er.wakeDf;
+        days[di].endDf = er.endDf;
+        days[di].dfDrained = er.dfDrained;
+        days[di].vacation = er.dayType === "vacation";
+        days[di].hea = er.dayType === "hea";
+        days[di].idealFocus = er.dayType === "idealFocus";
+        days[di].overWork = er.dayType === "overload" || er.dayType === "critical";
+        days[di].workOver6h = er.dayType === "overload" || er.dayType === "critical";
+      }
+    } catch (eEn) {}
   }
   return days;
 }
@@ -697,18 +725,13 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     return !!x.hasNegative;
   });
 
-  var cognitiveLockCount = Number(rhythm.cognitiveLockCount || 0);
-  var switchFailCount = Number(rhythm.switchFailCount || 0);
-  // 切換失靈「日」：用 switchFails 嘅 ymd unique
-  var switchFailYmds = {};
-  var sFails = rhythm.switchFails || [];
-  for (var sf = 0; sf < sFails.length; sf++) {
-    if (sFails[sf].ymd) switchFailYmds[sFails[sf].ymd] = 1;
-  }
-  var switchFailDayCount = 0;
-  for (var sy in switchFailYmds) {
-    if (Object.prototype.hasOwnProperty.call(switchFailYmds, sy)) switchFailDayCount++;
-  }
+  var fatigueSwitchCounts = rhythm.fatigueSwitchCounts || {
+    ideal: 0,
+    good: 0,
+    poor: 0,
+  };
+  var fatigueSwitchPoor = Number(fatigueSwitchCounts.poor || 0);
+  var fatigueTotalDropSum = Number(rhythm.fatigueTotalDropSum || 0);
 
   // exercise gaps (days between exercise days)
   var exGaps = [];
@@ -746,14 +769,15 @@ function enrichStatsWithPeriodKpis_(state, stats) {
   }
 
   if (pType === "week") {
-    if (cognitiveLockCount >= 3) fail("cognitiveLock", "認知鎖死 " + cognitiveLockCount + " 次（理想 <3）");
-    if (switchFailCount >= 3) fail("switchFail", "切換失靈 " + switchFailCount + " 次（理想 <3）");
-    if (socialDays.length >= 3) fail("socialDays", "Social 日 " + socialDays.length + "（理想 <3）");
+    if (fatigueSwitchPoor >= 3) {
+      fail("fatigueSwitchPoor", "Fatigue 切換差劣 " + fatigueSwitchPoor + " 次（理想 <3）");
+    }
+    if (socialDays.length >= 3) fail("socialDays", "Social Battery 日 " + socialDays.length + "（理想 <3）");
     if (vacationDays.length < 1 || vacationDays.length > 2) {
       warn("vacationDays", "放假日 " + vacationDays.length + "（理想 1–2）");
     }
-    if (overWorkDays.length > 2) fail("overWorkDays", "Over work 日 " + overWorkDays.length + "（理想 ≤2）");
-    if (aiHasConsecutiveTrue_(overWorkFlags, 2)) fail("overWorkStreak", "Over work 連續 ≥2 日");
+    if (overWorkDays.length > 2) fail("overWorkDays", "Overload／Critical 日 " + overWorkDays.length + "（理想 ≤2）");
+    if (aiHasConsecutiveTrue_(overWorkFlags, 2)) fail("overWorkStreak", "Overload／Critical 連續 ≥2 日");
     if (aiConsecutiveTrueStreaks_(sleepFlags).maxStreak > 2) {
       fail("sleepStreak", "睡眠異常連續 >2 日");
     }
@@ -762,11 +786,13 @@ function enrichStatsWithPeriodKpis_(state, stats) {
       warn("exerciseDays", "運動≥30m 日 " + exerciseDays.length + "（理想 2–5）");
     }
   } else if (pType === "month") {
-    if (switchFailDayCount > 4) fail("switchFailDays", "切換失靈日 " + switchFailDayCount + "（理想 ≤4）");
+    if (fatigueSwitchPoor > 8) {
+      fail("fatigueSwitchPoor", "Fatigue 切換差劣 " + fatigueSwitchPoor + " 次（理想 ≤8／月）");
+    }
     if (overSocialConsecutive) fail("overSocialWeeks", "連續兩週 over social（socialDays>3）");
     if (aiHasConsecutiveTrue_(negFlags, 3)) fail("chaosStreak", "負面情緒／chaos 連續 ≥3 日");
     if (aiHasConsecutiveTrue_(sleepFlags, 2)) fail("sleepStreak", "睡眠異常連續 ≥2 日");
-    if (aiHasConsecutiveTrue_(work6Flags, 2)) fail("work6Streak", "Work≥6h 連續 ≥2 日");
+    if (aiHasConsecutiveTrue_(work6Flags, 2)) fail("work6Streak", "Overload／Critical 連續 ≥2 日");
     if (aiHasConsecutiveTrue_(tradeFlags, 2)) fail("tradeStreak", "Trading>2h 連續 ≥2 日");
   }
 
@@ -851,32 +877,31 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     periodNotes: String(pcfg.notes || ""),
     targets: {
       week: {
-        cognitiveLockMax: 2,
-        switchFailMax: 2,
+        fatigueSwitchPoorMax: 2,
         socialDaysMax: 2,
         vacationDaysIdeal: "1-2",
-        overWorkDaysMax: 2,
-        overWorkNoConsecutive: true,
+        overloadCriticalDaysMax: 2,
+        overloadNoConsecutive: true,
         sleepAnomalyMaxConsecutive: 2,
         meditateDaysMin: 6,
         exerciseDaysIdeal: "2-5",
       },
       month: {
-        switchFailDaysMax: 4,
+        fatigueSwitchPoorMax: 8,
         overSocialNoTwoConsecutiveWeeks: true,
         chaosMaxConsecutiveDays: 2,
         sleepAnomalyMaxConsecutive: 1,
-        work6hNoConsecutive: true,
+        overloadNoConsecutive: true,
         tradingOver2hNoConsecutive: true,
       },
     },
     summary: {
-      cognitiveLockCount: cognitiveLockCount,
-      switchFailCount: switchFailCount,
-      switchFailDayCount: switchFailDayCount,
+      fatigueSwitchCounts: fatigueSwitchCounts,
+      fatigueSwitchPoor: fatigueSwitchPoor,
+      fatigueTotalDropSum: fatigueTotalDropSum,
       socialDays: socialDays.length,
       vacationDays: vacationDays.length,
-      overWorkDays: overWorkDays.length,
+      overloadCriticalDays: overWorkDays.length,
       workOver6hDays: work6Days.length,
       tradingOver2hDays: tradeOverDays.length,
       sleepShortDays: sleepShort.length,
@@ -888,7 +913,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
       positiveEmotionDays: posDays.length,
       negativeEmotionDays: negDays.length,
       chaosMaxStreak: aiConsecutiveTrueStreaks_(negFlags).maxStreak,
-      overWorkMaxStreak: aiConsecutiveTrueStreaks_(overWorkFlags).maxStreak,
+      overloadMaxStreak: aiConsecutiveTrueStreaks_(overWorkFlags).maxStreak,
       work6hMaxStreak: aiConsecutiveTrueStreaks_(work6Flags).maxStreak,
       tradingOver2hMaxStreak: aiConsecutiveTrueStreaks_(tradeFlags).maxStreak,
       overSocialConsecutiveWeeks: overSocialConsecutive,
@@ -898,7 +923,13 @@ function enrichStatsWithPeriodKpis_(state, stats) {
         return x.ymd;
       }),
       overWorkDays: overWorkDays.map(function (x) {
-        return { ymd: x.ymd, workHours: x.workHours };
+        return {
+          ymd: x.ymd,
+          dayType: x.dayType || null,
+          endDf: x.endDf != null ? x.endDf : null,
+          dfDrained: x.dfDrained != null ? x.dfDrained : null,
+          workHours: x.workHours,
+        };
       }),
       workOver6hDays: work6Days.map(function (x) {
         return { ymd: x.ymd, workHours: x.workHours };

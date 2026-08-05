@@ -205,6 +205,27 @@ function aiPeriodDisplayLabel_(periodType, periodKey) {
   return key;
 }
 
+/**
+ * 統一 AI report／email 標題：yyyy-mm-dd Monthly|Weekly|Quarterly|Yearly Time Stat Report
+ * 日期用期終日（range.toYmd）。
+ */
+function aiReportDocumentTitle_(periodType, range) {
+  var type = String(periodType || "").toLowerCase();
+  var ymd = range && range.toYmd ? String(range.toYmd) : "";
+  if (!ymd && range && range.fromYmd) ymd = String(range.fromYmd);
+  var kind =
+    type === "week"
+      ? "Weekly"
+      : type === "month"
+        ? "Monthly"
+        : type === "quarter"
+          ? "Quarterly"
+          : type === "year"
+            ? "Yearly"
+            : "Custom";
+  return (ymd ? ymd + " " : "") + kind + " Time Stat Report";
+}
+
 function aiPeriodRange_(periodType, periodKey) {
   var type = String(periodType || "").toLowerCase();
   var key = String(periodKey || "").trim();
@@ -441,6 +462,7 @@ function aiEventReasonBits_(ev, activityName) {
   };
 }
 
+/** @deprecated Work 小時分層已由 DF 日型取代；保留兼容舊 KPI */
 function aiWorkLoadTier_(workMs) {
   if (workMs < AI_WORK_VACATION_MS) return "vacation";
   if (workMs <= AI_WORK_IDEAL_MAX_MS) return "idealFocus";
@@ -594,7 +616,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   var highTradingDays = [];
   var noTradesDays = [];
   var socialDaySet = {}; // ymd -> true
-  var tierCounts = { vacation: 0, idealFocus: 0, overload: 0, critical: 0 };
+  var tierCounts = { vacation: 0, hea: 0, idealFocus: 0, overload: 0, critical: 0 };
   var reviewCounts = { ideal: 0, lack: 0, excessive: 0 };
   var weekBuckets = {}; // weekKey -> weekly performance accumulator
   var flags = {
@@ -603,6 +625,22 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     daysReviewingOver30m: 0,
     daysNoTradesBanner: 0,
   };
+
+  var energyDays =
+    typeof aiEnergyReplayDayMetrics_ === "function"
+      ? aiEnergyReplayDayMetrics_(state, range.fromMs, range.toMs, 14)
+      : { byYmd: {}, days: [] };
+  var energyByYmd = energyDays.byYmd || {};
+  var startQualityCounts = {
+    goodStart: 0,
+    moderateStart: 0,
+    badStart: 0,
+    terribleStart: 0,
+  };
+  var fatigueSwitchTotals = { ideal: 0, good: 0, poor: 0 };
+  var fatigueDropSum = 0;
+  var fatigueDropEvents = 0;
+  var heaDays = [];
 
   var dayCursor = aiWakeDayStartMs_(range.fromMs);
   var endBound = range.toMs;
@@ -636,19 +674,44 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         reasonBits.push(aiEventReasonBits_(list[j], actName));
       }
     }
+    // Social Battery：Friending＋Familying＋Socialing 合計 >2h 先計消耗一日
     var hasSocial = soMs > AI_SOCIAL_ACTIVE_MS;
     if (hasSocial) socialDaySet[dayYmd] = true;
 
-    var wTier = aiWorkLoadTier_(wMs);
+    var eDay = energyByYmd[dayYmd] || null;
+    var wTier = eDay && eDay.dayType ? eDay.dayType : aiWorkLoadTier_(wMs);
+    if (!tierCounts[wTier]) tierCounts[wTier] = 0;
     tierCounts[wTier]++;
+    if (eDay && eDay.startQuality && startQualityCounts[eDay.startQuality] != null) {
+      startQualityCounts[eDay.startQuality]++;
+    }
+    if (eDay && eDay.fatigueSwitchCounts) {
+      fatigueSwitchTotals.ideal += eDay.fatigueSwitchCounts.ideal || 0;
+      fatigueSwitchTotals.good += eDay.fatigueSwitchCounts.good || 0;
+      fatigueSwitchTotals.poor += eDay.fatigueSwitchCounts.poor || 0;
+    }
+    if (eDay) {
+      fatigueDropSum += Number(eDay.fatigueTotalDrop) || 0;
+      fatigueDropEvents += Number(eDay.fatigueDropEventCount) || 0;
+    }
     var dayRow = {
       ymd: dayYmd,
       weekday: aiWeekdayName_(dayCursor),
       workHours: aiHours_(wMs),
       tier: wTier,
+      wakeDf: eDay ? eDay.wakeDf : null,
+      endDf: eDay ? eDay.endDf : null,
+      dfDrained: eDay ? eDay.dfDrained : null,
+      startQuality: eDay ? eDay.startQuality : null,
+      fatigueSwitchCounts: eDay ? eDay.fatigueSwitchCounts : null,
+      fatigueTotalDrop: eDay ? eDay.fatigueTotalDrop : 0,
     };
     if (wTier === "critical") {
-      dayRow.warning = "Critical：Work ≥6h，嚴重影響隔日表現";
+      dayRow.warning = "Critical：結束 DF ≤ 500";
+    } else if (wTier === "overload") {
+      dayRow.warning = "Overload：結束 DF < 0 或當日 DF 扣減 > 1000";
+    } else if (wTier === "hea") {
+      heaDays.push(dayRow);
     }
     workLoadDays.push(dayRow);
 
@@ -705,7 +768,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         loggedMs: 0,
         days: 0,
         socialDays: 0,
-        tiers: { vacation: 0, idealFocus: 0, overload: 0, critical: 0 },
+        tiers: { vacation: 0, hea: 0, idealFocus: 0, overload: 0, critical: 0 },
         reviewTiers: { ideal: 0, lack: 0, excessive: 0 },
         noTradesDays: 0,
         highTradingDays: 0,
@@ -716,6 +779,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     wb.workMs += wMs;
     wb.tradingMs += tMs;
     wb.reviewingMs += rMs;
+    if (wb.tiers[wTier] == null) wb.tiers[wTier] = 0;
     wb.tiers[wTier]++;
     wb.reviewTiers[rTier]++;
     if (hasSocial) wb.socialDays++;
@@ -768,138 +832,22 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     return a.weekKey < b.weekKey ? -1 : a.weekKey > b.weekKey ? 1 : 0;
   });
 
-  // Rhythm & Interleaving：連續 Work 塊 + Diffused Mode 間隔
-  // 注意：未打卡 Sleeping 時，上一個活動會「吞」去下一打卡前嘅空窗（尤其隔夜）→ 唔好當成長時間專注
-  var timeline = [];
-  var suspectedUnloggedBreaks = [];
-  for (var ti = 0; ti < list.length; ti++) {
-    var tev = list[ti];
-    var t0b = aiParseStartMs_(tev.start);
-    if (isNaN(t0b) || t0b < range.fromMs || t0b > range.toMs) continue;
-    var tSeg = aiSegmentMs_(list, ti, nowMs);
-    var tName = aiActivityName_(state, tev.activityId) || "(unknown)";
-    var tKey = aiNormKey_(tName);
-    var tGroup = String(tev.group || tev.category || "").trim();
-    var tEnd = t0b + tSeg;
-    var crossesWake = aiCrossesWakeBoundary_(t0b, tEnd);
-    var crossesMidnight = aiCrossesLocalMidnight_(t0b, tEnd);
-    var overlapsSleep = aiSegmentOverlapsSleepBand_(t0b, tEnd);
-    var longOpen = tSeg > AI_OPEN_SEGMENT_SUSPECT_MS;
-    var impliedBreak = false;
-    var lockMs = tSeg;
-    var suspectReason = "";
-    if (tGroup === "Work" && (crossesWake || crossesMidnight || overlapsSleep || longOpen)) {
-      impliedBreak = true;
-      if (crossesWake) {
-        suspectReason = "跨越 wake(03:00) 且中間無打卡 → 疑似睡眠（唔計認知鎖死）";
-      } else if (crossesMidnight || overlapsSleep) {
-        suspectReason = "踏入／跨越睡眠帶（22:00–06:59）或跨午夜 → 疑似睡眠（唔計認知鎖死）";
-      } else {
-        suspectReason = "單一開放時段 >2 小時 → 疑似未打卡休息／睡眠（唔計認知鎖死）";
-      }
-      suspectedUnloggedBreaks.push({
-        ymd: aiYmdLocal_(t0b),
-        activity: tName,
-        startLocal: aiLocalDateTimeStr_(t0b),
-        rawEndLocal: aiLocalDateTimeStr_(tEnd),
-        rawMinutes: aiMinutes_(tSeg),
-        reason: suspectReason,
+  // 認知節奏：改用 High Work 結束後 Fatigue_Factor（已取消 OCD 鎖死／DMN 間隔檢查）
+  var fatigueSwitchSamples = [];
+  for (var fe = 0; fe < (energyDays.days || []).length; fe++) {
+    var fed = energyDays.days[fe];
+    if (!fed || !fed.highWorkEndFatigue) continue;
+    for (var fh = 0; fh < fed.highWorkEndFatigue.length; fh++) {
+      var ff = fed.highWorkEndFatigue[fh];
+      fatigueSwitchSamples.push({
+        ymd: fed.ymd,
+        fatigueFactor: ff,
+        grade: aiEClassifyFatigueSwitch_(ff),
       });
     }
-    timeline.push({
-      startMs: t0b,
-      endMs: tEnd,
-      ms: tSeg,
-      lockMs: lockMs,
-      name: tName,
-      key: tKey,
-      isWork: tGroup === "Work",
-      isDiffused: aiIsDiffusedModeActivity_(tKey, tev),
-      countsForLock: tGroup === "Work" && !impliedBreak,
-      impliedBreak: impliedBreak,
-    });
   }
 
-  var cognitiveLocks = [];
-  var switchFails = [];
-  var idx = 0;
-  while (idx < timeline.length) {
-    if (!timeline[idx].countsForLock) {
-      idx++;
-      continue;
-    }
-    var blockStart = idx;
-    var blockMs = 0;
-    var blockNames = {};
-    while (idx < timeline.length && timeline[idx].countsForLock) {
-      blockMs += timeline[idx].lockMs;
-      blockNames[timeline[idx].name] = 1;
-      idx++;
-    }
-    var blockEndIdx = idx - 1;
-    var blockYmd = aiYmdLocal_(timeline[blockStart].startMs);
-    // 必須被「真實打卡」嘅非 Work／Diffused Mode 結束；開放結尾或疑似睡眠斷點唔算認知鎖死
-    var closer = idx < timeline.length ? timeline[idx] : null;
-    var closedByLoggedBreak =
-      closer &&
-      !closer.impliedBreak &&
-      !closer.countsForLock &&
-      (closer.isDiffused || !closer.isWork);
-    if (blockMs > AI_COGNITIVE_LOCK_MS && closedByLoggedBreak) {
-      var nameList = [];
-      for (var bn in blockNames) {
-        if (Object.prototype.hasOwnProperty.call(blockNames, bn)) nameList.push(bn);
-      }
-      var lockEndMs = timeline[blockStart].startMs + blockMs;
-      cognitiveLocks.push({
-        ymd: blockYmd,
-        startLocal: aiLocalDateTimeStr_(timeline[blockStart].startMs),
-        endLocal: aiLocalDateTimeStr_(lockEndMs),
-        durationMinutes: aiMinutes_(blockMs),
-        activities: nameList,
-        closedBy: closer.name,
-        flag: "認知鎖死",
-      });
-    }
-    // 下一段可信 Work 之前嘅間隔
-    var nextWork = -1;
-    for (var k = idx; k < timeline.length; k++) {
-      if (timeline[k].countsForLock) {
-        nextWork = k;
-        break;
-      }
-    }
-    if (nextWork < 0) break;
-    var diffusedMs = 0;
-    var betweenActs = [];
-    var hasImpliedBreak = false;
-    for (var m = idx; m < nextWork; m++) {
-      if (timeline[m].isDiffused || timeline[m].impliedBreak) {
-        diffusedMs += timeline[m].ms;
-        if (timeline[m].impliedBreak) hasImpliedBreak = true;
-      }
-      betweenActs.push({
-        name: timeline[m].impliedBreak ? "(疑似未打卡休息／睡眠)" : timeline[m].name,
-        minutes: aiMinutes_(timeline[m].ms),
-        isDiffused: timeline[m].isDiffused || timeline[m].impliedBreak,
-        impliedBreak: !!timeline[m].impliedBreak,
-      });
-    }
-    if (!hasImpliedBreak && diffusedMs < AI_DIFFUSED_GAP_MIN_MS) {
-      switchFails.push({
-        ymd: aiYmdLocal_(timeline[nextWork].startMs),
-        afterWorkEndLocal: aiLocalDateTimeStr_(timeline[blockEndIdx].endMs),
-        beforeNextWorkStartLocal: aiLocalDateTimeStr_(timeline[nextWork].startMs),
-        diffusedMinutesBetween: aiMinutes_(diffusedMs),
-        requiredDiffusedMinutes: 15,
-        betweenActivities: betweenActs.slice(0, 10),
-        flag: "切換失靈",
-      });
-    }
-    idx = nextWork;
-  }
-
-  // Social Battery：按 ISO 週統計有 Social 活動嘅天數（目標 ≤3）
+  // Social Battery：按 ISO 週統計社交活躍天（當日 >2h 先計 1 日；目標 ≤3）
   var socialByWeek = {};
   for (var sy in socialDaySet) {
     if (!Object.prototype.hasOwnProperty.call(socialDaySet, sy)) continue;
@@ -954,20 +902,26 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   var processAudits = {
     definitions: {
       workLoadTiers:
-        "放假日(Vacation): Work<2h；理想專注日(Ideal Focus): 2–4h；超負荷預警日(Overload): 4h<Work<6h；臨界崩潰日(Critical): Work≥6h",
+        "放假日: DF扣減<300 且結束DF>500；Hea日: 結束DF>0 且 DF扣減<700；理想專注日: 結束DF>0 且 DF扣減≥700；Overload: 結束DF<0 或 DF扣減>1000；Critical: 結束DF≤500。Start: Good=醒時DF=上限；Moderate≥700；Bad 500<wake<700；Terrible≤500",
       reviewingAudit: "理想Review: 15–30m；缺乏Review: <15m；過度Review: >30m",
       rhythmInterleaving:
-        "認知鎖死: 連續可信Work>60m 且由真實休息／非Work打卡結束；22:00–06:59／跨午夜／跨wake／開放>2h → 疑似睡眠唔計。切換失靈: 兩段可信Work之間 Diffused Mode <15m",
+        "認知節奏（Diffused／Focused 切換）用 High Work 結束後 Fatigue_Factor：≤1.4 理想；1.4–1.6 良好；≥1.6 差劣。另量度 Recovery／Sleep 對 Fatigue 嘅減少幅度。已取消 OCD 鎖死同 DMN 間隔檢查。",
       boundaryFlags:
         "高頻交易練習日: Trading相關>2h；No-Trades(Mon–Fri): Transporting或Social/Family/Friend其中一個>2h",
-      socialBattery: "每週社交活躍天數目標≤3（當日 Friending＋Familying＋Socialing 合計>2h 先計 1 日）",
+      socialBattery:
+        "每週社交活躍天數目標≤3；當日 Friending＋Familying＋Socialing 合計>2h 先計消耗 1 日（少過 2h 唔扣當日 Social Battery）",
     },
     summary: {
       workLoadTiers: {
-        vacationDays: tierCounts.vacation,
-        idealFocusDays: tierCounts.idealFocus,
-        overloadDays: tierCounts.overload,
-        criticalDays: tierCounts.critical,
+        vacationDays: tierCounts.vacation || 0,
+        heaDays: tierCounts.hea || 0,
+        idealFocusDays: tierCounts.idealFocus || 0,
+        overloadDays: tierCounts.overload || 0,
+        criticalDays: tierCounts.critical || 0,
+        goodStartDays: startQualityCounts.goodStart,
+        moderateStartDays: startQualityCounts.moderateStart,
+        badStartDays: startQualityCounts.badStart,
+        terribleStartDays: startQualityCounts.terribleStart,
       },
       reviewingAudit: {
         idealDays: reviewCounts.ideal,
@@ -975,9 +929,11 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         excessiveDays: reviewCounts.excessive,
       },
       rhythmInterleaving: {
-        cognitiveLockCount: cognitiveLocks.length,
-        switchFailCount: switchFails.length,
-        suspectedUnloggedBreakCount: suspectedUnloggedBreaks.length,
+        fatigueSwitchIdeal: fatigueSwitchTotals.ideal,
+        fatigueSwitchGood: fatigueSwitchTotals.good,
+        fatigueSwitchPoor: fatigueSwitchTotals.poor,
+        fatigueTotalDropSum: Math.round(fatigueDropSum * 100) / 100,
+        fatigueDropEventCount: fatigueDropEvents,
       },
       boundaryFlags: {
         highTradingPracticeDayCount: highTradingDays.length,
@@ -992,22 +948,29 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     },
     workLoadTiers: {
       counts: {
-        vacation: tierCounts.vacation,
-        idealFocus: tierCounts.idealFocus,
-        overload: tierCounts.overload,
-        critical: tierCounts.critical,
+        vacation: tierCounts.vacation || 0,
+        hea: tierCounts.hea || 0,
+        idealFocus: tierCounts.idealFocus || 0,
+        overload: tierCounts.overload || 0,
+        critical: tierCounts.critical || 0,
       },
+      startQualityCounts: startQualityCounts,
       criticalDays: workLoadDays.filter(function (d) {
         return d.tier === "critical";
       }),
       overloadDays: workLoadDays.filter(function (d) {
         return d.tier === "overload";
       }),
-      nonIdealDays: workLoadDays
-        .filter(function (d) {
-          return d.tier !== "idealFocus";
-        })
-        .slice(0, 90),
+      vacationDays: workLoadDays.filter(function (d) {
+        return d.tier === "vacation";
+      }),
+      heaDays: workLoadDays.filter(function (d) {
+        return d.tier === "hea";
+      }),
+      idealFocusDays: workLoadDays.filter(function (d) {
+        return d.tier === "idealFocus";
+      }),
+      days: workLoadDays.slice(0, 120),
     },
     reviewingAudit: {
       counts: {
@@ -1030,12 +993,15 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         .slice(0, 90),
     },
     rhythmInterleaving: {
-      cognitiveLockCount: cognitiveLocks.length,
-      switchFailCount: switchFails.length,
-      suspectedUnloggedBreakCount: suspectedUnloggedBreaks.length,
-      cognitiveLocks: cognitiveLocks.slice(0, 40),
-      switchFails: switchFails.slice(0, 40),
-      suspectedUnloggedBreaks: suspectedUnloggedBreaks.slice(0, 40),
+      fatigueSwitchCounts: fatigueSwitchTotals,
+      fatigueSwitchSamples: fatigueSwitchSamples.slice(0, 60),
+      fatigueTotalDropSum: Math.round(fatigueDropSum * 100) / 100,
+      fatigueDropEventCount: fatigueDropEvents,
+      grades: {
+        ideal: "Fatigue_Factor ≤ 1.4（High Work 結束後）",
+        good: "1.4 < Fatigue_Factor < 1.6",
+        poor: "Fatigue_Factor ≥ 1.6",
+      },
     },
     boundaryFlags: {
       highTradingPracticeDays: highTradingDays,
@@ -1043,6 +1009,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     },
     socialBattery: {
       targetMaxSocialDaysPerWeek: 3,
+      rule: "當日 Friending+Familying+Socialing >2h 先計 1 日消耗；≤2h 唔扣當日 Social Battery",
       totalSocialDaysInPeriod: totalSocialDays,
       byWeek: socialWeekRows,
     },
@@ -1071,31 +1038,39 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     periodType: range.periodType,
     periodKey: range.periodKey,
     periodLabel: aiPeriodDisplayLabel_(range.periodType, range.periodKey),
+    reportTitle: aiReportDocumentTitle_(range.periodType, range),
     reportLens: reportLens,
     reportLensNote:
       pType === "week"
         ? "週報重點：trueFocus（活動時間−distraction）＋ remarks 內容／pattern／值得留意之處。processAudits 只作輔助，唔好變成日數盤點。"
         : pType === "month"
-          ? "月報重點：processAudits 各規則出現咗幾多日（日數盤點）。Critical／No-Trades／認知鎖死要點名日期。"
+          ? "月報重點：processAudits DF 日型／Start 品質／Fatigue 切換日數盤點。Overload／Critical／No-Trades 要點名日期。"
           : pType === "quarter"
             ? "季報重點：weeklyPerformance 每週表現對比（趨勢／起伏）。日數細節次要。"
             : "跟大綱；可用 weeklyPerformance 同 processAudits.summary。",
     termGlossary: {
-      放假日_Vacation: "每日 Work Group < 2 小時",
-      理想專注日_IdealFocus: "每日 Work Group 介乎 2–4 小時（含 2 同 4）",
-      超負荷預警日_Overload: "每日 Work Group > 4 且 < 6 小時",
-      臨界崩潰日_Critical: "每日 Work Group ≥ 6 小時（嚴重影響隔日表現）",
+      放假日_Vacation: "當日 DF 扣減 < 300 且結束 DF > 500",
+      Hea日: "結束 DF > 0 且當日 DF 扣減 < 700",
+      理想專注日_IdealFocus: "結束 DF > 0 且當日 DF 扣減 ≥ 700",
+      Overload: "結束 DF < 0，或當日 DF 扣減 > 1000",
+      Critical: "結束 DF ≤ 500",
+      GoodStart: "Wake up 時 DF = 上限（1000）",
+      ModerateStart: "Wake up DF ≥ 700（且未達 Good）",
+      BadStart: "500 < Wake up DF < 700",
+      TerribleStart: "Wake up DF ≤ 500",
       理想Review: "當日 Reviewing 15–30 分鐘（高效總結）",
       缺乏Review: "當日 Reviewing < 15 分鐘（可能遺漏系統修正）",
       過度Review: "當日 Reviewing > 30 分鐘（判定為無效重複／反芻風險）",
-      認知鎖死: "連續可信 Work >60 分鐘，且由真實打卡嘅休息／非 Work 結束；踏入 22:00–06:59、跨午夜／wake、或開放空窗 >2h（疑似未打卡睡眠）一律唔計",
-      切換失靈: "兩段可信 Work 之間，Diffused Mode 活動合計 < 15 分鐘（Meditating／Walking／Resting／Gyming／Showering／Fooding；小說類 Reading、一般 Friending 可計入；成長類 Reading 唔計）",
+      FatigueSwitchIdeal: "High Work 結束後 Fatigue_Factor ≤ 1.4（Diffused／Focused 切換理想）",
+      FatigueSwitchGood: "High Work 結束後 1.4 < Fatigue_Factor < 1.6",
+      FatigueSwitchPoor: "High Work 結束後 Fatigue_Factor ≥ 1.6",
       trueFocus: "真正專注時間 = max(0, 活動時長 − distraction)",
       高頻交易練習日: "當日 Trading 相關活動合計 > 2 小時",
       NoTradesBanner: "週一至週五：當日 Transporting 或 Social／Family／Friend 其中一個 > 2 小時 → 交易禁令提示",
-      SocialBattery: "每週有「社交活躍日」嘅天數；當日 Friending＋Familying＋Socialing 合計 > 2 小時先計 1 日；目標 ≤ 3 天（計天唔計「有出現」）",
+      SocialBattery:
+        "每週有「社交活躍日」嘅天數；當日 Friending＋Familying＋Socialing 合計 > 2 小時先計消耗 1 日（少過 2h 唔扣當日）；目標 ≤ 3 天",
       DiffusedMode:
-        "唔使高度用腦／專注嘅恢復緩衝（前稱 DMN）。判定原則：需唔需要集中精神。Reading：小說類（如 Harry Potter）=是；成長／用腦類（如原子習慣、Trading in the Zone）=否。Friending：一般社交=是；深談／會議=否。",
+        "唔使高度用腦／專注嘅恢復緩衝。切換品質改睇 High Work 後 Fatigue_Factor（已取消 OCD 鎖死／DMN 間隔檢查）。",
       運動日:
         "gyming／hiking／yogaing／running 等合計 ≥ 30 分鐘；Photoing 暫時唔計，除非 remark 注明高強度／重裝／長途拍攝等",
       loggedHours:
@@ -1165,7 +1140,7 @@ function aiDefaultSystemInstruction_() {
     "禁止預測市場升跌；禁止虛構未提供的數據。",
     "若 totals.loggedHoursOverCeiling 為 true，或 loggedHours ≥ loggedHoursCeiling24h：必須指出可能係重覆入帳／計算問題，唔好把超上限 loggedHours 當真實活躍時數。",
     "對齊價值：過程質素、樣本、期望值、少／小／慢；僅在數據支持時點出鬆懈／資訊過載／唔跟 checklist 跡象。",
-    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、認知鎖死、切換失靈、trueFocus、No-Trades、Diffused Mode 等），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
+    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、Fatigue 切換、trueFocus、No-Trades、Diffused Mode 等；唔好再寫 OCD 鎖死或 DMN 間隔檢查），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
     "日期／週期顯示：唔好用 W29／ISO week 編號；用月-日範圍（例如 07-14 → 07-20）或 DATA_JSON 入面嘅 weekLabel／periodLabel／range。",
     "輸出純 Markdown。",
   ].join("\n");
@@ -1178,9 +1153,9 @@ function aiDefaultReportOutline_() {
     "【month_day_count_audits｜月報】重點係「有幾多日」出現各類日子：",
     "1. 執行摘要（用日數講）",
     "2. 週期對比",
-    "3. Work Load Tiers 日數（Vacation／Ideal／Overload／Critical；Critical 點名日期）",
+    "3. Work Load Tiers 日數（Vacation／Hea／Ideal／Overload／Critical＋Start 品質；Overload／Critical 點名日期）",
     "4. Reviewing Audit 日數（Ideal／Lack／Excessive）",
-    "5. Rhythm／Diffused Mode（認知鎖死／切換失靈次數；疑似未打卡休息只作附註）",
+    "5. Rhythm／Diffused Mode（High Work 後 Fatigue_Factor 切換：理想／良好／差劣；Fatigue 減少幅度）",
     "6. Boundary Flags 日數（高頻 Trading、No-Trades 日期＋原因）",
     "7. Social Battery（每週社交天數）",
     "8. 下期 3 個實驗",
@@ -1200,7 +1175,7 @@ function aiDefaultReportOutline_() {
     "5. 下季 3 個實驗",
     "",
     "年報：主題回顧 + 可用 weeklyPerformance／月度日數摘要。",
-    "術語：首次出現必須附定義（見 termGlossary）；可用「理想專注日（Work Group 每日 2–4 小時）」呢種寫法。",
+    "術語：首次出現必須附定義（見 termGlossary）；可用「理想專注日（結束 DF>0 且 DF 扣減≥700）」呢種寫法。",
     "只能用 DATA_JSON；表格用 GFM；粗體用 **文字**。",
   ].join("\n");
 }
@@ -1234,6 +1209,13 @@ function getAiPromptConfig_() {
       if (isFinite(t) && t >= 0 && t <= 1) cfg.temperature = t;
       if (j.periodConfig && typeof j.periodConfig === "object") {
         var defPc = aiDefaultPeriodConfig_();
+        var deprecatedSec = {
+          cognitiveLock: 1,
+          switchFail: 1,
+          switchFailDays: 1,
+          workOver4h: 1,
+          workOver6h: 1,
+        };
         ["week", "month", "quarter", "year"].forEach(function (pt) {
           var src = j.periodConfig[pt] || {};
           var defSec = (defPc[pt] && defPc[pt].sections) || {};
@@ -1246,10 +1228,14 @@ function getAiPromptConfig_() {
               }
             }
           }
-          // allow extra keys from client
+          // allow extra keys from client（但丟棄已廢棄嘅 OCD／DMN 章節）
           if (src.sections) {
             for (var ek in src.sections) {
-              if (Object.prototype.hasOwnProperty.call(src.sections, ek) && mergedSec[ek] === undefined) {
+              if (
+                Object.prototype.hasOwnProperty.call(src.sections, ek) &&
+                mergedSec[ek] === undefined &&
+                !deprecatedSec[ek]
+              ) {
                 mergedSec[ek] = !!src.sections[ek];
               }
             }
@@ -1302,18 +1288,10 @@ function aiSystemInstruction_() {
 function aiUserPrompt_(stats) {
   var cfg = getAiPromptConfig_();
   var type = String(stats.periodType || "custom").toLowerCase();
-  var display =
-    stats.periodLabel || aiPeriodDisplayLabel_(type, stats.periodKey) || stats.periodKey;
   var title =
-    type === "year"
-      ? display + " 年 Time Stat 專業報告"
-      : type === "quarter"
-        ? display + " Time Stat 專業報告"
-        : type === "month"
-          ? display + " 月 Time Stat 專業報告"
-          : type === "week"
-            ? display + " 週 Time Stat 專業報告"
-            : "Time Stat 報告 " + stats.range.from + "～" + stats.range.to;
+    stats.reportTitle ||
+    aiReportDocumentTitle_(type, stats.range || {}) ||
+    "Time Stat Report";
   var pcfg = (cfg.periodConfig && cfg.periodConfig[type]) || {
     sections: aiDefaultPeriodSections_(type),
     notes: "",
@@ -1889,7 +1867,10 @@ function generatePeriodAiReport_(periodType, periodKey, opts) {
   enrichStatsWithPeriodKpis_(state, stats);
   attachAiComparisons_(state, stats);
   var gem = callGeminiForAiReport_(stats);
-  var subject = "[Time Stat AI] " + stats.periodType + " " + (stats.periodLabel || stats.periodKey);
+  var subject =
+    stats.reportTitle ||
+    aiReportDocumentTitle_(stats.periodType, stats.range || {}) ||
+    "[Time Stat AI] " + stats.periodType + " " + (stats.periodLabel || stats.periodKey);
   var id = Utilities.getUuid();
   var generatedAt = new Date().toISOString();
 

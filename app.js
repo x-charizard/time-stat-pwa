@@ -6576,6 +6576,65 @@
     return key;
   }
 
+  /** yyyy-mm-dd Weekly|Monthly|… Time Stat Report（同 GAS aiReportDocumentTitle_） */
+  function buildAiReportDocumentTitle_(periodType, periodKey) {
+    const type = String(periodType || "").toLowerCase();
+    const key = String(periodKey || "").trim();
+    const pad = (n) => String(n).padStart(2, "0");
+    const ymdFromDate = (d) =>
+      d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+    let ymd = "";
+    if (type === "month") {
+      const m = key.match(/^(\d{4})-(\d{2})$/);
+      if (m) {
+        const last = new Date(Number(m[1]), Number(m[2]), 0).getDate();
+        ymd = key + "-" + pad(last);
+      }
+    } else if (type === "year") {
+      if (/^\d{4}$/.test(key)) ymd = key + "-12-31";
+    } else if (type === "quarter") {
+      const q = key.match(/^(\d{4})-Q([1-4])$/i);
+      if (q) {
+        const endMo = Number(q[2]) * 3;
+        const last = new Date(Number(q[1]), endMo, 0).getDate();
+        ymd = q[1] + "-" + pad(endMo) + "-" + pad(last);
+      }
+    } else if (type === "week") {
+      const m = key.match(/^(\d{4})-W(\d{2})$/i);
+      if (m) {
+        const y = parseInt(m[1], 10);
+        const w = parseInt(m[2], 10);
+        const week1 = new Date(y, 0, 4);
+        const day1 = (week1.getDay() + 6) % 7;
+        week1.setDate(week1.getDate() - day1);
+        const sun = new Date(week1.getFullYear(), week1.getMonth(), week1.getDate() + (w - 1) * 7 + 6);
+        ymd = ymdFromDate(sun);
+      }
+    } else if (type === "custom") {
+      const parts = key.split("/");
+      if (parts.length === 2) ymd = parts[1];
+    }
+    const kind =
+      type === "week"
+        ? "Weekly"
+        : type === "month"
+          ? "Monthly"
+          : type === "quarter"
+            ? "Quarterly"
+            : type === "year"
+              ? "Yearly"
+              : "Custom";
+    return (ymd ? ymd + " " : "") + kind + " Time Stat Report";
+  }
+
+  function formatAiReportTitle_(periodType, periodKey, subject) {
+    const s = String(subject || "").trim();
+    if (/\d{4}-\d{2}-\d{2}\s+(Weekly|Monthly|Quarterly|Yearly|Custom)\s+Time Stat Report/i.test(s)) {
+      return s;
+    }
+    return buildAiReportDocumentTitle_(periodType, periodKey);
+  }
+
   function periodKeyFromReportDates_() {
     const from = String(document.getElementById("reportFromStr")?.value || "").trim();
     const to = String(document.getElementById("reportToStr")?.value || "").trim();
@@ -6773,12 +6832,7 @@
         const row = document.createElement("button");
         row.type = "button";
         row.className = "ai-reports-item";
-        row.textContent =
-          (rep.periodType || "") +
-          " " +
-          formatPeriodKeyForDisplay_(rep.periodType, rep.periodKey) +
-          " · " +
-          String(rep.generatedAt || "").slice(0, 19).replace("T", " ");
+        row.textContent = formatAiReportTitle_(rep.periodType, rep.periodKey, rep.subject);
         row.addEventListener("click", () => void openAiReportDetail_(rep.id));
         listEl.appendChild(row);
       });
@@ -6800,12 +6854,8 @@
       if (listEl) listEl.classList.add("hidden");
       detail.classList.remove("hidden");
       if (title) {
-        const label = formatPeriodKeyForDisplay_(rep.periodType, rep.periodKey);
-        let subj = String(rep.subject || "");
-        if (rep.periodKey && label && subj.indexOf(rep.periodKey) >= 0) {
-          subj = subj.split(String(rep.periodKey)).join(label);
-        }
-        title.textContent = subj || ((rep.periodType || "") + " " + label) || String(id);
+        title.textContent =
+          formatAiReportTitle_(rep.periodType, rep.periodKey, rep.subject) || String(id);
       }
       setAiReportBodyHtml_(body, rep.markdown || "");
     } catch (e) {
