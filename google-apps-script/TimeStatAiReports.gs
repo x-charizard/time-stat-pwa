@@ -9,8 +9,8 @@
  */
 
 var AI_REPORTS_SHEET = "TimeStatAIReports";
-/** 優先：Pro + thinking high；無 quota／唔支援 → 免費 Flash-Lite */
-var GEMINI_MODEL_PRIMARY = "gemini-3.1-pro-preview";
+/** 優先：普通 Flash；無 quota／唔支援 → Flash-Lite（唔再用 Pro） */
+var GEMINI_MODEL_PRIMARY = "gemini-3.6-flash";
 var GEMINI_MODEL_FREE_LITE = "gemini-3.5-flash-lite";
 var GEMINI_MODEL = GEMINI_MODEL_PRIMARY;
 /** Lite／共享額度熔斷（epoch ms）；撞 429／RPD 後暫停打 Flash Lite */
@@ -1326,11 +1326,11 @@ function aiUserPrompt_(stats) {
 }
 
 /**
- * 模型鏈：Pro + High → 免費 Lite（撞 RPD／quota／唔支援就下一檔）
+ * 模型鏈：普通 Flash → Flash-Lite（撞 RPD／quota／唔支援就下一檔；唔用 Pro）
  */
 function aiGeminiModelChain_() {
   return [
-    { model: GEMINI_MODEL_PRIMARY, thinkingLevel: "high", tier: "pro" },
+    { model: GEMINI_MODEL_PRIMARY, thinkingLevel: "medium", tier: "flash" },
     { model: GEMINI_MODEL_FREE_LITE, thinkingLevel: "minimal", tier: "free-lite" },
   ];
 }
@@ -1467,8 +1467,8 @@ function aiSemanticCacheKey_(activity, remark) {
 }
 
 /**
- * Pro+High 優先；無 quota／唔支援 → 免費 Flash-Lite。
- * Pro 撞硬額度或 Lite 熔斷開啟時，唔再打 Lite（避免雪崩）。
+ * Flash 優先；無 quota／唔支援 → Flash-Lite。
+ * 主模型撞硬額度或 Lite 熔斷開啟時，唔再打 Lite（避免雪崩）。
  */
 function callGeminiWithMessages_(system, user) {
   var props = PropertiesService.getScriptProperties();
@@ -1505,8 +1505,8 @@ function callGeminiWithMessages_(system, user) {
     }
     if (r && r.hardQuota) {
       aiGeminiTripLiteCircuit_();
-      if (step.tier === "pro") {
-        attempted.push(GEMINI_MODEL_FREE_LITE + "@skipped-after-pro-hard-quota");
+      if (step.tier === "flash" || step.tier === "pro") {
+        attempted.push(GEMINI_MODEL_FREE_LITE + "@skipped-after-primary-hard-quota");
         break;
       }
     }
@@ -1517,7 +1517,7 @@ function callGeminiWithMessages_(system, user) {
   var code = last && last.code ? last.code : 0;
   if (last && last.quota) {
     throw new Error(
-      "gemini_quota_exhausted: Pro 同 free lite 都無額度（RPD／quota）。通常太平洋午夜重置 ≈ 香港下午 3–4 點。attempted=" +
+      "gemini_quota_exhausted: Flash 同 Flash-Lite 都無額度（RPD／quota）。通常太平洋午夜重置 ≈ 香港下午 3–4 點。attempted=" +
         attempted.join(" → ") +
         " http_" +
         code +

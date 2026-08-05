@@ -6399,7 +6399,7 @@
       appendAiFollowUpMessage_("assistant", answer);
       const fb =
         j.fallback || j.tier === "free-lite"
-          ? " · fallback free lite"
+          ? " · fallback flash-lite"
           : j.model
             ? " · " + j.model + (j.thinkingLevel ? "@" + j.thinkingLevel : "")
             : "";
@@ -6909,7 +6909,7 @@
       const thinkBit = j.thinkingLevel ? "@" + j.thinkingLevel : "";
       const fb =
         j.fallback || j.tier === "free-lite"
-          ? " · fallback free lite（Pro 無 quota／唔支援）"
+          ? " · fallback flash-lite（Flash 無 quota／唔支援）"
           : modelBit
             ? " · " + modelBit + thinkBit
             : "";
