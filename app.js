@@ -1640,18 +1640,16 @@
     "trading planning",
     "mind mapping",
     "mindmapping",
-    "aiing",
-    "ai",
     "code",
     "obsidianing",
     "notioning",
     "reading",
-  ]);
-  const ENERGY_LOW_KEYS = new Set([
     "photoing",
     "photography",
     "photo editing",
     "photoediting",
+  ]);
+  const ENERGY_LOW_KEYS = new Set([
     "editing",
     "transporting",
   ]);
@@ -1856,12 +1854,36 @@
 
   function energyTierOfEvent_(ev) {
     const key = activityKeyOfEv_(ev);
+    const blob = [
+      String((ev && ev.remark) || ""),
+      String((ev && ev.group) || ""),
+      String((ev && ev.sub) || ""),
+      String((ev && ev.category) || ""),
+      String((ev && ev.project) || ""),
+    ]
+      .join(" ")
+      .toLowerCase();
     if (key === "sleeping") return "sleep";
+    if (ENERGY_SOCIAL_KEYS.has(key)) return "social";
+    // Xavier Li Photography → Work Medium
+    if (
+      key === "photoing" ||
+      key === "photography" ||
+      /xavier\s*li\s*photography/.test(blob)
+    ) {
+      return "medium";
+    }
+    // Aiing：Remark 決定 Rest(recover) 定 Work(medium)
+    if (key === "aiing" || key === "ai") {
+      if (/(hea|傾偈|傾計|聊天|吹水|玩|娛樂|輕鬆|休息|rest|chill|casual|meme|閒聊)/i.test(blob)) {
+        return "recover";
+      }
+      return "medium";
+    }
     if (key === "reading") {
       return energyReadingIsLeisure_(ev) ? "recover" : "medium";
     }
     if (ENERGY_RECOVERY_KEYS.has(key)) return "recover";
-    if (ENERGY_SOCIAL_KEYS.has(key)) return "social";
     if (ENERGY_HIGH_KEYS.has(key)) return "high";
     if (ENERGY_MED_KEYS.has(key)) return "medium";
     if (ENERGY_LOW_KEYS.has(key)) return "low";

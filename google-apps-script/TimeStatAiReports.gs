@@ -470,12 +470,11 @@ function aiEventReasonBits_(ev, activityName) {
   };
 }
 
-/** @deprecated Work 小時分層已由 DF 日型取代；保留兼容舊 KPI */
+/** @deprecated Work 小時分層已由 DF 日型取代；保留兼容舊 KPI（已無 critical） */
 function aiWorkLoadTier_(workMs) {
   if (workMs < AI_WORK_VACATION_MS) return "vacation";
   if (workMs <= AI_WORK_IDEAL_MAX_MS) return "idealFocus";
-  if (workMs < AI_WORK_OVERLOAD_MAX_MS) return "overload";
-  return "critical";
+  return "overload";
 }
 
 function aiReviewTier_(reviewMs) {
@@ -624,7 +623,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   var highTradingDays = [];
   var noTradesDays = [];
   var socialDaySet = {}; // ymd -> true
-  var tierCounts = { vacation: 0, hea: 0, idealFocus: 0, overload: 0, critical: 0 };
+  var tierCounts = { vacation: 0, hea: 0, idealFocus: 0, overload: 0 };
   var reviewCounts = { ideal: 0, lack: 0, excessive: 0 };
   var weekBuckets = {}; // weekKey -> weekly performance accumulator
   var flags = {
@@ -714,9 +713,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       fatigueSwitchCounts: eDay ? eDay.fatigueSwitchCounts : null,
       fatigueTotalDrop: eDay ? eDay.fatigueTotalDrop : 0,
     };
-    if (wTier === "critical") {
-      dayRow.warning = "Critical：結束 DF ≤ 500";
-    } else if (wTier === "overload") {
+    if (wTier === "overload") {
       dayRow.warning = "Overload：結束 DF < 0 或當日 DF 扣減 > 1000";
     } else if (wTier === "hea") {
       heaDays.push(dayRow);
@@ -776,7 +773,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         loggedMs: 0,
         days: 0,
         socialDays: 0,
-        tiers: { vacation: 0, hea: 0, idealFocus: 0, overload: 0, critical: 0 },
+        tiers: { vacation: 0, hea: 0, idealFocus: 0, overload: 0 },
         reviewTiers: { ideal: 0, lack: 0, excessive: 0 },
         noTradesDays: 0,
         highTradingDays: 0,
@@ -910,7 +907,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   var processAudits = {
     definitions: {
       workLoadTiers:
-        "放假日: DF扣減<300 且結束DF>500；Hea日: 結束DF>0 且 DF扣減<700；理想專注日: 結束DF>0 且 DF扣減≥700；Overload: 結束DF<0 或 DF扣減>1000；Critical: 結束DF≤500。Start: Good=醒時DF=上限；Moderate≥700；Bad 500<wake<700；Terrible≤500",
+        "放假日: DF扣減<300 且結束DF>500；Hea日: 結束DF>0 且 DF扣減<700；理想專注日: 結束DF>0 且 DF扣減≥700；Overload: 結束DF<0 或 DF扣減>1000（已取消 Critical）。Start: Good=醒時DF=上限；Moderate≥700；Bad 500<wake<700；Terrible≤500",
       reviewingAudit: "理想Review: 15–30m；缺乏Review: <15m；過度Review: >30m",
       rhythmInterleaving:
         "認知節奏（Diffused／Focused 切換）用 High Work 結束後 Fatigue_Factor：≤1.4 理想；1.4–1.6 良好；≥1.6 差劣。另量度 Recovery／Sleep 對 Fatigue 嘅減少幅度。已取消 OCD 鎖死同 DMN 間隔檢查。",
@@ -925,7 +922,6 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         heaDays: tierCounts.hea || 0,
         idealFocusDays: tierCounts.idealFocus || 0,
         overloadDays: tierCounts.overload || 0,
-        criticalDays: tierCounts.critical || 0,
         goodStartDays: startQualityCounts.goodStart,
         moderateStartDays: startQualityCounts.moderateStart,
         badStartDays: startQualityCounts.badStart,
@@ -960,12 +956,8 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         hea: tierCounts.hea || 0,
         idealFocus: tierCounts.idealFocus || 0,
         overload: tierCounts.overload || 0,
-        critical: tierCounts.critical || 0,
       },
       startQualityCounts: startQualityCounts,
-      criticalDays: workLoadDays.filter(function (d) {
-        return d.tier === "critical";
-      }),
       overloadDays: workLoadDays.filter(function (d) {
         return d.tier === "overload";
       }),
@@ -1050,9 +1042,9 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     reportLens: reportLens,
     reportLensNote:
       pType === "week"
-        ? "週報必須跟 Energy／DF checklist：用 processAudits 寫放假日／Hea／理想專注／Overload／Critical、Start 品質、High Work 後 Fatigue 切換（理想≤1.4／良好／差劣≥1.6）同 Fatigue 減少、Social Battery（>2h 先計 1 日）。禁止 OCD 鎖死／DMN 間隔。trueFocus／remarks 係輔助，唔好蓋過 DF 日型盤點。"
+        ? "週報必須跟 Energy／DF checklist：用 processAudits 寫放假日／Hea／理想專注／Overload、Start 品質、High Work 後 Fatigue 切換（理想≤1.4／良好／差劣≥1.6）同 Fatigue 減少、Social Battery（>2h 先計 1 日）。禁止 OCD 鎖死／DMN 間隔／Critical 日。trueFocus／remarks 係輔助，唔好蓋過 DF 日型盤點。"
         : pType === "month"
-          ? "月報重點：processAudits DF 日型／Start 品質／Fatigue 切換日數盤點。Overload／Critical／No-Trades 要點名日期。禁止 OCD 鎖死／DMN 間隔。"
+          ? "月報重點：processAudits DF 日型／Start 品質／Fatigue 切換日數盤點。Overload／No-Trades 要點名日期。禁止 OCD 鎖死／DMN 間隔／Critical 日。"
           : pType === "quarter"
             ? "季報重點：weeklyPerformance 每週表現對比（趨勢／起伏）。日數細節次要。"
             : "跟大綱；可用 weeklyPerformance 同 processAudits.summary。",
@@ -1061,7 +1053,6 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       Hea日: "結束 DF > 0 且當日 DF 扣減 < 700",
       理想專注日_IdealFocus: "結束 DF > 0 且當日 DF 扣減 ≥ 700",
       Overload: "結束 DF < 0，或當日 DF 扣減 > 1000",
-      Critical: "結束 DF ≤ 500",
       GoodStart: "Wake up 時 DF = 上限（1000）",
       ModerateStart: "Wake up DF ≥ 700（且未達 Good）",
       BadStart: "500 < Wake up DF < 700",
@@ -1148,7 +1139,7 @@ function aiDefaultSystemInstruction_() {
     "禁止預測市場升跌；禁止虛構未提供的數據。",
     "若 totals.loggedHoursOverCeiling 為 true，或 loggedHours ≥ loggedHoursCeiling24h：必須指出可能係重覆入帳／計算問題，唔好把超上限 loggedHours 當真實活躍時數。",
     "對齊價值：過程質素、樣本、期望值、少／小／慢；僅在數據支持時點出鬆懈／資訊過載／唔跟 checklist 跡象。",
-    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、臨界崩潰日、理想／缺乏／過度 Review、Fatigue 切換、trueFocus、No-Trades、Diffused Mode 等；唔好再寫 OCD 鎖死或 DMN 間隔檢查），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
+    "術語必須帶定義：每次首次使用專有術語（如理想專注日、放假日、超負荷預警日、理想／缺乏／過度 Review、Fatigue 切換、trueFocus、No-Trades、Diffused Mode 等；唔好再寫 OCD 鎖死、DMN 間隔檢查或 Critical 日），必須緊接括號或一句簡短定義；定義只可用 DATA_JSON.termGlossary／processAudits.definitions，唔好自創門檻。",
     "日期／週期顯示：唔好用 W29／ISO week 編號；用月-日範圍（例如 07-14 → 07-20）或 DATA_JSON 入面嘅 weekLabel／periodLabel／range。",
     "輸出純 Markdown。",
   ].join("\n");
@@ -1160,7 +1151,7 @@ function aiDefaultReportOutline_() {
     "",
     "【week_df_energy_audits｜週報】必須跟 DF／Energy checklist（定義只可用 termGlossary／processAudits.definitions）：",
     "1. 執行摘要（本週 DF 日型＋Start＋Fatigue 切換一句過）",
-    "2. DF 日型日數：放假日（DF扣減<300 且結束DF>500）／Hea（結束DF>0 且扣減<700）／理想專注（結束DF>0 且扣減≥700）／Overload（結束DF<0 或扣減>1000）／Critical（結束DF≤500）；點名 Overload／Critical 日期",
+    "2. DF 日型日數：放假日（DF扣減<300 且結束DF>500）／Hea（結束DF>0 且扣減<700）／理想專注（結束DF>0 且扣減≥700）／Overload（結束DF<0 或扣減>1000）；點名 Overload 日期（已取消 Critical）",
     "3. Start 品質：Good（醒時DF=上限）／Moderate（≥700）／Bad（500<wake<700）／Terrible（≤500）",
     "4. 認知節奏：High Work 結束後 Fatigue_Factor（≤1.4 理想；1.4–1.6 良好；≥1.6 差劣）＋ Recovery／Sleep 令 Fatigue 減少幾多；禁止 OCD 鎖死／DMN 間隔",
     "5. Social Battery：Friending＋Familying＋Socialing >2h 先計消耗 1 日（≤2h 唔扣）",
@@ -1170,7 +1161,7 @@ function aiDefaultReportOutline_() {
     "【month_day_count_audits｜月報】重點係「有幾多日」出現各類日子：",
     "1. 執行摘要（用日數講）",
     "2. 週期對比",
-    "3. Work Load Tiers 日數（Vacation／Hea／Ideal／Overload／Critical＋Start 品質；Overload／Critical 點名日期）",
+    "3. Work Load Tiers 日數（Vacation／Hea／Ideal／Overload＋Start 品質；Overload 點名日期；已取消 Critical）",
     "4. Reviewing Audit 日數（Ideal／Lack／Excessive）",
     "5. Rhythm／Diffused Mode（High Work 後 Fatigue_Factor 切換：理想／良好／差劣；Fatigue 減少幅度；禁止 OCD／DMN）",
     "6. Boundary Flags 日數（高頻 Trading、No-Trades 日期＋原因）",
@@ -1346,7 +1337,7 @@ function aiUserPrompt_(stats) {
     "\nDATA_JSON.kpis.passFail 同 kpis.targets 係合格門檻；enabledSections 決定寫邊啲章節。週／月報必須引用 processAudits.summary（workLoadTiers／rhythmInterleaving／socialBattery）。";
   var energyNote =
     type === "week" || type === "month"
-      ? "\nEnergy checklist（強制）：放假日／Hea／理想專注／Overload／Critical、Good–Terrible Start、Fatigue≤1.4／1.4–1.6／≥1.6、Social>2h 先計日；禁止 OCD 鎖死同 DMN 間隔檢查。"
+      ? "\nEnergy checklist（強制）：放假日／Hea／理想專注／Overload、Good–Terrible Start、Fatigue≤1.4／1.4–1.6／≥1.6、Social>2h 先計日；禁止 OCD 鎖死、DMN 間隔、Critical 日。"
       : "";
   return (
     "請根據以下 JSON 撰寫「" +

@@ -157,7 +157,7 @@ function aiPeriodSectionLabels_() {
       vacationDays: "Vacation days — DF drain <300 and end DF >500 (ideal 1–2 / week)",
       heaDays: "Hea days — end DF >0 and DF drain <700",
       idealFocusDays: "Ideal focus days — end DF >0 and DF drain ≥700",
-      overloadDays: "Overload/Critical days — end DF <0 or DF drain >1000, or end DF ≤500",
+      overloadDays: "Overload days — end DF <0 or DF drain >1000",
       startQuality: "Wake DF start quality — Good(=cap) / Moderate(≥700) / Bad(500<wake<700) / Terrible(≤500)",
       sleepAnomalies:
         "Sleep anomalies — Sleeping <6h or >10h when logged (max consecutive ≤2 days)",
@@ -177,7 +177,7 @@ function aiPeriodSectionLabels_() {
       meditateKeep: "Meditate keep — whether Meditating days stay consistent",
       exerciseGaps: "Exercise gaps — spacing between ≥30m exercise days / recovery",
       dayTypeCounts:
-        "DF day types — vacation / hea / idealFocus / overload / critical day counts (see Energy definitions)",
+        "DF day types — vacation / hea / idealFocus / overload day counts (Critical removed)",
       startQuality: "Wake DF start quality — Good / Moderate / Bad / Terrible day counts",
       tradingOver2h: "Trading >2h days — must not be two consecutive days",
       positiveEmotionDays: "Positive emotion days — days with positive keyword hits",
@@ -354,8 +354,8 @@ function aiBuildDailySeries_(state, range) {
         days[di].vacation = er.dayType === "vacation";
         days[di].hea = er.dayType === "hea";
         days[di].idealFocus = er.dayType === "idealFocus";
-        days[di].overWork = er.dayType === "overload" || er.dayType === "critical";
-        days[di].workOver6h = er.dayType === "overload" || er.dayType === "critical";
+        days[di].overWork = er.dayType === "overload";
+        days[di].workOver6h = er.dayType === "overload";
       }
     } catch (eEn) {}
   }
@@ -777,8 +777,8 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     if (vacationDays.length < 1 || vacationDays.length > 2) {
       warn("vacationDays", "放假日 " + vacationDays.length + "（理想 1–2）");
     }
-    if (overWorkDays.length > 2) fail("overWorkDays", "Overload／Critical 日 " + overWorkDays.length + "（理想 ≤2）");
-    if (aiHasConsecutiveTrue_(overWorkFlags, 2)) fail("overWorkStreak", "Overload／Critical 連續 ≥2 日");
+    if (overWorkDays.length > 2) fail("overWorkDays", "Overload 日 " + overWorkDays.length + "（理想 ≤2）");
+    if (aiHasConsecutiveTrue_(overWorkFlags, 2)) fail("overWorkStreak", "Overload 連續 ≥2 日");
     if (aiConsecutiveTrueStreaks_(sleepFlags).maxStreak > 2) {
       fail("sleepStreak", "睡眠異常連續 >2 日");
     }
@@ -793,7 +793,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     if (overSocialConsecutive) fail("overSocialWeeks", "連續兩週 over social（socialDays>3）");
     if (aiHasConsecutiveTrue_(negFlags, 3)) fail("chaosStreak", "負面情緒／chaos 連續 ≥3 日");
     if (aiHasConsecutiveTrue_(sleepFlags, 2)) fail("sleepStreak", "睡眠異常連續 ≥2 日");
-    if (aiHasConsecutiveTrue_(work6Flags, 2)) fail("work6Streak", "Overload／Critical 連續 ≥2 日");
+    if (aiHasConsecutiveTrue_(work6Flags, 2)) fail("work6Streak", "Overload 連續 ≥2 日");
     if (aiHasConsecutiveTrue_(tradeFlags, 2)) fail("tradeStreak", "Trading>2h 連續 ≥2 日");
   }
 
@@ -822,9 +822,8 @@ function enrichStatsWithPeriodKpis_(state, stats) {
     var failsW = [];
     if ((wrow.socialDays || 0) >= 3) failsW.push("socialDays>=3");
     var tier = wrow.workLoadTierDays || wrow.workLoadTierDays || {};
-    // approximate overwork from overload+critical if present
-    var ow =
-      (tier.overload || 0) + (tier.critical || 0);
+    // approximate overwork from overload if present
+    var ow = tier.overload || 0;
     if (ow > 2) failsW.push("overWorkDays>2");
     weeklyEval.push({
       weekKey: wrow.weekKey,
@@ -881,7 +880,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
         fatigueSwitchPoorMax: 2,
         socialDaysMax: 2,
         vacationDaysIdeal: "1-2",
-        overloadCriticalDaysMax: 2,
+        overloadDaysMax: 2,
         overloadNoConsecutive: true,
         sleepAnomalyMaxConsecutive: 2,
         meditateDaysMin: 6,
@@ -902,7 +901,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
       fatigueTotalDropSum: fatigueTotalDropSum,
       socialDays: socialDays.length,
       vacationDays: vacationDays.length,
-      overloadCriticalDays: overWorkDays.length,
+      overloadDays: overWorkDays.length,
       workOver6hDays: work6Days.length,
       tradingOver2hDays: tradeOverDays.length,
       sleepShortDays: sleepShort.length,

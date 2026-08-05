@@ -47,18 +47,16 @@ var AI_E_MED_KEYS = {
   "trading planning": 1,
   "mind mapping": 1,
   mindmapping: 1,
-  aiing: 1,
-  ai: 1,
   code: 1,
   obsidianing: 1,
   notioning: 1,
   reading: 1,
-};
-var AI_E_LOW_KEYS = {
   photoing: 1,
   photography: 1,
   "photo editing": 1,
   photoediting: 1,
+};
+var AI_E_LOW_KEYS = {
   editing: 1,
   transporting: 1,
 };
@@ -156,10 +154,40 @@ function aiESleepRecoverMult_(sem, durMin, ev) {
 
 function aiETier_(ev, actKey) {
   var key = String(actKey || "").toLowerCase();
+  var blob = [
+    String((ev && ev.remark) || ""),
+    String((ev && ev.group) || ""),
+    String((ev && ev.sub) || ""),
+    String((ev && ev.category) || ""),
+    String((ev && ev.project) || ""),
+  ]
+    .join(" ")
+    .toLowerCase();
+
   if (key === "sleeping") return "sleep";
   if (AI_E_SOCIAL_KEYS[key]) return "social";
+
+  // Xavier Li Photography（activity 或 sub／project）→ Work Medium
+  if (
+    key === "photoing" ||
+    key === "photography" ||
+    /xavier\s*li\s*photography/.test(blob)
+  ) {
+    return "medium";
+  }
+
+  // Aiing：Remark 決定 Rest(recover) 定 Work(medium)
+  if (key === "aiing" || key === "ai") {
+    if (
+      /(hea|傾偈|傾計|聊天|吹水|玩|娛樂|輕鬆|休息|rest|chill|casual|meme|閒聊)/i.test(blob)
+    ) {
+      return "recover";
+    }
+    // 預設／有工作字 → Work M
+    return "medium";
+  }
+
   if (key === "reading") {
-    var blob = String((ev && ev.remark) || "").toLowerCase();
     if (/(小說|novel|fiction|harry\s*potter|漫畫|comic)/i.test(blob)) return "recover";
     return "medium";
   }
@@ -168,6 +196,27 @@ function aiETier_(ev, actKey) {
   if (AI_E_MED_KEYS[key]) return "medium";
   if (AI_E_LOW_KEYS[key]) return "low";
   return "none";
+}
+
+function aiEClassifyDayType_(wakeDf, endDf, dfDrained) {
+  var drain = Math.max(0, Number(dfDrained) || 0);
+  var end = Number(endDf);
+  if (!isFinite(end)) end = 0;
+  // 已取消 Critical；Overload：結束 DF < 0 或 DF 扣減 > 1000
+  if (end < 0 || drain > 1000) return "overload";
+  if (drain < 300 && end > 500) return "vacation";
+  if (end > 0 && drain >= 700) return "idealFocus";
+  if (end > 0 && drain < 700) return "hea";
+  return "hea";
+}
+
+function aiEClassifyStart_(wakeDf) {
+  var w = Number(wakeDf);
+  if (!isFinite(w)) return "unknown";
+  if (w >= AI_E_DF_CAP - 0.5) return "goodStart";
+  if (w >= 700) return "moderateStart";
+  if (w > 500) return "badStart";
+  return "terribleStart";
 }
 
 function aiENewState_() {
@@ -193,6 +242,7 @@ function aiENewState_() {
     dayHighEndFatigues: [],
     dayFatigueDrops: [],
     _dayYmd: "",
+    _wakeDfPending: false,
   };
 }
 
@@ -206,6 +256,11 @@ function aiEWakeKey_(ms) {
 
 function aiEApplyWakeCap_(st) {
   var startDf = st.df;
+  // Good／Terrible Start：用「真正醒嚟」嗰刻 DF（訓完回復後），唔好用 03:00 跨日中途值
+  if (st._wakeDfPending || st.dayWakeDf == null || !isFinite(Number(st.dayWakeDf))) {
+    st.dayWakeDf = startDf;
+    st._wakeDfPending = false;
+  }
   if (startDf < AI_E_DF_CAP - 1e-9) {
     if (startDf > 0) {
       st.dfMaxCap = Math.max(AI_E_MIN_DF_CAP, Math.min(AI_E_DF_CAP, Math.round(startDf)));
@@ -236,11 +291,18 @@ function aiESyncWake_(st, t0, skipCap) {
     st.socialMin = 0;
   }
   st.wakeKey = wk;
-  st.dayWakeDf = st.df;
   st.dayDfDrained = 0;
   st.dayHighEndFatigues = [];
   st.dayFatigueDrops = [];
   st._dayYmd = wk;
+  if (skipCap) {
+    // 瞓緊過 03:00：未醒，唔好當 Start
+    st.dayWakeDf = null;
+    st._wakeDfPending = true;
+  } else {
+    st.dayWakeDf = st.df;
+    st._wakeDfPending = false;
+  }
 }
 
 function aiENoteDfDrain_(st, loss) {
@@ -471,27 +533,6 @@ function aiEApplySegment_(st, ev, actKey, durationMin, t0) {
   st.dayEndDf = st.df;
 }
 
-function aiEClassifyDayType_(wakeDf, endDf, dfDrained) {
-  var drain = Math.max(0, Number(dfDrained) || 0);
-  var end = Number(endDf);
-  if (!isFinite(end)) end = 0;
-  if (end < 0 || drain > 1000) return "overload";
-  if (end <= 500) return "critical";
-  if (drain < 300 && end > 500) return "vacation";
-  if (end > 0 && drain >= 700) return "idealFocus";
-  if (end > 0 && drain < 700) return "hea";
-  return "hea";
-}
-
-function aiEClassifyStart_(wakeDf) {
-  var w = Number(wakeDf);
-  if (!isFinite(w)) w = 0;
-  if (w >= AI_E_DF_CAP - 0.5) return "goodStart";
-  if (w >= 700) return "moderateStart";
-  if (w > 500) return "badStart";
-  return "terribleStart";
-}
-
 function aiEClassifyFatigueSwitch_(fat) {
   var f = Number(fat);
   if (!isFinite(f)) return "unknown";
@@ -526,7 +567,10 @@ function aiEnergyReplayDayMetrics_(state, fromMs, toMs, lookbackDays) {
     var drops = st.dayFatigueDrops || [];
     var totalDrop = 0;
     for (var j = 0; j < drops.length; j++) totalDrop += Number(drops[j].drop) || 0;
-    var wakeDf = Math.round(st.dayWakeDf * 10) / 10;
+    var wakeDf =
+      st.dayWakeDf == null || !isFinite(Number(st.dayWakeDf))
+        ? null
+        : Math.round(st.dayWakeDf * 10) / 10;
     var endDf = Math.round(st.dayEndDf * 10) / 10;
     var drain = Math.round(st.dayDfDrained * 10) / 10;
     byYmd[ymd] = {
@@ -535,7 +579,7 @@ function aiEnergyReplayDayMetrics_(state, fromMs, toMs, lookbackDays) {
       endDf: endDf,
       dfDrained: drain,
       dayType: aiEClassifyDayType_(wakeDf, endDf, drain),
-      startQuality: aiEClassifyStart_(wakeDf),
+      startQuality: wakeDf == null ? "unknown" : aiEClassifyStart_(wakeDf),
       highWorkEndFatigue: highEnds.slice(),
       fatigueSwitchCounts: switchCounts,
       fatigueDropEvents: drops.slice(0, 20),
@@ -600,7 +644,7 @@ function aiEnergyReplayDayMetrics_(state, fromMs, toMs, lookbackDays) {
         endDf: null,
         dfDrained: 0,
         dayType: "vacation",
-        startQuality: "terribleStart",
+        startQuality: "unknown",
         highWorkEndFatigue: [],
         fatigueSwitchCounts: { ideal: 0, good: 0, poor: 0 },
         fatigueDropEvents: [],
