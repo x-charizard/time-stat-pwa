@@ -1026,7 +1026,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
   var pType = range.periodType;
   var reportLens =
     pType === "week"
-      ? "week_true_focus_remarks"
+      ? "week_df_energy_audits"
       : pType === "month"
         ? "month_day_count_audits"
         : pType === "quarter"
@@ -1050,9 +1050,9 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     reportLens: reportLens,
     reportLensNote:
       pType === "week"
-        ? "週報重點：trueFocus（活動時間−distraction）＋ remarks 內容／pattern／值得留意之處。processAudits 只作輔助，唔好變成日數盤點。"
+        ? "週報必須跟 Energy／DF checklist：用 processAudits 寫放假日／Hea／理想專注／Overload／Critical、Start 品質、High Work 後 Fatigue 切換（理想≤1.4／良好／差劣≥1.6）同 Fatigue 減少、Social Battery（>2h 先計 1 日）。禁止 OCD 鎖死／DMN 間隔。trueFocus／remarks 係輔助，唔好蓋過 DF 日型盤點。"
         : pType === "month"
-          ? "月報重點：processAudits DF 日型／Start 品質／Fatigue 切換日數盤點。Overload／Critical／No-Trades 要點名日期。"
+          ? "月報重點：processAudits DF 日型／Start 品質／Fatigue 切換日數盤點。Overload／Critical／No-Trades 要點名日期。禁止 OCD 鎖死／DMN 間隔。"
           : pType === "quarter"
             ? "季報重點：weeklyPerformance 每週表現對比（趨勢／起伏）。日數細節次要。"
             : "跟大綱；可用 weeklyPerformance 同 processAudits.summary。",
@@ -1158,22 +1158,24 @@ function aiDefaultReportOutline_() {
   return [
     "按 DATA_JSON.reportLens 選擇寫法（唔好用錯期別模板）：",
     "",
+    "【week_df_energy_audits｜週報】必須跟 DF／Energy checklist（定義只可用 termGlossary／processAudits.definitions）：",
+    "1. 執行摘要（本週 DF 日型＋Start＋Fatigue 切換一句過）",
+    "2. DF 日型日數：放假日（DF扣減<300 且結束DF>500）／Hea（結束DF>0 且扣減<700）／理想專注（結束DF>0 且扣減≥700）／Overload（結束DF<0 或扣減>1000）／Critical（結束DF≤500）；點名 Overload／Critical 日期",
+    "3. Start 品質：Good（醒時DF=上限）／Moderate（≥700）／Bad（500<wake<700）／Terrible（≤500）",
+    "4. 認知節奏：High Work 結束後 Fatigue_Factor（≤1.4 理想；1.4–1.6 良好；≥1.6 差劣）＋ Recovery／Sleep 令 Fatigue 減少幾多；禁止 OCD 鎖死／DMN 間隔",
+    "5. Social Battery：Friending＋Familying＋Socialing >2h 先計消耗 1 日（≤2h 唔扣）",
+    "6. trueFocus／remarks（輔助，唔好蓋過上面）",
+    "7. 下週 3 個細實驗",
+    "",
     "【month_day_count_audits｜月報】重點係「有幾多日」出現各類日子：",
     "1. 執行摘要（用日數講）",
     "2. 週期對比",
     "3. Work Load Tiers 日數（Vacation／Hea／Ideal／Overload／Critical＋Start 品質；Overload／Critical 點名日期）",
     "4. Reviewing Audit 日數（Ideal／Lack／Excessive）",
-    "5. Rhythm／Diffused Mode（High Work 後 Fatigue_Factor 切換：理想／良好／差劣；Fatigue 減少幅度）",
+    "5. Rhythm／Diffused Mode（High Work 後 Fatigue_Factor 切換：理想／良好／差劣；Fatigue 減少幅度；禁止 OCD／DMN）",
     "6. Boundary Flags 日數（高頻 Trading、No-Trades 日期＋原因）",
-    "7. Social Battery（每週社交天數）",
+    "7. Social Battery（>2h 先計 1 日；每週社交天數）",
     "8. 下期 3 個實驗",
-    "",
-    "【week_true_focus_remarks｜週報】重點係真正專注同 remark，唔好做成日數盤點報告：",
-    "1. 執行摘要（本週 trueFocus／distraction）",
-    "2. 真正專注時間（trueFocus = 活動時間 − distraction；按活動 top；Work 淨專注）",
-    "3. Remarks 內容回顧：寫咗啲咩、重複 pattern、情緒／決策／流程線索",
-    "4. 值得留意嘅信號（只基於 remarks + trueFocus／distraction；可輕提 1–2 個 audit 紅旗）",
-    "5. 下週 3 個細實驗",
     "",
     "【quarter_weekly_performance｜季報】重點係每週表現：",
     "1. 執行摘要（整季趨勢）",
@@ -1208,7 +1210,13 @@ function getAiPromptConfig_() {
         cfg.systemInstruction = j.systemInstruction.trim();
       }
       if (typeof j.reportOutline === "string" && j.reportOutline.trim()) {
-        cfg.reportOutline = j.reportOutline.trim();
+        var savedOutline = j.reportOutline.trim();
+        // 舊週報模板會叫模型「唔好做日數盤點」→ 蓋過 DF checklist；自動換成新預設
+        if (/week_true_focus_remarks|唔好做成日數盤點/i.test(savedOutline)) {
+          cfg.reportOutline = aiDefaultReportOutline_();
+        } else {
+          cfg.reportOutline = savedOutline;
+        }
       }
       if (typeof j.extraInstructions === "string") {
         cfg.extraInstructions = j.extraInstructions.trim();
@@ -1305,6 +1313,28 @@ function aiUserPrompt_(stats) {
     notes: "",
   };
   var outline = aiPeriodOutlineFromSections_(type, pcfg.sections || {}, pcfg.notes || "");
+  var lens = String(stats.reportLens || "");
+  var globalOutline = String(cfg.reportOutline || aiDefaultReportOutline_() || "");
+  // 若 Settings 仍存舊週報模板，強制用預設（避免 week_true_focus 蓋過 DF checklist）
+  if (/week_true_focus_remarks|唔好做成日數盤點/i.test(globalOutline)) {
+    globalOutline = aiDefaultReportOutline_();
+  }
+  var lensBlock = "";
+  if (globalOutline) {
+    var marker =
+      type === "week"
+        ? "【week_df_energy_audits"
+        : type === "month"
+          ? "【month_day_count_audits"
+          : type === "quarter"
+            ? "【quarter_weekly_performance"
+            : "";
+    if (marker && globalOutline.indexOf(marker) >= 0) {
+      lensBlock = "\n\n期別模板（必須跟）：\n" + globalOutline;
+    } else {
+      lensBlock = "\n\n全期別大綱參考：\n" + globalOutline;
+    }
+  }
   var lensNote = stats.reportLensNote ? "\n" + stats.reportLensNote : "";
   var cmpNote =
     stats.comparisons && stats.comparisons.length
@@ -1313,13 +1343,21 @@ function aiUserPrompt_(stats) {
   var glossaryNote =
     "\n專有術語首次出現必須附定義（DATA_JSON.termGlossary）。負面情緒必引用 negativeRemarks[].context72h。";
   var kpiNote =
-    "\nDATA_JSON.kpis.passFail 同 kpis.targets 係合格門檻；enabledSections 決定寫邊啲章節。";
+    "\nDATA_JSON.kpis.passFail 同 kpis.targets 係合格門檻；enabledSections 決定寫邊啲章節。週／月報必須引用 processAudits.summary（workLoadTiers／rhythmInterleaving／socialBattery）。";
+  var energyNote =
+    type === "week" || type === "month"
+      ? "\nEnergy checklist（強制）：放假日／Hea／理想專注／Overload／Critical、Good–Terrible Start、Fatigue≤1.4／1.4–1.6／≥1.6、Social>2h 先計日；禁止 OCD 鎖死同 DMN 間隔檢查。"
+      : "";
   return (
     "請根據以下 JSON 撰寫「" +
     title +
-    "」。\n\n報告大綱：\n" +
+    "」（reportLens=" +
+    lens +
+    "）。\n\n報告大綱（章節）：\n" +
     outline +
+    lensBlock +
     lensNote +
+    energyNote +
     cmpNote +
     glossaryNote +
     kpiNote +

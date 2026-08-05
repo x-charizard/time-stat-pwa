@@ -74,21 +74,22 @@ function aiDefaultEmotionKeywords_() {
 function aiDefaultPeriodSections_(periodType) {
   var t = String(periodType || "").toLowerCase();
   if (t === "week") {
+    // 順序：DF／Energy checklist 優先，trueFocus／remarks 輔助
     return {
-      fatigueSwitch: true,
-      socialDays: true,
-      negativeRemarks72h: true,
-      positiveRemarks: true,
       vacationDays: true,
       heaDays: true,
       idealFocusDays: true,
       overloadDays: true,
       startQuality: true,
+      fatigueSwitch: true,
+      socialDays: true,
+      trueFocus: true,
+      negativeRemarks72h: true,
+      positiveRemarks: true,
       sleepAnomalies: true,
       meditateDays: true,
       exerciseDays: true,
       weekTheme: true,
-      trueFocus: true,
       comparisons: true,
     };
   }
@@ -1004,16 +1005,18 @@ function enrichStatsWithPeriodKpis_(state, stats) {
   stats.periodNotes = String(pcfg.notes || "");
   stats.reportLens =
     pType === "week"
-      ? "week_kpis_checklist"
+      ? "week_df_energy_audits"
       : pType === "month"
-        ? "month_kpis_checklist"
+        ? "month_day_count_audits"
         : pType === "quarter"
           ? "quarter_weekly_trends"
           : pType === "year"
             ? "year_monthly_trends"
             : "custom_kpis";
   stats.reportLensNote =
-    "只寫 enabledSections=true 嘅章節。合格門檻用 kpis.passFail／kpis.targets，唔好自創。負面情緒必帶 context72h。術語首次出現附 termGlossary 定義。";
+    pType === "week" || pType === "month"
+      ? "只寫 enabledSections=true 嘅章節。週／月報必須以 processAudits（DF 日型、Start、Fatigue 切換、Social Battery）為主；trueFocus／remarks 輔助。禁止 OCD 鎖死／DMN 間隔。合格門檻用 kpis.passFail／kpis.targets。負面情緒必帶 context72h。"
+      : "只寫 enabledSections=true 嘅章節。合格門檻用 kpis.passFail／kpis.targets，唔好自創。負面情緒必帶 context72h。術語首次出現附 termGlossary 定義。";
   // extend glossary
   stats.termGlossary = stats.termGlossary || {};
   stats.termGlossary["睡眠不足"] = "當日 Sleeping 合計 < 6 小時（有打卡先計）";
