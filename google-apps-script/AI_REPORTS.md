@@ -89,10 +89,11 @@ Remark 含 negative keywords（可 Settings 改，預設含 chaos／頭痛／焦
 - 自動報告只 email + 歷史，無 Obsidian 檔
 
 
-## 6. Energy Model 5.0 — Semantic Lite
+## 6. Energy Model 5.0 — Semantic Lite（節流）
 
 PWA action：`analyzeEnergySemantic`（`activity` + `remark`）→ `{ score, sleep_base, is_fragmented }`。
 
-- 只用 `gemini-3.5-flash-lite` + `thinking_level: minimal`
-- PWA 按 remark 文字 cache，避免 reload 重複燒 token
-- 部署：更新 `TimeStatAiReports.gs` + `TimeStatSync.gs` → **新版本**
+- 只用 `gemini-3.5-flash-lite` + `thinking_level: minimal`，**只打 generateContent**（跳過 Interactions，避免雙重計 RPM）
+- PWA：heuristic 為主；只有情緒／瞓覺關鍵字 remark 先打 API；client 上限約 1/min、20/day；429 → 熔斷 6h
+- GAS：CacheService（最長 6h）＋ `GEMINI_LITE_CIRCUIT_UNTIL` 熔斷；Pro 硬額度時唔再 cascade 打 Lite
+- 部署：更新 `TimeStatAiReports.gs` + PWA `app.js`／`sw.js` → **新版本**

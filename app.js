@@ -1689,12 +1689,20 @@
   const ENERGY_MAX_SEGMENT_NON_SLEEP_MIN = 4 * 60;
   const ENERGY_MIN_DF_CAP = 100;
   const ENERGY_SEMANTIC_CACHE_KEY = "timeStatEnergySemanticCacheV1";
+  const ENERGY_SEMANTIC_RATE_KEY = "timeStatEnergySemanticRateV1";
+  const ENERGY_SEMANTIC_CIRCUIT_KEY = "timeStatEnergySemanticCircuitV1";
+  const ENERGY_SEMANTIC_RPM_MAX = 1;
+  const ENERGY_SEMANTIC_RPD_MAX = 20;
+  const ENERGY_SEMANTIC_CIRCUIT_MS = 6 * 3600000;
+  const ENERGY_SEMANTIC_BACKFILL_GAP_MS = 60000;
+  const ENERGY_SEMANTIC_BACKFILL_LOOKBACK_MS = 7 * 86400000;
   let _energyRefreshTimer_ = null;
   let _energyLockTimer_ = null;
   let _lastEnergySnap_ = null;
   let _energySemanticMem_ = null;
   let _energySemanticInflight_ = Object.create(null);
   let _energySemanticBackfillTimer_ = null;
+  let _energySemanticLastBackfillAt_ = 0;
 
   function clampEnergySf_(sf) {
     return Math.max(ENERGY_FP_FLOOR, Math.min(ENERGY_SF_CAP, sf));
@@ -1927,6 +1935,96 @@
     };
   }
 
+  /** 只有情緒／瞓覺品質信號先值得打 Gemini（慳 RPM／RPD） */
+  function energySemanticWorthApi_(activity, remark) {
+    const rm = String(remark || "").trim();
+    if (!rm) return false;
+    const act = String(activity || "").trim().toLowerCase();
+    const blob = (act + " " + rm).toLowerCase();
+    if (
+      /憤怒|好嬲|暴怒|恨死|崩潰|絕望|rage|fury|chaos|panic|melt\s*down|焦慮|頭痛|好攰|累爆|burnout|stressed|內耗|崩潰感|開心|平靜|感恩|joy|grateful|放鬆|滿足|喜悅|蚊|吵醒|醒咗|失眠|nightmare|惡夢|fragment|斷斷續續|唔好瞓|深睡|deep\s*sleep|好瞓|睡得好|rested|solid\s*sleep|bali\s*belly|肚瀉|發燒|fever|sick|illness|痛/.test(
+        blob,
+      )
+    ) {
+      return true;
+    }
+    if (/^sleeping$|^sleep$/.test(act) && rm.length >= 3) return true;
+    return false;
+  }
+
+  function energySemanticCircuitUntil_() {
+    try {
+      const n = Number(localStorage.getItem(ENERGY_SEMANTIC_CIRCUIT_KEY) || 0);
+      return Number.isFinite(n) ? n : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function energySemanticTripCircuit_(ms) {
+    const until = Date.now() + (ms != null ? ms : ENERGY_SEMANTIC_CIRCUIT_MS);
+    try {
+      localStorage.setItem(ENERGY_SEMANTIC_CIRCUIT_KEY, String(until));
+    } catch (e) {}
+    return until;
+  }
+
+  function energySemanticCircuitOpen_() {
+    return Date.now() < energySemanticCircuitUntil_();
+  }
+
+  function loadEnergySemanticRate_() {
+    try {
+      const raw = localStorage.getItem(ENERGY_SEMANTIC_RATE_KEY);
+      const obj = raw ? JSON.parse(raw) : null;
+      if (obj && typeof obj === "object") return obj;
+    } catch (e) {}
+    return { day: "", dayCount: 0, minuteBucket: 0, minuteCount: 0 };
+  }
+
+  function saveEnergySemanticRate_(obj) {
+    try {
+      localStorage.setItem(ENERGY_SEMANTIC_RATE_KEY, JSON.stringify(obj || {}));
+    } catch (e) {}
+  }
+
+  function energySemanticCanSpendQuota_() {
+    if (energySemanticCircuitOpen_()) return false;
+    const now = Date.now();
+    const day = new Date().toISOString().slice(0, 10);
+    const minuteBucket = Math.floor(now / 60000);
+    const r = loadEnergySemanticRate_();
+    if (r.day !== day) {
+      r.day = day;
+      r.dayCount = 0;
+    }
+    if (r.minuteBucket !== minuteBucket) {
+      r.minuteBucket = minuteBucket;
+      r.minuteCount = 0;
+    }
+    if (r.minuteCount >= ENERGY_SEMANTIC_RPM_MAX) return false;
+    if (r.dayCount >= ENERGY_SEMANTIC_RPD_MAX) return false;
+    return true;
+  }
+
+  function energySemanticSpendQuota_() {
+    const now = Date.now();
+    const day = new Date().toISOString().slice(0, 10);
+    const minuteBucket = Math.floor(now / 60000);
+    const r = loadEnergySemanticRate_();
+    if (r.day !== day) {
+      r.day = day;
+      r.dayCount = 0;
+    }
+    if (r.minuteBucket !== minuteBucket) {
+      r.minuteBucket = minuteBucket;
+      r.minuteCount = 0;
+    }
+    r.minuteCount++;
+    r.dayCount++;
+    saveEnergySemanticRate_(r);
+  }
+
   function normalizeEnergySemantic_(raw, activity, remark) {
     const h = energyHeuristicSemantic_(activity, remark);
     let score = Number(raw && raw.score);
@@ -1966,7 +2064,21 @@
       activity: activity,
       remark: remark,
     });
+    if (j && j.skipped) {
+      return Object.assign(energyHeuristicSemantic_(activity, remark), { source: "skipped" });
+    }
     return normalizeEnergySemantic_(j, activity, remark);
+  }
+
+  function storeEnergySemanticHeuristic_(activity, remark) {
+    const key = energySemanticCacheKey_(activity, remark);
+    const h = Object.assign({}, energyHeuristicSemantic_(activity, remark), {
+      source: "heuristic",
+      at: Date.now(),
+    });
+    loadEnergySemanticCache_()[key] = h;
+    saveEnergySemanticCache_();
+    return h;
   }
 
   function ensureEnergySemanticForEv_(ev, opts) {
@@ -1976,32 +2088,29 @@
     if (!activity && !remark) return Promise.resolve(null);
     const key = energySemanticCacheKey_(activity, remark);
     const cache = loadEnergySemanticCache_();
-    if (cache[key] && cache[key].source === "api" && !o.force) {
+    if (cache[key] && typeof cache[key] === "object" && !o.force) {
       return Promise.resolve(normalizeEnergySemantic_(cache[key], activity, remark));
     }
-    if (!canRemoteSync()) {
-      const h = energyHeuristicSemantic_(activity, remark);
-      if (!cache[key]) {
-        cache[key] = h;
-        saveEnergySemanticCache_();
-      }
-      return Promise.resolve(h);
+    const worth = energySemanticWorthApi_(activity, remark);
+    if (!worth || !canRemoteSync() || energySemanticCircuitOpen_() || !energySemanticCanSpendQuota_()) {
+      return Promise.resolve(storeEnergySemanticHeuristic_(activity, remark));
     }
     if (_energySemanticInflight_[key]) return _energySemanticInflight_[key];
+    energySemanticSpendQuota_();
     _energySemanticInflight_[key] = fetchEnergySemanticApi_(activity, remark)
       .then((sem) => {
-        const packed = Object.assign({}, sem, { source: "api", at: Date.now() });
+        const src = sem && sem.source === "skipped" ? "heuristic" : "api";
+        const packed = Object.assign({}, sem, { source: src, at: Date.now() });
         loadEnergySemanticCache_()[key] = packed;
         saveEnergySemanticCache_();
         return packed;
       })
-      .catch(() => {
-        const h = energyHeuristicSemantic_(activity, remark);
-        if (!loadEnergySemanticCache_()[key]) {
-          loadEnergySemanticCache_()[key] = h;
-          saveEnergySemanticCache_();
+      .catch((err) => {
+        const msg = String((err && err.message) || err || "");
+        if (/gemini_quota_exhausted|429|resource_exhausted|rate.?limit/i.test(msg)) {
+          energySemanticTripCircuit_();
         }
-        return h;
+        return storeEnergySemanticHeuristic_(activity, remark);
       })
       .finally(() => {
         delete _energySemanticInflight_[key];
@@ -2011,29 +2120,37 @@
 
   function scheduleEnergySemanticBackfill_() {
     if (_energySemanticBackfillTimer_) return;
+    const now = Date.now();
+    if (now - _energySemanticLastBackfillAt_ < ENERGY_SEMANTIC_BACKFILL_GAP_MS) return;
+    if (!canRemoteSync() || energySemanticCircuitOpen_() || !energySemanticCanSpendQuota_()) return;
     _energySemanticBackfillTimer_ = setTimeout(async () => {
       _energySemanticBackfillTimer_ = null;
-      if (!canRemoteSync()) return;
+      _energySemanticLastBackfillAt_ = Date.now();
+      if (!canRemoteSync() || energySemanticCircuitOpen_() || !energySemanticCanSpendQuota_()) return;
       const list = sortedEventsUniqueById();
       const cache = loadEnergySemanticCache_();
-      let n = 0;
-      for (let i = list.length - 1; i >= 0 && n < 8; i--) {
+      const cutoff = Date.now() - ENERGY_SEMANTIC_BACKFILL_LOOKBACK_MS;
+      let did = false;
+      for (let i = list.length - 1; i >= 0; i--) {
         const ev = list[i];
+        const st = Date.parse(ev && ev.start);
+        if (!Number.isFinite(st) || st < cutoff) continue;
         const activity = activityDisplayName(ev.activityId) || "";
         const remark = String(ev.remark || "").trim();
-        if (!remark && !activity) continue;
+        if (!energySemanticWorthApi_(activity, remark)) continue;
         const key = energySemanticCacheKey_(activity, remark);
-        if (cache[key] && cache[key].source === "api") continue;
-        n++;
+        if (cache[key] && typeof cache[key] === "object") continue;
         try {
           await ensureEnergySemanticForEv_(ev);
+          did = true;
         } catch (e) {}
+        break; // 每輪最多 1 筆
       }
-      if (n > 0) {
+      if (did) {
         refreshEnergyBanner_();
         refreshSoftCapBanner();
       }
-    }, 1200);
+    }, 1500);
   }
 
   function createEnergyState_() {
@@ -3070,7 +3187,6 @@
     ) {
       document.documentElement.classList.remove("ai-report-busy");
     }
-    scheduleEnergySemanticBackfill_();
     const nowMs = Date.now();
     const snap = calculateEnergy(nowMs);
     _lastEnergySnap_ = snap;
@@ -3779,8 +3895,11 @@
       .then(() => {
         refreshEnergyBanner_();
         refreshSoftCapBanner();
+        scheduleEnergySemanticBackfill_();
       })
-      .catch(() => {});
+      .catch(() => {
+        scheduleEnergySemanticBackfill_();
+      });
     // 每個活動記 GPS（權限拒絕就留空）
     if (!merged.merged) {
       attachGpsToEvent_(savedEv).then((ok) => {
@@ -7451,6 +7570,7 @@
       updateLastSavedHint();
       updateAuthChrome_();
       refreshSoftCapBanner();
+      scheduleEnergySemanticBackfill_();
       return;
     }
     state = parsed.out;
@@ -7475,6 +7595,7 @@
     updateLastSavedHint();
     updateAuthChrome_();
     refreshSoftCapBanner();
+    scheduleEnergySemanticBackfill_();
   }
 
   function showAuthOverlay_(message) {
@@ -7688,6 +7809,7 @@
   refreshManualAutoSuggestions();
   updateLastSavedHint();
   refreshSoftCapBanner();
+  scheduleEnergySemanticBackfill_();
   const cancelBtn = document.getElementById("btnMappingCancel");
   if (cancelBtn) cancelBtn.addEventListener("click", clearApprovalPanel);
 

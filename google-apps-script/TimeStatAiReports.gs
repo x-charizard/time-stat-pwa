@@ -13,6 +13,11 @@ var AI_REPORTS_SHEET = "TimeStatAIReports";
 var GEMINI_MODEL_PRIMARY = "gemini-3.1-pro-preview";
 var GEMINI_MODEL_FREE_LITE = "gemini-3.5-flash-lite";
 var GEMINI_MODEL = GEMINI_MODEL_PRIMARY;
+/** Lite／共享額度熔斷（epoch ms）；撞 429／RPD 後暫停打 Flash Lite */
+var GEMINI_LITE_CIRCUIT_PROP = "GEMINI_LITE_CIRCUIT_UNTIL";
+var GEMINI_LITE_CIRCUIT_MS = 6 * 3600000;
+/** CacheService 上限 21600s（6h）；同一 remark 唔重複燒 semantic token */
+var GEMINI_SEMANTIC_CACHE_TTL_SEC = 21600;
 var AI_WAKE_H = 3;
 var AI_WAKE_MI = 0;
 var AI_WORK_CAP_MS = 4 * 3600000;
@@ -1340,44 +1345,83 @@ function aiIsGeminiQuotaOrUnavailable_(code, text) {
   );
 }
 
+/** 真正 RPM／RPD／quota（唔包括 model not found／403 權限誤判以外嘅硬限） */
+function aiIsGeminiHardQuota_(code, text) {
+  var c = Number(code) || 0;
+  var t = String(text || "").toLowerCase();
+  if (c === 429) return true;
+  return /resource_exhausted|quota|rate.?limit|rpd|requests per day|exceeded your current quota|limit:\s*0/i.test(
+    t,
+  );
+}
+
+function aiGeminiLiteCircuitUntil_() {
+  var props = PropertiesService.getScriptProperties();
+  return Number(props.getProperty(GEMINI_LITE_CIRCUIT_PROP) || 0) || 0;
+}
+
+function aiGeminiLiteCircuitOpen_() {
+  return Date.now() < aiGeminiLiteCircuitUntil_();
+}
+
+function aiGeminiTripLiteCircuit_(ms) {
+  var until = Date.now() + (ms != null ? ms : GEMINI_LITE_CIRCUIT_MS);
+  PropertiesService.getScriptProperties().setProperty(GEMINI_LITE_CIRCUIT_PROP, String(until));
+  return until;
+}
+
 /**
- * 單次呼叫：Interactions 優先，再 generateContent。
- * @returns {{ok:boolean, markdown?:string, via?:string, code?:number, body?:string, quota?:boolean}}
+ * 單次呼叫：預設 Interactions 優先，再 generateContent。
+ * opts.skipInteractions=true → 只打 generateContent（semantic 用，避免雙重計 RPM）。
+ * @returns {{ok:boolean, markdown?:string, via?:string, code?:number, body?:string, quota?:boolean, hardQuota?:boolean}}
  */
-function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user) {
+function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user, opts) {
+  opts = opts || {};
   var think = String(thinkingLevel || "high").toLowerCase();
-  var urlI = "https://generativelanguage.googleapis.com/v1beta/interactions";
-  var bodyI = {
-    model: model,
-    system_instruction: system,
-    input: user,
-    generation_config: {
-      temperature: temperature,
-      thinking_level: think,
-    },
-  };
-  try {
-    var resI = UrlFetchApp.fetch(urlI, {
-      method: "post",
-      contentType: "application/json",
-      headers: { "x-goog-api-key": apiKey },
-      payload: JSON.stringify(bodyI),
-      muteHttpExceptions: true,
-    });
-    var codeI = resI.getResponseCode();
-    var textI = resI.getContentText();
-    if (codeI >= 200 && codeI < 300) {
-      var jI = JSON.parse(textI);
-      var out =
-        jI.output_text ||
-        (jI.output && jI.output.text) ||
-        extractGeminiTextFallback_(jI);
-      if (out) return { ok: true, markdown: String(out), via: "interactions", code: codeI };
-    }
-    if (aiIsGeminiQuotaOrUnavailable_(codeI, textI)) {
-      return { ok: false, quota: true, code: codeI, body: String(textI).slice(0, 400) };
-    }
-  } catch (eI) {}
+
+  if (!opts.skipInteractions) {
+    var urlI = "https://generativelanguage.googleapis.com/v1beta/interactions";
+    var bodyI = {
+      model: model,
+      system_instruction: system,
+      input: user,
+      generation_config: {
+        temperature: temperature,
+        thinking_level: think,
+      },
+    };
+    try {
+      var resI = UrlFetchApp.fetch(urlI, {
+        method: "post",
+        contentType: "application/json",
+        headers: { "x-goog-api-key": apiKey },
+        payload: JSON.stringify(bodyI),
+        muteHttpExceptions: true,
+      });
+      var codeI = resI.getResponseCode();
+      var textI = resI.getContentText();
+      if (codeI >= 200 && codeI < 300) {
+        var jI = JSON.parse(textI);
+        var out =
+          jI.output_text ||
+          (jI.output && jI.output.text) ||
+          extractGeminiTextFallback_(jI);
+        if (out) return { ok: true, markdown: String(out), via: "interactions", code: codeI };
+      }
+      if (aiIsGeminiHardQuota_(codeI, textI)) {
+        return {
+          ok: false,
+          quota: true,
+          hardQuota: true,
+          code: codeI,
+          body: String(textI).slice(0, 400),
+        };
+      }
+      if (aiIsGeminiQuotaOrUnavailable_(codeI, textI)) {
+        return { ok: false, quota: true, code: codeI, body: String(textI).slice(0, 400) };
+      }
+    } catch (eI) {}
+  }
 
   var urlG =
     "https://generativelanguage.googleapis.com/v1beta/models/" +
@@ -1409,13 +1453,22 @@ function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user
   return {
     ok: false,
     quota: aiIsGeminiQuotaOrUnavailable_(codeG, textG),
+    hardQuota: aiIsGeminiHardQuota_(codeG, textG),
     code: codeG,
     body: String(textG).slice(0, 400),
   };
 }
 
+function aiSemanticCacheKey_(activity, remark) {
+  var raw = String(activity || "").trim().toLowerCase() + "\n" + String(remark || "").trim().toLowerCase();
+  var dig = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+  var b64 = Utilities.base64EncodeWebSafe(dig);
+  return "esem_" + String(b64).replace(/=+$/g, "").slice(0, 80);
+}
+
 /**
  * Pro+High 優先；無 quota／唔支援 → 免費 Flash-Lite。
+ * Pro 撞硬額度或 Lite 熔斷開啟時，唔再打 Lite（避免雪崩）。
  */
 function callGeminiWithMessages_(system, user) {
   var props = PropertiesService.getScriptProperties();
@@ -1430,6 +1483,12 @@ function callGeminiWithMessages_(system, user) {
 
   for (var i = 0; i < chain.length; i++) {
     var step = chain[i];
+    if (step.tier === "free-lite") {
+      if (aiGeminiLiteCircuitOpen_()) {
+        attempted.push(step.model + "@circuit-open");
+        break;
+      }
+    }
     attempted.push(step.model + "@" + step.thinkingLevel);
     var r = callGeminiOnce_(apiKey, step.model, step.thinkingLevel, temperature, system, user);
     last = r;
@@ -1443,6 +1502,13 @@ function callGeminiWithMessages_(system, user) {
         fallback: i > 0,
         attempted: attempted,
       };
+    }
+    if (r && r.hardQuota) {
+      aiGeminiTripLiteCircuit_();
+      if (step.tier === "pro") {
+        attempted.push(GEMINI_MODEL_FREE_LITE + "@skipped-after-pro-hard-quota");
+        break;
+      }
     }
     if (!(r && (r.quota || r.code >= 400))) break;
   }
@@ -2172,7 +2238,7 @@ function handleMarkAiReportSynced_(body) {
 
 
 /**
- * Energy Model 5.0 — Semantic Lite（只用 flash-lite，慳 token）
+ * Energy Model 5.0 — Semantic Lite（只用 flash-lite generateContent；跳過 Interactions）
  * body: { activity, remark }
  * → { score, sleep_base, is_fragmented, model, tier }
  */
@@ -2189,6 +2255,39 @@ function handleAnalyzeEnergySemantic_(body) {
       }),
     );
   }
+
+  if (aiGeminiLiteCircuitOpen_()) {
+    return jsonOut_(
+      authOkFields_({
+        score: 0,
+        sleep_base: 1,
+        is_fragmented: false,
+        skipped: true,
+        reason: "lite_circuit",
+        circuitUntil: aiGeminiLiteCircuitUntil_(),
+      }),
+    );
+  }
+
+  var cacheKey = aiSemanticCacheKey_(activity, remark);
+  try {
+    var cached = CacheService.getScriptCache().get(cacheKey);
+    if (cached) {
+      var hit = JSON.parse(cached);
+      return jsonOut_(
+        authOkFields_({
+          score: hit.score,
+          sleep_base: hit.sleep_base,
+          is_fragmented: !!hit.is_fragmented,
+          model: hit.model || GEMINI_MODEL_FREE_LITE,
+          tier: "free-lite",
+          via: "cache",
+          cached: true,
+        }),
+      );
+    }
+  } catch (eCache) {}
+
   var props = PropertiesService.getScriptProperties();
   var apiKey = String(props.getProperty("GEMINI_API_KEY") || "").trim();
   if (!apiKey) return authFail_("missing_GEMINI_API_KEY");
@@ -2196,7 +2295,7 @@ function handleAnalyzeEnergySemantic_(body) {
   var system =
     "You are a mental-energy semantic scorer for a personal time log. " +
     "Return ONLY compact JSON (no markdown) with keys: " +
-    'score (number -2..+2), sleep_base (number 0.7..1.3), is_fragmented (boolean). ' +
+    "score (number -2..+2), sleep_base (number 0.7..1.3), is_fragmented (boolean). " +
     "score: emotional/cognitive drain vs recovery for THIS activity+remark. " +
     "-2 extreme drain/anger; 0 neutral; +2 extreme joy/recovery. " +
     "If activity is Sleeping (or sleep): set sleep_base for quality " +
@@ -2211,11 +2310,16 @@ function handleAnalyzeEnergySemantic_(body) {
     "\nJSON:";
 
   var model = GEMINI_MODEL_FREE_LITE;
-  var r = callGeminiOnce_(apiKey, model, "minimal", 0.2, system, user);
+  var r = callGeminiOnce_(apiKey, model, "minimal", 0.2, system, user, {
+    skipInteractions: true,
+  });
   if (!(r && r.ok && r.markdown)) {
     var detail = r && r.body ? String(r.body).slice(0, 200) : "empty";
     var code = r && r.code ? r.code : 0;
-    if (r && r.quota) return authFail_("gemini_quota_exhausted:lite:" + detail);
+    if (r && (r.hardQuota || r.quota)) {
+      if (r.hardQuota) aiGeminiTripLiteCircuit_();
+      return authFail_("gemini_quota_exhausted:lite:" + detail);
+    }
     return authFail_("gemini_http_" + code + ":" + detail);
   }
   var raw = String(r.markdown || "").trim();
@@ -2234,14 +2338,28 @@ function handleAnalyzeEnergySemantic_(body) {
   if (!isFinite(sleepBase)) sleepBase = 1;
   sleepBase = Math.max(0.7, Math.min(1.3, sleepBase));
   var frag = obj.is_fragmented === true || obj.is_fragmented === "true" || obj.is_fragmented === 1;
+  var payload = {
+    score: Math.round(score * 100) / 100,
+    sleep_base: Math.round(sleepBase * 100) / 100,
+    is_fragmented: !!frag,
+    model: model,
+  };
+  try {
+    CacheService.getScriptCache().put(
+      cacheKey,
+      JSON.stringify(payload),
+      GEMINI_SEMANTIC_CACHE_TTL_SEC,
+    );
+  } catch (ePut) {}
   return jsonOut_(
     authOkFields_({
-      score: Math.round(score * 100) / 100,
-      sleep_base: Math.round(sleepBase * 100) / 100,
-      is_fragmented: !!frag,
+      score: payload.score,
+      sleep_base: payload.sleep_base,
+      is_fragmented: payload.is_fragmented,
       model: model,
       tier: "free-lite",
-      via: r.via || "",
+      via: r.via || "generateContent",
+      cached: false,
     }),
   );
 }
