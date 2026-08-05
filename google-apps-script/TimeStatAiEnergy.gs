@@ -51,10 +51,12 @@ var AI_E_MED_KEYS = {
   obsidianing: 1,
   notioning: 1,
   reading: 1,
-  photoing: 1,
-  photography: 1,
   "photo editing": 1,
   photoediting: 1,
+  journaling: 1,
+  journal: 1,
+  diarying: 1,
+  diary: 1,
 };
 var AI_E_LOW_KEYS = {
   editing: 1,
@@ -69,6 +71,7 @@ var AI_E_RECOVER_KEYS = {
   walking: 1,
   hiking: 1,
   fooding: 1,
+  photoing: 1,
 };
 var AI_E_SOCIAL_KEYS = { friending: 1, familying: 1, socialing: 1 };
 
@@ -152,38 +155,58 @@ function aiESleepRecoverMult_(sem, durMin, ev) {
   return Math.max(0.7, Math.min(1.8, mult));
 }
 
-function aiETier_(ev, actKey) {
-  var key = String(actKey || "").toLowerCase();
-  var blob = [
-    String((ev && ev.remark) || ""),
-    String((ev && ev.group) || ""),
-    String((ev && ev.sub) || ""),
-    String((ev && ev.category) || ""),
-    String((ev && ev.project) || ""),
+function aiEEvBlob_(ev, actKey) {
+  return [
+    actKey,
+    ev && ev.remark,
+    ev && ev.group,
+    ev && ev.sub,
+    ev && ev.subCat,
+    ev && ev.category,
+    ev && ev.cat,
+    ev && ev.project,
+    ev && ev.projectsFromForm,
+    ev && ev.layer,
   ]
+    .map(function (x) {
+      return String(x || "");
+    })
     .join(" ")
     .toLowerCase();
+}
+
+function aiEIsXavierLi_(ev, actKey) {
+  return /xavier\s*li\s*photography/.test(aiEEvBlob_(ev, actKey));
+}
+
+function aiETier_(ev, actKey) {
+  var key = String(actKey || "").toLowerCase();
+  var blob = aiEEvBlob_(ev, actKey);
 
   if (key === "sleeping") return "sleep";
   if (AI_E_SOCIAL_KEYS[key]) return "social";
 
-  // Xavier Li Photography（activity 或 sub／project）→ Work Medium
+  // Xavier Li Photography／photography → Work Medium
+  if (aiEIsXavierLi_(ev, actKey) || key === "photography") return "medium";
+  // Photo Editing／Journaling → Work Medium
   if (
-    key === "photoing" ||
-    key === "photography" ||
-    /xavier\s*li\s*photography/.test(blob)
+    key === "photo editing" ||
+    key === "photoediting" ||
+    key === "journaling" ||
+    key === "journal" ||
+    key === "diarying" ||
+    key === "diary"
   ) {
     return "medium";
   }
+  // 普通 Photoing → Rest
+  if (key === "photoing") return "recover";
 
   // Aiing：Remark 決定 Rest(recover) 定 Work(medium)
   if (key === "aiing" || key === "ai") {
-    if (
-      /(hea|傾偈|傾計|聊天|吹水|玩|娛樂|輕鬆|休息|rest|chill|casual|meme|閒聊)/i.test(blob)
-    ) {
+    if (/(hea|傾偈|傾計|聊天|吹水|玩|娛樂|輕鬆|休息|rest|chill|casual|meme|閒聊)/i.test(blob)) {
       return "recover";
     }
-    // 預設／有工作字 → Work M
     return "medium";
   }
 
@@ -520,7 +543,8 @@ function aiEApplySegment_(st, ev, actKey, durationMin, t0) {
     } else if (tier === "recover") {
       if (elapsed < focus) aiEApplyRecoverMin_(st, Math.min(s, focus - elapsed), focus);
     } else if (tier === "social") {
-      if (elapsed < focus) aiEApplySocial_(st, Math.min(s, focus - elapsed), sem.score);
+      // 當日累計：成段時長計入 socialMin／SF／DF
+      aiEApplySocial_(st, s, sem.score);
     } else if (tier === "high" || tier === "medium" || tier === "low") {
       aiEApplyWork_(st, tier, s);
       if (tier === "high") wasHigh = true;

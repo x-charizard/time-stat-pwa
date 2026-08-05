@@ -1019,7 +1019,8 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       definition:
         "Focused Mode = High／Medium Work 段落結束時量 Fatigue_Factor；之後入 Diffused（Recover／Social／Sleep）睇 Fatigue 有冇被減少。評級：≤1.4 理想；1.4–1.6 良好；≥1.6 差劣。",
       highWorkKeys: ["trading", "trading practice", "programming", "timing", "financing", "webing", "systeming", "apping"],
-      mediumWorkKeys: ["reviewing", "planning", "aiing", "photoing", "obsidianing", "reading(非小說)", "notioning"],
+      mediumWorkKeys: ["reviewing", "planning", "aiing", "photo editing", "journaling", "Xavier Li Photography", "obsidianing", "reading(非小說)", "notioning"],
+      restPhotoing: "普通 Photoing = Rest；Xavier Li Photography = Work M",
       fatigueSwitchCounts: fatigueSwitchTotals,
       fatigueSwitchSamples: fatigueSwitchSamples.slice(0, 60),
       fatigueReduction: {

@@ -1256,10 +1256,30 @@
         };
       }
     }
-    const mentalRest = new Set(["resting", "familying", "walking", "meditating"]);
+    const mentalRest = new Set(["resting", "familying", "walking", "meditating", "photoing", "friending", "socialing"]);
     const physicalRest = new Set(["sleeping", "showering", "fooding"]);
     const physicalSet = new Set(["gyming", "running", "yogaing", "exercise", "workouting", "hiking", "camping"]);
-    const workSet = new Set(["trading", "trading practice", "trading planning", "programming", "obsidianing", "photoing", "photography", "planning", "reviewing", "reading"]);
+    const workSet = new Set([
+      "trading",
+      "trading practice",
+      "trading planning",
+      "programming",
+      "obsidianing",
+      "photography",
+      "photo editing",
+      "photoediting",
+      "journaling",
+      "journal",
+      "diarying",
+      "diary",
+      "planning",
+      "reviewing",
+      "reading",
+      "aiing",
+    ]);
+    if (/xavier\s*li\s*photography/i.test(String(activityLabel || ""))) {
+      return { group: "Work", layer: "Achievement", cat: "Business" };
+    }
     if (physicalSet.has(key)) return { group: "Rest", layer: "Health", cat: "Physical Health" };
     if (physicalRest.has(key)) return { group: "Rest", layer: "Health", cat: "Physical Health" };
     if (mentalRest.has(key)) return { group: "Rest", layer: "Health", cat: "Mental Health" };
@@ -1372,9 +1392,18 @@
     const key = normalizeActivityKey(activityLabel);
     const remarkLow = String(ev.remark || "").toLowerCase();
 
+    if (energyIsXavierLiPhotography_(ev) || key === "photography") {
+      return { layer: "Achievement", cat: "Business", subCat: "Xavier Li Photography" };
+    }
+    if (energyIsPhotoEditingKey_(key)) {
+      return { layer: "Freedom", cat: "Art" };
+    }
+    if (energyIsJournalingKey_(key)) {
+      return { layer: "Freedom", cat: "Time" };
+    }
+
     const fixed = {
       photoing: { layer: "Freedom", cat: "Time" },
-      photography: { layer: "Freedom", cat: "Finance" },
       trading: { layer: "Freedom", cat: "Finance" },
       "trading planning": { layer: "Freedom", cat: "Finance" },
       "trading practice": { layer: "Freedom", cat: "Time" },
@@ -1391,7 +1420,7 @@
     }
 
     const physicalRestSet = new Set(["sleeping", "showering", "fooding"]);
-    const mentalRestSet = new Set(["resting", "familying", "walking", "meditating"]);
+    const mentalRestSet = new Set(["resting", "familying", "walking", "meditating", "friending", "socialing"]);
     const physicalSet = new Set(["gyming", "running", "yogaing", "exercise", "workouting", "hiking", "camping"]);
     if (physicalSet.has(key)) return { layer: "Health", cat: "Physical Health" };
     if (physicalRestSet.has(key)) return { layer: "Health", cat: "Physical Health" };
@@ -1417,12 +1446,15 @@
     const key = normalizeActivityKey(activityLabel);
     const remark = String(ev.remark || "").trim();
     const remarkLow = remark.toLowerCase();
+
+    if (energyIsXavierLiPhotography_(ev) || key === "photography") return "Work";
+    if (energyIsPhotoEditingKey_(key) || energyIsJournalingKey_(key)) return "Work";
+    if (key === "photoing") return "Rest";
+
     const grey = new Set([
       "reading",
-      "photoing",
       "writing",
       "obsidianing",
-      "diarying",
       "gaming",
       "travel planning",
     ]);
@@ -1435,7 +1467,7 @@
       if (workHit && restHit) return "Rest";
       return "Rest";
     }
-    const restSetGrey = new Set(["resting", "sleeping", "showering", "fooding", "familying", "walking", "meditating"]);
+    const restSetGrey = new Set(["resting", "sleeping", "showering", "fooding", "familying", "walking", "meditating", "friending", "socialing"]);
     const physicalSetGrey = new Set(["gyming", "running", "yogaing", "exercise", "workouting", "hiking", "camping"]);
     if (physicalSetGrey.has(key) || restSetGrey.has(key)) return "Rest";
     return "Work";
@@ -1644,15 +1676,14 @@
     "obsidianing",
     "notioning",
     "reading",
-    "photoing",
-    "photography",
     "photo editing",
     "photoediting",
+    "journaling",
+    "journal",
+    "diarying",
+    "diary",
   ]);
-  const ENERGY_LOW_KEYS = new Set([
-    "editing",
-    "transporting",
-  ]);
+  const ENERGY_LOW_KEYS = new Set(["editing", "transporting"]);
   const ENERGY_RECOVERY_KEYS = new Set([
     "meditating",
     "gyming",
@@ -1662,6 +1693,7 @@
     "walking",
     "hiking",
     "fooding",
+    "photoing", // 普通 Photoing = Rest；Xavier Li Photography 另判
   ]);
   /** Friending / Familying / Socialing → Social Battery / Toxic Interaction */
   const ENERGY_SOCIAL_KEYS = new Set(["friending", "familying", "socialing"]);
@@ -1852,27 +1884,55 @@
     return Math.max(0, Math.min(dur, aiMin));
   }
 
-  function energyTierOfEvent_(ev) {
-    const key = activityKeyOfEv_(ev);
-    const blob = [
-      String((ev && ev.remark) || ""),
-      String((ev && ev.group) || ""),
-      String((ev && ev.sub) || ""),
-      String((ev && ev.category) || ""),
-      String((ev && ev.project) || ""),
+  function energyEvTextBlob_(ev) {
+    return [
+      activityDisplayName(ev && ev.activityId),
+      ev && ev.remark,
+      ev && ev.group,
+      ev && ev.sub,
+      ev && ev.subCat,
+      ev && ev.category,
+      ev && ev.cat,
+      ev && ev.project,
+      ev && ev.projectsFromForm,
+      ev && ev.layer,
     ]
+      .map((x) => String(x || ""))
       .join(" ")
       .toLowerCase();
+  }
+
+  function energyIsXavierLiPhotography_(ev) {
+    return /xavier\s*li\s*photography/.test(energyEvTextBlob_(ev));
+  }
+
+  function energyIsPhotoEditingKey_(key) {
+    const k = String(key || "").toLowerCase();
+    return k === "photo editing" || k === "photoediting";
+  }
+
+  function energyIsJournalingKey_(key) {
+    const k = String(key || "").toLowerCase();
+    return k === "journaling" || k === "journal" || k === "diarying" || k === "diary";
+  }
+
+  function energyTierOfEvent_(ev) {
+    const key = activityKeyOfEv_(ev);
+    const blob = energyEvTextBlob_(ev);
     if (key === "sleeping") return "sleep";
     if (ENERGY_SOCIAL_KEYS.has(key)) return "social";
-    // Xavier Li Photography → Work Medium
-    if (
-      key === "photoing" ||
-      key === "photography" ||
-      /xavier\s*li\s*photography/.test(blob)
-    ) {
+
+    // Xavier Li Photography → Work Medium（普通 Photoing 唔計）
+    if (energyIsXavierLiPhotography_(ev) || key === "photography") {
       return "medium";
     }
+    // Photo Editing／Journaling → Work Medium
+    if (energyIsPhotoEditingKey_(key) || energyIsJournalingKey_(key)) {
+      return "medium";
+    }
+    // 普通 Photoing → Rest
+    if (key === "photoing") return "recover";
+
     // Aiing：Remark 決定 Rest(recover) 定 Work(medium)
     if (key === "aiing" || key === "ai") {
       if (/(hea|傾偈|傾計|聊天|吹水|玩|娛樂|輕鬆|休息|rest|chill|casual|meme|閒聊)/i.test(blob)) {
@@ -2569,12 +2629,8 @@
           energyApplyRecoverMinute_(st, recStep, focusMin);
         }
       } else if (tier === "social") {
-        if (elapsed < focusMin) {
-          const socStep = Math.min(step, focusMin - elapsed);
-          energyApplySocialMinute_(st, socStep, sem.score);
-        } else {
-          // distraction：社交計時仍可累積？Plan：distraction 唔計 recover／scrub；toxic 仍應對 focus。score=0 只累積——用 focus。
-        }
+        // 當日累計：成段 credited 時長都計入 socialMin／SF／DF（唔好淨係 focus，唔好 per-block 重計）
+        energyApplySocialMinute_(st, step, sem.score);
       } else if (energyIsWorkTier_(tier)) {
         energyApplyWorkMinute_(st, tier, step, isTrading);
       }
@@ -2751,6 +2807,7 @@
       coreDebt: coreDebt,
       sleepTotalMin: Math.round(st.sleepTotalMin * 10) / 10,
       sleepRecoveredPts: Math.round(st.sleepRecoveredPts * 10) / 10,
+      socialMin: Math.round((st.socialMin || 0) * 10) / 10,
       bounds: wakeDayBounds(atMs),
     };
   }
@@ -3654,9 +3711,17 @@
     const base = inferRulesLayerCatExcludeTransporting(ev);
     layer = base.layer;
     cat = base.cat;
-    if (layer === "Freedom") subCat = inferFreedomSubCatFromRules(ev, act, ev.remark || "");
-    else if (layer === "Health") subCat = inferHealthSubCatFromRemark(ev.remark || "");
-    else subCat = "Needs-Review";
+    if (base.subCat) {
+      subCat = base.subCat;
+    } else if (layer === "Freedom") {
+      subCat = inferFreedomSubCatFromRules(ev, act, ev.remark || "");
+    } else if (layer === "Health") {
+      subCat = inferHealthSubCatFromRemark(ev.remark || "");
+    } else if (layer === "Achievement") {
+      subCat = energyIsXavierLiPhotography_(ev) ? "Xavier Li Photography" : "Needs-Review";
+    } else {
+      subCat = "Needs-Review";
+    }
 
     return { group, layer, cat, subCat };
   }
