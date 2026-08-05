@@ -511,6 +511,7 @@ function aiEApplySegment_(st, ev, actKey, durationMin, t0) {
   var elapsed = 0;
   var left = durationMin;
   var wasHigh = false;
+  var wasFocused = false; // High 或 Medium = Focused Mode 工作
   while (left > 1e-9) {
     var s = Math.min(step, left);
     aiESyncWake_(st, t0 + elapsed * 60000, skipCap);
@@ -523,12 +524,19 @@ function aiEApplySegment_(st, ev, actKey, durationMin, t0) {
     } else if (tier === "high" || tier === "medium" || tier === "low") {
       aiEApplyWork_(st, tier, s);
       if (tier === "high") wasHigh = true;
+      if (tier === "high" || tier === "medium") wasFocused = true;
     }
     elapsed += s;
     left -= s;
   }
-  if (wasHigh) {
-    st.dayHighEndFatigues.push(Math.round(aiEFatigue_(st.dailyWorkMin) * 100) / 100);
+  // 認知節奏：Focused Mode（High／Medium Work）段落結束時記 Fatigue_Factor
+  if (wasFocused) {
+    var fatEnd = Math.round(aiEFatigue_(st.dailyWorkMin) * 100) / 100;
+    st.dayHighEndFatigues.push({
+      fatigueFactor: fatEnd,
+      workTier: wasHigh ? "high" : "medium",
+      activity: String(actKey || ""),
+    });
   }
   st.dayEndDf = st.df;
 }
@@ -559,10 +567,22 @@ function aiEnergyReplayDayMetrics_(state, fromMs, toMs, lookbackDays) {
   function flushDay_(ymd) {
     if (!ymd || byYmd[ymd]) return;
     var highEnds = st.dayHighEndFatigues || [];
-    var switchCounts = { ideal: 0, good: 0, poor: 0 };
+    var switchCounts = { ideal: 0, good: 0, poor: 0, high: 0, medium: 0 };
+    var samples = [];
     for (var i = 0; i < highEnds.length; i++) {
-      var c = aiEClassifyFatigueSwitch_(highEnds[i]);
+      var item = highEnds[i];
+      var fat = typeof item === "number" ? item : Number(item && item.fatigueFactor);
+      var wt = typeof item === "object" && item && item.workTier ? item.workTier : "high";
+      var c = aiEClassifyFatigueSwitch_(fat);
       if (switchCounts[c] != null) switchCounts[c]++;
+      if (wt === "medium") switchCounts.medium++;
+      else switchCounts.high++;
+      samples.push({
+        fatigueFactor: fat,
+        grade: c,
+        workTier: wt,
+        activity: item && item.activity ? item.activity : "",
+      });
     }
     var drops = st.dayFatigueDrops || [];
     var totalDrop = 0;
@@ -580,7 +600,7 @@ function aiEnergyReplayDayMetrics_(state, fromMs, toMs, lookbackDays) {
       dfDrained: drain,
       dayType: aiEClassifyDayType_(wakeDf, endDf, drain),
       startQuality: wakeDf == null ? "unknown" : aiEClassifyStart_(wakeDf),
-      highWorkEndFatigue: highEnds.slice(),
+      highWorkEndFatigue: samples,
       fatigueSwitchCounts: switchCounts,
       fatigueDropEvents: drops.slice(0, 20),
       fatigueTotalDrop: Math.round(totalDrop * 100) / 100,
@@ -646,7 +666,7 @@ function aiEnergyReplayDayMetrics_(state, fromMs, toMs, lookbackDays) {
         dayType: "vacation",
         startQuality: "unknown",
         highWorkEndFatigue: [],
-        fatigueSwitchCounts: { ideal: 0, good: 0, poor: 0 },
+        fatigueSwitchCounts: { ideal: 0, good: 0, poor: 0, high: 0, medium: 0 },
         fatigueDropEvents: [],
         fatigueTotalDrop: 0,
         fatigueDropEventCount: 0,

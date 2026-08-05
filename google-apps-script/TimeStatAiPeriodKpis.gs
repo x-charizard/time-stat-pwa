@@ -148,7 +148,7 @@ function aiPeriodSectionLabels_() {
   return {
     week: {
       fatigueSwitch:
-        "Fatigue switch after High Work — ≤1.4 ideal; 1.4–1.6 good; ≥1.6 poor (also report Fatigue reduction from recover/sleep)",
+        "認知節奏與 Diffused／Focused Mode 切換（強制章節）— Focused=High／Medium Work 結束 Fatigue：≤1.4 理想；1.4–1.6 良好；≥1.6 差劣；並報告 fatigueReduction",
       socialDays:
         "Social battery days — Friending+Familying+Socialing total >2h that day (≤2h does not consume; ideal <3 / week)",
       negativeRemarks72h:
@@ -170,7 +170,7 @@ function aiPeriodSectionLabels_() {
     },
     month: {
       fatigueSwitch:
-        "Fatigue switch after High Work — count ideal/good/poor; report how much Fatigue_Factor was reduced",
+        "認知節奏與 Diffused／Focused Mode 切換（強制）— ideal/good/poor 次數＋Fatigue_Factor 被減少幅度",
       overSocialWeeks: "Over-social weeks — socialDays (>2h) >3; must not be two weeks in a row",
       chaosStreak: "Chaos streak — negative-emotion days must not run ≥3 consecutive",
       sleepAnomalies: "Sleep anomalies — short/long sleep must not be two consecutive days",
@@ -1014,7 +1014,7 @@ function enrichStatsWithPeriodKpis_(state, stats) {
             : "custom_kpis";
   stats.reportLensNote =
     pType === "week" || pType === "month"
-      ? "只寫 enabledSections=true 嘅章節。週／月報必須以 processAudits（DF 日型、Start、Fatigue 切換、Social Battery）為主；trueFocus／remarks 輔助。禁止 OCD 鎖死／DMN 間隔。合格門檻用 kpis.passFail／kpis.targets。負面情緒必帶 context72h。"
+      ? "只寫 enabledSections=true 嘅章節。週／月報必須以 processAudits 為主，且必須有「## 認知節奏與 Diffused／Focused Mode 切換」（rhythmInterleaving）。禁止 OCD／DMN／Critical。合格門檻用 kpis.passFail。"
       : "只寫 enabledSections=true 嘅章節。合格門檻用 kpis.passFail／kpis.targets，唔好自創。負面情緒必帶 context72h。術語首次出現附 termGlossary 定義。";
   // extend glossary
   stats.termGlossary = stats.termGlossary || {};

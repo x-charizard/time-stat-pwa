@@ -644,7 +644,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     badStart: 0,
     terribleStart: 0,
   };
-  var fatigueSwitchTotals = { ideal: 0, good: 0, poor: 0 };
+  var fatigueSwitchTotals = { ideal: 0, good: 0, poor: 0, high: 0, medium: 0 };
   var fatigueDropSum = 0;
   var fatigueDropEvents = 0;
   var heaDays = [];
@@ -696,6 +696,8 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       fatigueSwitchTotals.ideal += eDay.fatigueSwitchCounts.ideal || 0;
       fatigueSwitchTotals.good += eDay.fatigueSwitchCounts.good || 0;
       fatigueSwitchTotals.poor += eDay.fatigueSwitchCounts.poor || 0;
+      fatigueSwitchTotals.high += eDay.fatigueSwitchCounts.high || 0;
+      fatigueSwitchTotals.medium += eDay.fatigueSwitchCounts.medium || 0;
     }
     if (eDay) {
       fatigueDropSum += Number(eDay.fatigueTotalDrop) || 0;
@@ -837,18 +839,37 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     return a.weekKey < b.weekKey ? -1 : a.weekKey > b.weekKey ? 1 : 0;
   });
 
-  // 認知節奏：改用 High Work 結束後 Fatigue_Factor（已取消 OCD 鎖死／DMN 間隔檢查）
+  // 認知節奏：Focused Work（High／Medium）結束後 Fatigue_Factor
   var fatigueSwitchSamples = [];
+  var fatigueDropSamples = [];
   for (var fe = 0; fe < (energyDays.days || []).length; fe++) {
     var fed = energyDays.days[fe];
-    if (!fed || !fed.highWorkEndFatigue) continue;
-    for (var fh = 0; fh < fed.highWorkEndFatigue.length; fh++) {
-      var ff = fed.highWorkEndFatigue[fh];
-      fatigueSwitchSamples.push({
-        ymd: fed.ymd,
-        fatigueFactor: ff,
-        grade: aiEClassifyFatigueSwitch_(ff),
-      });
+    if (!fed) continue;
+    if (fed.highWorkEndFatigue) {
+      for (var fh = 0; fh < fed.highWorkEndFatigue.length; fh++) {
+        var ff = fed.highWorkEndFatigue[fh];
+        var fatN = typeof ff === "number" ? ff : Number(ff && ff.fatigueFactor);
+        var grade = ff && ff.grade ? ff.grade : aiEClassifyFatigueSwitch_(fatN);
+        fatigueSwitchSamples.push({
+          ymd: fed.ymd,
+          fatigueFactor: fatN,
+          grade: grade,
+          workTier: (ff && ff.workTier) || "high",
+          activity: (ff && ff.activity) || "",
+        });
+      }
+    }
+    if (fed.fatigueDropEvents && fed.fatigueDropEvents.length) {
+      for (var fd = 0; fd < fed.fatigueDropEvents.length; fd++) {
+        var drop = fed.fatigueDropEvents[fd];
+        fatigueDropSamples.push({
+          ymd: fed.ymd,
+          kind: drop.kind || "recover",
+          from: drop.from,
+          to: drop.to,
+          drop: drop.drop,
+        });
+      }
     }
   }
 
@@ -910,7 +931,7 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         "放假日: DF扣減<300 且結束DF>500；Hea日: 結束DF>0 且 DF扣減<700；理想專注日: 結束DF>0 且 DF扣減≥700；Overload: 結束DF<0 或 DF扣減>1000（已取消 Critical）。Start: Good=醒時DF=上限；Moderate≥700；Bad 500<wake<700；Terrible≤500",
       reviewingAudit: "理想Review: 15–30m；缺乏Review: <15m；過度Review: >30m",
       rhythmInterleaving:
-        "認知節奏（Diffused／Focused 切換）用 High Work 結束後 Fatigue_Factor：≤1.4 理想；1.4–1.6 良好；≥1.6 差劣。另量度 Recovery／Sleep 對 Fatigue 嘅減少幅度。已取消 OCD 鎖死同 DMN 間隔檢查。",
+        "認知節奏與 Diffused／Focused Mode 切換（強制獨立章節）：Focused=High／Medium Work 結束時 Fatigue_Factor（≤1.4 理想；1.4–1.6 良好；≥1.6 差劣）；另用 fatigueReduction 量度 Sleep／Recover 令 Fatigue 減少幾多。樣本=0 都要寫明。已取消 OCD／DMN。",
       boundaryFlags:
         "高頻交易練習日: Trading相關>2h；No-Trades(Mon–Fri): Transporting或Social/Family/Friend其中一個>2h",
       socialBattery:
@@ -993,14 +1014,26 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
         .slice(0, 90),
     },
     rhythmInterleaving: {
+      titleMustUse: "認知節奏與 Diffused／Focused Mode 切換",
+      mustWriteEvenIfZero: true,
+      definition:
+        "Focused Mode = High／Medium Work 段落結束時量 Fatigue_Factor；之後入 Diffused（Recover／Social／Sleep）睇 Fatigue 有冇被減少。評級：≤1.4 理想；1.4–1.6 良好；≥1.6 差劣。",
+      highWorkKeys: ["trading", "trading practice", "programming", "timing", "financing", "webing", "systeming", "apping"],
+      mediumWorkKeys: ["reviewing", "planning", "aiing", "photoing", "obsidianing", "reading(非小說)", "notioning"],
       fatigueSwitchCounts: fatigueSwitchTotals,
       fatigueSwitchSamples: fatigueSwitchSamples.slice(0, 60),
+      fatigueReduction: {
+        totalDropSum: Math.round(fatigueDropSum * 100) / 100,
+        eventCount: fatigueDropEvents,
+        samples: fatigueDropSamples.slice(0, 40),
+        note: "量度 Fatigue_Factor 被 Sleep reset／Recover scrub 減少幾多（drop 越大越有效）",
+      },
       fatigueTotalDropSum: Math.round(fatigueDropSum * 100) / 100,
       fatigueDropEventCount: fatigueDropEvents,
       grades: {
-        ideal: "Fatigue_Factor ≤ 1.4（High Work 結束後）",
-        good: "1.4 < Fatigue_Factor < 1.6",
-        poor: "Fatigue_Factor ≥ 1.6",
+        ideal: "Fatigue_Factor ≤ 1.4（Focused／High‧Medium Work 結束後 → Diffused 切換理想）",
+        good: "1.4 < Fatigue_Factor < 1.6（切換良好）",
+        poor: "Fatigue_Factor ≥ 1.6（切換差劣）",
       },
     },
     boundaryFlags: {
@@ -1042,9 +1075,9 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
     reportLens: reportLens,
     reportLensNote:
       pType === "week"
-        ? "週報必須跟 Energy／DF checklist：用 processAudits 寫放假日／Hea／理想專注／Overload、Start 品質、High Work 後 Fatigue 切換（理想≤1.4／良好／差劣≥1.6）同 Fatigue 減少、Social Battery（>2h 先計 1 日）。禁止 OCD 鎖死／DMN 間隔／Critical 日。trueFocus／remarks 係輔助，唔好蓋過 DF 日型盤點。"
+        ? "週報必須跟 Energy／DF checklist：用 processAudits 寫放假日／Hea／理想專注／Overload、Start 品質、Social Battery（>2h 先計 1 日）。必須有獨立標題「## 認知節奏與 Diffused／Focused Mode 切換」（rhythmInterleaving：Fatigue 理想／良好／差劣＋fatigueReduction）。禁止 OCD／DMN／Critical。trueFocus／remarks 係輔助。"
         : pType === "month"
-          ? "月報重點：processAudits DF 日型／Start 品質／Fatigue 切換日數盤點。Overload／No-Trades 要點名日期。禁止 OCD 鎖死／DMN 間隔／Critical 日。"
+          ? "月報重點：processAudits DF 日型／Start／Social。必須有「## 認知節奏與 Diffused／Focused Mode 切換」。Overload／No-Trades 要點名日期。禁止 OCD／DMN／Critical。"
           : pType === "quarter"
             ? "季報重點：weeklyPerformance 每週表現對比（趨勢／起伏）。日數細節次要。"
             : "跟大綱；可用 weeklyPerformance 同 processAudits.summary。",
@@ -1060,9 +1093,10 @@ function aggregatePeriodStatsForAi_(state, periodType, periodKey) {
       理想Review: "當日 Reviewing 15–30 分鐘（高效總結）",
       缺乏Review: "當日 Reviewing < 15 分鐘（可能遺漏系統修正）",
       過度Review: "當日 Reviewing > 30 分鐘（判定為無效重複／反芻風險）",
-      FatigueSwitchIdeal: "High Work 結束後 Fatigue_Factor ≤ 1.4（Diffused／Focused 切換理想）",
-      FatigueSwitchGood: "High Work 結束後 1.4 < Fatigue_Factor < 1.6",
-      FatigueSwitchPoor: "High Work 結束後 Fatigue_Factor ≥ 1.6",
+      FatigueSwitchIdeal: "Focused（High／Medium）Work 結束後 Fatigue_Factor ≤ 1.4 → Diffused／Focused 切換理想",
+      FatigueSwitchGood: "結束後 1.4 < Fatigue_Factor < 1.6 → 切換良好",
+      FatigueSwitchPoor: "結束後 Fatigue_Factor ≥ 1.6 → 切換差劣",
+      FatigueReduction: "Sleep reset／Recover scrub 令 Fatigue_Factor 下降嘅幅度（processAudits.rhythmInterleaving.fatigueReduction）",
       trueFocus: "真正專注時間 = max(0, 活動時長 − distraction)",
       高頻交易練習日: "當日 Trading 相關活動合計 > 2 小時",
       NoTradesBanner: "週一至週五：當日 Transporting 或 Social／Family／Friend 其中一個 > 2 小時 → 交易禁令提示",
@@ -1153,7 +1187,7 @@ function aiDefaultReportOutline_() {
     "1. 執行摘要（本週 DF 日型＋Start＋Fatigue 切換一句過）",
     "2. DF 日型日數：放假日（DF扣減<300 且結束DF>500）／Hea（結束DF>0 且扣減<700）／理想專注（結束DF>0 且扣減≥700）／Overload（結束DF<0 或扣減>1000）；點名 Overload 日期（已取消 Critical）",
     "3. Start 品質：Good（醒時DF=上限）／Moderate（≥700）／Bad（500<wake<700）／Terrible（≤500）",
-    "4. 認知節奏：High Work 結束後 Fatigue_Factor（≤1.4 理想；1.4–1.6 良好；≥1.6 差劣）＋ Recovery／Sleep 令 Fatigue 減少幾多；禁止 OCD 鎖死／DMN 間隔",
+    "4. ## 認知節奏與 Diffused／Focused Mode 切換（強制；標題必須用呢句）：寫 processAudits.rhythmInterleaving——Focused（High／Medium Work）結束 Fatigue 次數（理想≤1.4／良好／差劣≥1.6）；引用 fatigueSwitchSamples；用 fatigueReduction 講 Fatigue 被減少幾多；樣本=0 都要寫「本週無 Focused Work 結束樣本」",
     "5. Social Battery：Friending＋Familying＋Socialing >2h 先計消耗 1 日（≤2h 唔扣）",
     "6. trueFocus／remarks（輔助，唔好蓋過上面）",
     "7. 下週 3 個細實驗",
@@ -1163,7 +1197,7 @@ function aiDefaultReportOutline_() {
     "2. 週期對比",
     "3. Work Load Tiers 日數（Vacation／Hea／Ideal／Overload＋Start 品質；Overload 點名日期；已取消 Critical）",
     "4. Reviewing Audit 日數（Ideal／Lack／Excessive）",
-    "5. Rhythm／Diffused Mode（High Work 後 Fatigue_Factor 切換：理想／良好／差劣；Fatigue 減少幅度；禁止 OCD／DMN）",
+    "5. ## 認知節奏與 Diffused／Focused Mode 切換（強制獨立章節）：Fatigue 切換理想／良好／差劣次數＋fatigueReduction；禁止 OCD／DMN",
     "6. Boundary Flags 日數（高頻 Trading、No-Trades 日期＋原因）",
     "7. Social Battery（>2h 先計 1 日；每週社交天數）",
     "8. 下期 3 個實驗",
@@ -1337,7 +1371,17 @@ function aiUserPrompt_(stats) {
     "\nDATA_JSON.kpis.passFail 同 kpis.targets 係合格門檻；enabledSections 決定寫邊啲章節。週／月報必須引用 processAudits.summary（workLoadTiers／rhythmInterleaving／socialBattery）。";
   var energyNote =
     type === "week" || type === "month"
-      ? "\nEnergy checklist（強制）：放假日／Hea／理想專注／Overload、Good–Terrible Start、Fatigue≤1.4／1.4–1.6／≥1.6、Social>2h 先計日；禁止 OCD 鎖死、DMN 間隔、Critical 日。"
+      ? "\nEnergy checklist（強制）：放假日／Hea／理想專注／Overload、Good–Terrible Start、Social>2h 先計日。\n必須有獨立 Markdown 標題「## 認知節奏與 Diffused／Focused Mode 切換」：用 DATA_JSON.processAudits.rhythmInterleaving（fatigueSwitchCounts／fatigueSwitchSamples／fatigueReduction／grades）；寫理想≤1.4、良好、差劣≥1.6；量度 Fatigue 被減少幾多；counts 全 0 都要寫明原因。禁止 OCD／DMN／Critical。"
+      : "";
+  var requiredNote =
+    type === "week" || type === "month"
+      ? "\nrequiredSections=" +
+        JSON.stringify([
+          "DF日型",
+          "Start品質",
+          "認知節奏與 Diffused／Focused Mode 切換",
+          "Social Battery",
+        ])
       : "";
   return (
     "請根據以下 JSON 撰寫「" +
@@ -1349,6 +1393,7 @@ function aiUserPrompt_(stats) {
     lensBlock +
     lensNote +
     energyNote +
+    requiredNote +
     cmpNote +
     glossaryNote +
     kpiNote +
