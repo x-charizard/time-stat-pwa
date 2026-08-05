@@ -9,16 +9,16 @@
  */
 
 var AI_REPORTS_SHEET = "TimeStatAIReports";
-/** 優先：普通 Flash；忙碌／唔支援 → 舊 Flash → Flash-Lite（唔再用 Pro） */
+/** 優先：普通 Flash；忙碌／唔支援 → 3.5 Flash → Flash-Lite（唔再用 Pro／已停用 2.5） */
 var GEMINI_MODEL_PRIMARY = "gemini-3.6-flash";
-var GEMINI_MODEL_FLASH_FALLBACK = "gemini-2.5-flash";
+var GEMINI_MODEL_FLASH_FALLBACK = "gemini-3.5-flash";
 var GEMINI_MODEL_FREE_LITE = "gemini-3.5-flash-lite";
 var GEMINI_MODEL = GEMINI_MODEL_PRIMARY;
 var GEMINI_TRANSIENT_RETRIES = 2;
 var GEMINI_TRANSIENT_SLEEP_MS = 1500;
-/** Lite／共享額度熔斷（epoch ms）；撞 429／RPD 後暫停打 Flash Lite */
+/** Lite 熔斷（epoch ms）：只喺 Lite 自己撞 429／RPD 時開；報告開始會清舊誤判 */
 var GEMINI_LITE_CIRCUIT_PROP = "GEMINI_LITE_CIRCUIT_UNTIL";
-var GEMINI_LITE_CIRCUIT_MS = 6 * 3600000;
+var GEMINI_LITE_CIRCUIT_MS = 30 * 60000;
 /** CacheService 上限 21600s（6h）；同一 remark 唔重複燒 semantic token */
 var GEMINI_SEMANTIC_CACHE_TTL_SEC = 21600;
 var AI_WAKE_H = 3;
@@ -1329,7 +1329,7 @@ function aiUserPrompt_(stats) {
 }
 
 /**
- * 模型鏈：3.6 Flash → 2.5 Flash → Flash-Lite（唔用 Pro）
+ * 模型鏈：3.6 Flash → 3.5 Flash → Flash-Lite（唔用 Pro；唔再用已停用 2.5）
  */
 function aiGeminiModelChain_() {
   return [
@@ -1339,18 +1339,31 @@ function aiGeminiModelChain_() {
   ];
 }
 
-function aiIsGeminiQuotaOrUnavailable_(code, text) {
+/** 模型下架／唔存在（404）— 換下一檔，唔好當無額度 */
+function aiIsGeminiModelMissing_(code, text) {
   var c = Number(code) || 0;
   var t = String(text || "").toLowerCase();
-  if (c === 429) return true;
-  if (c === 403 || c === 404) return true;
-  return /resource_exhausted|quota|rate.?limit|rpd|requests per day|exceeded your current quota|permission.?denied|not found|not supported|billing|free.?tier|not.?available|limit:\s*0/i.test(
+  if (c === 404) return true;
+  return /no longer available|not found|is not found|not supported for|unknown model|invalid model/i.test(
     t,
   );
 }
 
-/** 真正 RPM／RPD／quota（唔包括 model not found／403 權限誤判以外嘅硬限） */
+/** 可換下一檔嘅「唔可用」（含硬額度；唔再把純 404 當 quota 訊息） */
+function aiIsGeminiQuotaOrUnavailable_(code, text) {
+  if (aiIsGeminiModelMissing_(code, text)) return false;
+  var c = Number(code) || 0;
+  var t = String(text || "").toLowerCase();
+  if (c === 429) return true;
+  if (c === 403) return true;
+  return /resource_exhausted|quota|rate.?limit|rpd|requests per day|exceeded your current quota|permission.?denied|billing|free.?tier|limit:\s*0/i.test(
+    t,
+  );
+}
+
+/** 真正 RPM／RPD／quota */
 function aiIsGeminiHardQuota_(code, text) {
+  if (aiIsGeminiModelMissing_(code, text)) return false;
   var c = Number(code) || 0;
   var t = String(text || "").toLowerCase();
   if (c === 429) return true;
@@ -1361,6 +1374,7 @@ function aiIsGeminiHardQuota_(code, text) {
 
 /** 503／高負載暫時不可用（應重試或換模型，唔好當硬額度熔斷） */
 function aiIsGeminiTransient_(code, text) {
+  if (aiIsGeminiModelMissing_(code, text)) return false;
   var c = Number(code) || 0;
   var t = String(text || "").toLowerCase();
   if (c === 503 || c === 502 || c === 504) return true;
@@ -1380,6 +1394,10 @@ function aiGeminiTripLiteCircuit_(ms) {
   var until = Date.now() + (ms != null ? ms : GEMINI_LITE_CIRCUIT_MS);
   PropertiesService.getScriptProperties().setProperty(GEMINI_LITE_CIRCUIT_PROP, String(until));
   return until;
+}
+
+function aiGeminiClearLiteCircuit_() {
+  PropertiesService.getScriptProperties().deleteProperty(GEMINI_LITE_CIRCUIT_PROP);
 }
 
 /**
@@ -1475,6 +1493,14 @@ function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user
       if (outG) return { ok: true, markdown: String(outG), via: "generateContent", code: codeG };
       return { ok: false, code: codeG, body: "empty_output" };
     }
+    if (aiIsGeminiModelMissing_(codeG, textG)) {
+      return {
+        ok: false,
+        modelMissing: true,
+        code: codeG,
+        body: lastBody,
+      };
+    }
     if (aiIsGeminiHardQuota_(codeG, textG)) {
       return {
         ok: false,
@@ -1497,6 +1523,7 @@ function callGeminiOnce_(apiKey, model, thinkingLevel, temperature, system, user
   }
   return {
     ok: false,
+    modelMissing: aiIsGeminiModelMissing_(lastCode, lastBody),
     quota: aiIsGeminiQuotaOrUnavailable_(lastCode, lastBody),
     hardQuota: aiIsGeminiHardQuota_(lastCode, lastBody),
     transient: aiIsGeminiTransient_(lastCode, lastBody),
@@ -1513,34 +1540,31 @@ function aiSemanticCacheKey_(activity, remark) {
 }
 
 /**
- * Flash 優先；503／忙碌 → 換模型重試；硬額度先熔斷 Lite。
- * 主模型暫時 503 時：即使 Lite 熔斷開啟都允許打下一檔（503 ≠ RPD）。
+ * Flash 優先；503／模型下架 → 換下一檔。
+ * 每次報告清舊 Lite 熔斷（避免誤判 404 鎖死）；只喺 Lite 自己 429 先重新熔斷 30 分鐘。
  */
 function callGeminiWithMessages_(system, user) {
   var props = PropertiesService.getScriptProperties();
   var apiKey = String(props.getProperty("GEMINI_API_KEY") || "").trim();
   if (!apiKey) throw new Error("missing_GEMINI_API_KEY");
 
+  // 清走舊熔斷（先前把 404／免費額當硬限會鎖死已付費 key）
+  aiGeminiClearLiteCircuit_();
+
   var cfg = getAiPromptConfig_();
   var temperature = cfg.temperature;
   var chain = aiGeminiModelChain_();
   var last = null;
   var attempted = [];
-  var prevTransient = false;
 
   for (var i = 0; i < chain.length; i++) {
     var step = chain[i];
-    if (step.tier === "free-lite") {
-      // 硬額度熔斷時跳過 Lite；但上一檔係 503 高負載則放行
-      if (aiGeminiLiteCircuitOpen_() && !prevTransient) {
-        attempted.push(step.model + "@circuit-open");
-        break;
-      }
+    if (step.tier === "free-lite" && aiGeminiLiteCircuitOpen_()) {
+      attempted.push(step.model + "@circuit-open");
+      break;
     }
     attempted.push(step.model + "@" + step.thinkingLevel);
-    var r = callGeminiOnce_(apiKey, step.model, step.thinkingLevel, temperature, system, user, {
-      skipInteractions: true,
-    });
+    var r = callGeminiOnce_(apiKey, step.model, step.thinkingLevel, temperature, system, user, {});
     last = r;
     if (r && r.ok && r.markdown) {
       return {
@@ -1553,23 +1577,29 @@ function callGeminiWithMessages_(system, user) {
         attempted: attempted,
       };
     }
-    prevTransient = !!(r && r.transient);
-    if (r && r.hardQuota) {
+    // 只熔斷「Lite 自己」嘅硬額度；Flash 429 仍試下一檔（付費 key 唔應鎖死整條鏈）
+    if (r && r.hardQuota && step.tier === "free-lite") {
       aiGeminiTripLiteCircuit_();
-      if (step.tier === "flash" || step.tier === "flash-fallback" || step.tier === "pro") {
-        attempted.push(GEMINI_MODEL_FREE_LITE + "@skipped-after-primary-hard-quota");
-        break;
-      }
     }
-    // 503／quota／4xx／5xx → 試下一檔；其他就停
-    if (!(r && (r.quota || r.transient || r.code >= 400))) break;
+    // 模型下架／503／quota／4xx／5xx → 試下一檔
+    if (!(r && (r.modelMissing || r.quota || r.transient || r.hardQuota || r.code >= 400))) break;
   }
 
   var detail = last && last.body ? String(last.body).slice(0, 240) : "unknown";
   var code = last && last.code ? last.code : 0;
-  if (last && last.quota) {
+  if (last && last.modelMissing) {
     throw new Error(
-      "gemini_quota_exhausted: Flash 同 Flash-Lite 都無額度（RPD／quota）。通常太平洋午夜重置 ≈ 香港下午 3–4 點。attempted=" +
+      "gemini_model_unavailable: 模型鏈全部唔可用（可能下架）。attempted=" +
+        attempted.join(" → ") +
+        " http_" +
+        code +
+        ":" +
+        detail,
+    );
+  }
+  if (last && (last.quota || last.hardQuota)) {
+    throw new Error(
+      "gemini_quota_exhausted: Flash／Flash-Lite 撞 RPM／RPD（付費項目請喺 AI Studio 確認 Billing 綁定同一 API key）。attempted=" +
         attempted.join(" → ") +
         " http_" +
         code +
