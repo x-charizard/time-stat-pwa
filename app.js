@@ -15,7 +15,7 @@
 
   /** @typedef {{ id: string, name: string, aliases: string[] }} Activity */
   /** @typedef {{ projectId: string, project: string }} ProjectRegistryItem */
-  /** @typedef {{ id: string, start: string, activityId: string, remark?: string, people?: string[], place?: string, distractionSec?: number, category?: string, group?: string, layer?: string, cat?: string, subCat?: string, structureItem?: string, project?: string, projectId?: string, objective?: string, activityQuestion?: string, achievement?: string, improveLast?: string, importantElement?: string, detailsBetter?: string, action?: string, longTermGoals?: string, shortTermGoals?: string, miniGoals?: string, groupFromForm?: string, layersFromForm?: string, projectsFromForm?: string, categoriesFromForm?: string }} Event */
+  /** @typedef {{ id: string, start: string, activityId: string, remark?: string, people?: string[], place?: string, distractionSec?: number, lat?: number, lng?: number, gpsAccuracy?: number, category?: string, group?: string, layer?: string, cat?: string, subCat?: string, structureItem?: string, project?: string, projectId?: string, objective?: string, activityQuestion?: string, achievement?: string, improveLast?: string, importantElement?: string, detailsBetter?: string, action?: string, longTermGoals?: string, shortTermGoals?: string, miniGoals?: string, groupFromForm?: string, layersFromForm?: string, projectsFromForm?: string, categoriesFromForm?: string }} Event */
 
   function defaultState() {
     return {
@@ -1606,17 +1606,19 @@
     return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
   }
 
-  // —— Xavier Energy Model 7.1（SF / DF + Core Debt Protection）——
+  // —— Xavier Energy Model 7.2（SF / DF + Fatigue scrub + debt curve）——
   const ENERGY_FP_CAP = 1000;
   const ENERGY_FP_FLOOR = -500;
   const ENERGY_SF_CAP = 1000;
   const ENERGY_DF_CAP = 1000;
   const ENERGY_HIGH_BASE = 4.17;
-  const ENERGY_MED_BASE = ENERGY_HIGH_BASE * 0.2;
+  const ENERGY_MED_BASE = 2.5;
   const ENERGY_LOW_BASE = ENERGY_HIGH_BASE * 0.05;
   const ENERGY_SF_RECOVER_RATE = 5.0;
-  const ENERGY_DF_EMPTY_SF_MULT = 3.0;
+  const ENERGY_DF_EMPTY_SF_BASE_MULT = 5.0;
   const ENERGY_FATIGUE_PER_HOUR = 0.15;
+  const ENERGY_SLEEP_FATIGUE_RESET_MIN = 360;
+  const ENERGY_DF_LOW_ALERT = 100;
   const ENERGY_HIGH_KEYS = new Set([
     "trading",
     "trading practice",
@@ -1701,6 +1703,46 @@
 
   function energyFatigueFactor_(dailyWorkMin) {
     return 1 + (Math.max(0, dailyWorkMin) / 60) * ENERGY_FATIGUE_PER_HOUR;
+  }
+
+  /** Med work uses Fatigue^1.5；High／Low 用線性 Fatigue。 */
+  function energyFatigueForTier_(dailyWorkMin, tier) {
+    const linear = energyFatigueFactor_(dailyWorkMin);
+    if (tier === "medium") return Math.pow(linear, 1.5);
+    return linear;
+  }
+
+  /** DF≤0 時 SF 倍率：5 + floor(|DF|/100)。 */
+  function energySfDebtMult_(df) {
+    if (df > 1e-9) return 1;
+    return ENERGY_DF_EMPTY_SF_BASE_MULT + Math.floor(Math.abs(df) / 100);
+  }
+
+  function energyApplyWakeDfCap_(st) {
+    const startDf = st.df;
+    if (startDf < ENERGY_DF_CAP - 1e-9) {
+      if (startDf > 0) {
+        st.dfMaxCap = Math.max(
+          ENERGY_MIN_DF_CAP,
+          Math.min(ENERGY_DF_CAP, Math.round(startDf)),
+        );
+      } else {
+        st.dfMaxCap = Math.max(
+          ENERGY_MIN_DF_CAP,
+          Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + startDf)),
+        );
+      }
+    } else {
+      st.dfMaxCap = ENERGY_DF_CAP;
+    }
+    st.df = clampEnergyDf_(st.df, st.dfMaxCap);
+    st.pendingWakeDfCap = false;
+  }
+
+  function energyFocusMinutes_(ev, durationMin) {
+    const dur = Math.max(0, Number(durationMin) || 0);
+    const distractMin = Math.max(0, (Number(ev && ev.distractionSec) || 0) / 60);
+    return Math.max(0, dur - distractMin);
   }
 
   function energySleepCurveTotal_(sleepMin, power, base) {
@@ -1980,33 +2022,28 @@
       falseFire: false,
       coreDebt: false,
       lastDrainMult: 1,
+      pendingWakeDfCap: false,
+      fatigueResetThisSleep: false,
+      recoverScrubAcc: 0,
     };
   }
 
-  function energySyncWakeDay_(st, t0) {
+  /**
+   * 跨清醒日：重置 social／wakeHigh；Fatigue accumulator 唔清零（只 Sleep≥360 清）。
+   * Sleep 途中 skipDfCapShrink：用絕對 1000 累加 Sleep 回復；醒後先定日間 cap。
+   */
+  function energySyncWakeDay_(st, t0, opts) {
+    const o = opts || {};
     const wk = wakeDayKey_(t0);
     if (st.wakeKey === wk) return;
-    // 跨清醒日：Today_Start_DF = 前一日結束 DF + 已計入嘅 Sleep 回復；
-    // 若 Start < 1000 → 當日 DF Max Cap = Start（正數）或 1000+Start（負債）
     if (st.wakeKey) {
-      const startDf = st.df;
-      if (startDf < ENERGY_DF_CAP - 1e-9) {
-        if (startDf > 0) {
-          st.dfMaxCap = Math.max(
-            ENERGY_MIN_DF_CAP,
-            Math.min(ENERGY_DF_CAP, Math.round(startDf)),
-          );
-        } else {
-          st.dfMaxCap = Math.max(
-            ENERGY_MIN_DF_CAP,
-            Math.min(ENERGY_DF_CAP, Math.round(ENERGY_DF_CAP + startDf)),
-          );
-        }
-      } else {
+      if (o.skipDfCapShrink) {
         st.dfMaxCap = ENERGY_DF_CAP;
+        st.pendingWakeDfCap = true;
+        st.df = clampEnergyDf_(st.df, ENERGY_DF_CAP);
+      } else {
+        energyApplyWakeDfCap_(st);
       }
-      st.df = clampEnergyDf_(st.df, st.dfMaxCap);
-      st.dailyWorkMin = 0;
       st.socialMin = 0;
       st.wakeHighMin = 0;
       st.wakeHighTradingMin = 0;
@@ -2022,9 +2059,17 @@
     const nextTotal = energySleepCurveTotal_(st.sleepTotalMin, st.sleepPower, st.sleepBase);
     const gain = (nextTotal - prevTotal) * st.sessionRecoverMult;
     if (gain > 0) {
-      st.df = clampEnergyDf_(st.df + gain, st.dfMaxCap);
+      // Sleep：一律用絕對 1000 clamp，唔受日間 shrinking cap 卡住
+      st.df = clampEnergyDf_(st.df + gain, ENERGY_DF_CAP);
       st.sleepRecoveredPts += gain;
       st.recoveredPts += gain;
+    }
+    if (
+      st.sleepTotalMin >= ENERGY_SLEEP_FATIGUE_RESET_MIN &&
+      !st.fatigueResetThisSleep
+    ) {
+      st.dailyWorkMin = 0;
+      st.fatigueResetThisSleep = true;
     }
     if (st.df > 1e-9) {
       st.falseFire = false;
@@ -2034,14 +2079,22 @@
     }
   }
 
-  function energyApplyRecoverMinute_(st, step, segmentMin) {
+  function energyApplyRecoverMinute_(st, step, segmentFocusMin) {
     const s = Math.max(0, step);
     if (s <= 0) return;
     let rate = ENERGY_SF_RECOVER_RATE * st.sessionRecoverMult;
-    if (segmentMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
+    if (segmentFocusMin < ENERGY_RECOVER_RESET_MIN) rate *= 0.5;
     const gain = rate * s;
     st.sf = clampEnergySf_(st.sf + gain);
     st.recoveredPts += gain;
+    // Scrubbing：段 ≥15 分專注 → 每 2 分鐘 recover 減 1 accumulator
+    if (segmentFocusMin >= ENERGY_RECOVER_RESET_MIN) {
+      st.recoverScrubAcc = (st.recoverScrubAcc || 0) + s;
+      while (st.recoverScrubAcc >= 2 - 1e-9) {
+        st.recoverScrubAcc -= 2;
+        st.dailyWorkMin = Math.max(0, st.dailyWorkMin - 1);
+      }
+    }
   }
 
   /**
@@ -2112,16 +2165,16 @@
   }
 
   /**
-   * Model 7.1 Core Debt Protection：
-   * DF>0 → DF 同 SF 都以 Base×Fatigue×Sentiment 扣；
-   * DF≤0 → Med/Low 凍結 DF、SF×3；High 繼續扣 DF 入負數（floor −500）、SF×3。
+   * Model 7.2 Core Debt Protection：
+   * DF>0 → DF 同 SF 都以 Base×Fatigue(×^1.5 if Med)×Sentiment 扣；
+   * DF≤0 → Med/Low 凍結 DF；SF 倍率 = 5+floor(|DF|/100)；High 繼續扣 DF 入負數。
    */
   function energyApplyWorkMinute_(st, tier, step, isTrading) {
     const s = Math.max(0, step);
     if (s <= 0) return;
     const base = energyWorkBaseRate_(tier);
     if (base <= 0) return;
-    const fat = energyFatigueFactor_(st.dailyWorkMin);
+    const fat = energyFatigueForTier_(st.dailyWorkMin, tier);
     st.dailyWorkMin += s;
     const sent = st.sessionDrainMult;
     const normalLoss = base * fat * sent * s;
@@ -2137,30 +2190,30 @@
         st.falseFire = false;
         st.coreDebt = false;
       } else {
-        // 呢分鐘內 DF 見底
         const used = st.df;
         const remRatio = (normalLoss - used) / normalLoss;
         st.df = 0;
         const sfNormal = used;
-        const sfX3 = base * ENERGY_DF_EMPTY_SF_MULT * sent * s * remRatio;
-        st.sf = clampEnergySf_(st.sf - sfNormal - sfX3);
+        const debtMult = energySfDebtMult_(0);
+        const sfDebt = base * debtMult * sent * s * remRatio;
+        st.sf = clampEnergySf_(st.sf - sfNormal - sfDebt);
         if (isHigh) {
           st.df = clampEnergyDf_(-(normalLoss - used), st.dfMaxCap);
         }
-        drained = sfNormal + sfX3;
-        st.lastDrainMult = ENERGY_DF_EMPTY_SF_MULT * sent;
+        drained = sfNormal + sfDebt;
+        st.lastDrainMult = debtMult * sent;
         st.falseFire = true;
         st.coreDebt = true;
       }
     } else {
-      const sfX3 = base * ENERGY_DF_EMPTY_SF_MULT * sent * s;
-      st.sf = clampEnergySf_(st.sf - sfX3);
+      const debtMult = energySfDebtMult_(st.df);
+      const sfDebt = base * debtMult * sent * s;
+      st.sf = clampEnergySf_(st.sf - sfDebt);
       if (isHigh) {
         st.df = clampEnergyDf_(st.df - normalLoss, st.dfMaxCap);
       }
-      // Med / Low：DF 凍結喺而家（通常 0；唔再惡化）
-      drained = sfX3;
-      st.lastDrainMult = ENERGY_DF_EMPTY_SF_MULT * sent;
+      drained = sfDebt;
+      st.lastDrainMult = debtMult * sent;
       st.falseFire = true;
       st.coreDebt = true;
     }
@@ -2209,6 +2262,7 @@
     const stepMin = o.stepMin > 0 ? o.stepMin : 1;
     const tier = energyTierOfEvent_(ev);
     const key = activityKeyOfEv_(ev);
+    const focusMin = energyFocusMinutes_(ev, durationMin);
     const aiMin =
       tier === "recover" && key === "fooding"
         ? energyFoodingEmbeddedAiMinutes_(ev, durationMin)
@@ -2226,19 +2280,28 @@
       if (st.lastTier !== "sleep") {
         st.sleepTotalMin = 0;
         st.sleepRecoveredPts = 0;
+        st.fatigueResetThisSleep = false;
       }
+    } else if (st.lastTier === "sleep" || st.pendingWakeDfCap) {
+      // 醒咗：用訓後 DF 定當日 shrinking cap
+      energyApplyWakeDfCap_(st);
     }
 
-    energySyncWakeDay_(st, t0);
+    const wakeOpts = { skipDfCapShrink: tier === "sleep" };
+    energySyncWakeDay_(st, t0, wakeOpts);
+    if (tier === "recover" || tier === "social") {
+      st.recoverScrubAcc = 0;
+    }
     st.lastTier = tier === "recover" && key === "fooding" && aiMin > 0 ? "medium" : tier;
 
-    let foodPhase = aiMin > 0 ? "ai" : "food";
+    // Recover／正向社交：只計專注分鐘（扣 distraction）
+    const foodFocusMin = Math.max(0, focusMin - aiMin);
     let elapsed = 0;
     let left = Math.max(0, durationMin);
 
     while (left > 0.0001) {
       const step = Math.min(stepMin, left);
-      energySyncWakeDay_(st, t0 + elapsed * 60000);
+      energySyncWakeDay_(st, t0 + elapsed * 60000, wakeOpts);
       if (tier === "sleep") {
         energyApplySleepMinute_(st, step);
       } else if (tier === "recover" && key === "fooding") {
@@ -2248,19 +2311,28 @@
           energyApplyWorkMinute_(st, "medium", drainStep, false);
           st.foodingAiMin = (st.foodingAiMin || 0) + drainStep;
           if (drainStep < step) {
-            foodPhase = "food";
-            energyApplyRecoverMinute_(st, step - drainStep, Math.max(0, durationMin - aiMin));
-          } else {
-            foodPhase = "ai";
+            const recStep = step - drainStep;
+            if (elapsed + drainStep < aiMin + foodFocusMin) {
+              energyApplyRecoverMinute_(st, recStep, foodFocusMin);
+            }
           }
-        } else {
-          foodPhase = "food";
-          energyApplyRecoverMinute_(st, step, Math.max(0, durationMin - aiMin));
+        } else if (idx < aiMin + foodFocusMin) {
+          const recStep = Math.min(step, aiMin + foodFocusMin - idx);
+          energyApplyRecoverMinute_(st, recStep, foodFocusMin);
         }
+        // distraction 尾段：唔 recover、唔 scrub
       } else if (tier === "recover") {
-        energyApplyRecoverMinute_(st, step, durationMin);
+        if (elapsed < focusMin) {
+          const recStep = Math.min(step, focusMin - elapsed);
+          energyApplyRecoverMinute_(st, recStep, focusMin);
+        }
       } else if (tier === "social") {
-        energyApplySocialMinute_(st, step, sem.score);
+        if (elapsed < focusMin) {
+          const socStep = Math.min(step, focusMin - elapsed);
+          energyApplySocialMinute_(st, socStep, sem.score);
+        } else {
+          // distraction：社交計時仍可累積？Plan：distraction 唔計 recover／scrub；toxic 仍應對 focus。score=0 只累積——用 focus。
+        }
       } else if (energyIsWorkTier_(tier)) {
         energyApplyWorkMinute_(st, tier, step, isTrading);
       }
@@ -2308,6 +2380,9 @@
         }
       }
       const liveOpen = nextGlobal == null && nowMs >= row.t0 && row.t0 < atMs;
+      if (typeof o.onSegmentStart === "function") {
+        o.onSegmentStart(row.ev, st, row.t0);
+      }
       const cred = energySegmentCreditMinutes_(
         row.ev,
         row.t0,
@@ -2343,6 +2418,26 @@
       }
     }
     return st;
+  }
+
+  /** 每筆活動開始當刻（未計呢段）嘅 SF／DF，供 Report raw 用。 */
+  function buildEnergyAtEventStartsMap_() {
+    const map = Object.create(null);
+    const nowMs = Date.now();
+    replayEnergyTo_(nowMs + 1, {
+      nowMs: nowMs,
+      historyStepMin: 5,
+      sampleStepMin: 5,
+      onSegmentStart: (ev, st) => {
+        const id = String(ev && ev.id ? ev.id : "");
+        if (!id) return;
+        map[id] = {
+          sf: Math.round(st.sf * 10) / 10,
+          df: Math.round(st.df * 10) / 10,
+        };
+      },
+    });
+    return map;
   }
 
   function buildEnergySnapFromState_(st, atMs) {
@@ -2899,7 +2994,6 @@
 
     const sf = snap.sf != null ? snap.sf : snap.fp;
     const df = snap.df != null ? snap.df : 0;
-    const dfMax = snap.dfMaxCap > 0 ? snap.dfMaxCap : ENERGY_DF_CAP;
 
     function paintEnergyFill_(el, value, maxPos, isDf) {
       if (!el) return;
@@ -2919,16 +3013,16 @@
       }
       if (isDf && value < 300) el.classList.add("energy-bar-fill--falsefire");
     }
+    // 滿格永遠用 1000（唔用 shrinking dfMaxCap）
     paintEnergyFill_(sfFill, sf, ENERGY_SF_CAP, false);
-    paintEnergyFill_(dfFill, df, dfMax, true);
+    paintEnergyFill_(dfFill, df, ENERGY_DF_CAP, true);
 
     if (bars && barTip) {
       const tipHtml =
         "SF " +
         (Math.round(sf * 10) / 10) +
         " · DF " +
-        (Math.round(df * 10) / 10) +
-        (dfMax < ENERGY_DF_CAP ? " (cap " + dfMax + ")" : "");
+        (Math.round(df * 10) / 10);
       bars.setAttribute("title", tipHtml);
       bars.onmouseenter = () => {
         barTip.textContent = tipHtml;
@@ -2986,12 +3080,15 @@
     const list = sortedEventsUniqueById();
     const last = list.length ? list[list.length - 1] : null;
     const lastTier = last ? energyTierOfEvent_(last) : "none";
+    const reviewingLive =
+      last && REVIEWING_ACTIVITY_KEYS.has(activityKeyOfEv_(last));
     const needTick =
       emotionLock ||
       lastTier === "sleep" ||
       lastTier === "high" ||
       lastTier === "medium" ||
-      lastTier === "recover";
+      lastTier === "recover" ||
+      lastTier === "social";
     if (emotionLock) {
       if (!_energyLockTimer_) {
         _energyLockTimer_ = setInterval(() => {
@@ -3003,12 +3100,16 @@
       clearInterval(_energyLockTimer_);
       _energyLockTimer_ = null;
     }
+    // Reviewing 進行中：5 秒 tick，一過 30 分即刻彈通知
+    const tickMs = reviewingLive ? 5000 : 30000;
     if (needTick && !emotionLock) {
-      if (!_energyRefreshTimer_) {
+      if (!_energyRefreshTimer_ || _energyRefreshTimer_.tickMs !== tickMs) {
+        if (_energyRefreshTimer_) clearInterval(_energyRefreshTimer_);
         _energyRefreshTimer_ = setInterval(() => {
           refreshEnergyBanner_();
           refreshSoftCapBanner();
-        }, 30000);
+        }, tickMs);
+        _energyRefreshTimer_.tickMs = tickMs;
       }
     } else if (!needTick && _energyRefreshTimer_) {
       clearInterval(_energyRefreshTimer_);
@@ -3150,12 +3251,18 @@
       energy.blockHigh ||
       energy.systemCrash ||
       energy.emotionLock;
-    if (!showSoft) {
+    const dfNow = energy.df != null ? energy.df : 0;
+    const dowNow = new Date(now).getDay();
+    const dfLowWeekday = dowNow >= 1 && dowNow <= 5 && dfNow <= ENERGY_DF_LOW_ALERT;
+    if (!showSoft && !dfLowWeekday) {
       el.classList.add("hidden");
       el.classList.remove("soft-cap-banner--warn", "soft-cap-banner--danger");
       el.textContent = "";
     } else {
       const lines = [];
+      if (dfLowWeekday) {
+        lines.push("Stop working!! Save Energy for Trading!! (DF ≤ " + ENERGY_DF_LOW_ALERT + ")");
+      }
       if (energy.systemCrash) lines.push("Energy crash: Work hard-blocked");
       else if (energy.emotionLock) {
         lines.push(
@@ -3172,11 +3279,12 @@
       el.classList.remove("hidden", "soft-cap-banner--warn");
       el.classList.add("soft-cap-banner--danger");
     }
-    // Email 唔依賴 banner 顯示（例如净 Reviewing 超 30m）
+    // Cap／DF low：email 俾登入 Gmail（唔用 Web Push）
     void maybeNotifyCapEmails_();
   }
 
   let _capEmailInflight = false;
+
   async function maybeNotifyCapEmails_() {
     if (!canRemoteSync() || _capEmailInflight) return;
     const url = getRemotePostUrl();
@@ -3185,12 +3293,18 @@
     const wakeDayKey = wakeDayKey_(now);
     const reviewing = sumActivityKeysMsInWakeDay(now, REVIEWING_ACTIVITY_KEYS);
     const trading = sumTradingMsInWakeDay(now);
+    const energy = _lastEnergySnap_ || calculateEnergy(now);
+    const df = energy.df != null ? energy.df : 0;
+    const dow = new Date(now).getDay();
+    const isWeekday = dow >= 1 && dow <= 5;
     const jobs = [];
     if (reviewing.ms > REVIEWING_EMAIL_MS) {
       jobs.push({
         rule: "reviewing",
         durationMs: reviewing.ms,
         thresholdLabel: "30 minutes",
+        title: "Reviewing over 30 minutes",
+        body: "Reviewing " + Math.round(reviewing.ms / 60000) + " minutes",
       });
     }
     if (trading.ms > getTradingCapMs_()) {
@@ -3198,6 +3312,15 @@
         rule: "trading",
         durationMs: trading.ms,
         thresholdLabel: "2 hours",
+      });
+    }
+    if (isWeekday && df <= ENERGY_DF_LOW_ALERT) {
+      jobs.push({
+        rule: "dflow",
+        durationMs: 0,
+        thresholdLabel: "DF ≤ " + ENERGY_DF_LOW_ALERT,
+        title: "Stop working!! Save Energy for Trading!!",
+        body: "DF " + (Math.round(df * 10) / 10),
       });
     }
     if (!jobs.length) return;
@@ -3216,13 +3339,14 @@
                 wakeDayKey,
                 durationMs: job.durationMs,
                 thresholdLabel: job.thresholdLabel,
+                title: job.title || "",
+                body: job.body || "",
               })
             ),
             mode: "cors",
             cache: "no-store",
           });
           const j = await r.json().catch(() => ({}));
-          // Cap email 係 best-effort：token 過期／失敗唔好鎖成個 app
           if (j && j.ok === false) {
             const err = String(j.error || "");
             if (
@@ -3497,6 +3621,37 @@
     return { merged: true, ev: target };
   }
 
+  function attachGpsToEvent_(ev) {
+    if (!ev || !navigator.geolocation) return Promise.resolve(false);
+    if (ev.lat != null && ev.lng != null) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = (ok) => {
+        if (done) return;
+        done = true;
+        resolve(!!ok);
+      };
+      try {
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            try {
+              ev.lat = pos.coords.latitude;
+              ev.lng = pos.coords.longitude;
+              if (pos.coords.accuracy != null) ev.gpsAccuracy = pos.coords.accuracy;
+              finish(true);
+            } catch (e1) {
+              finish(false);
+            }
+          },
+          () => finish(false),
+          { enableHighAccuracy: false, maximumAge: 120000, timeout: 8000 },
+        );
+      } catch (e0) {
+        finish(false);
+      }
+    });
+  }
+
   function pushEventAndRefresh(ev, msg, opts) {
     const silent = opts && opts.silent;
     const formSource = opts && opts.formSource;
@@ -3523,6 +3678,16 @@
         refreshSoftCapBanner();
       })
       .catch(() => {});
+    // 每個活動記 GPS（權限拒絕就留空）
+    if (!merged.merged) {
+      attachGpsToEvent_(savedEv).then((ok) => {
+        if (ok) {
+          bumpEventsMutationGen();
+          save();
+          scheduleRenderReport();
+        }
+      });
+    }
     if (silent) {
       if (formSource === "manual") clearManualLogForm();
       else if (formSource === "quick") clearQuickLogForm();
@@ -5784,7 +5949,8 @@
     }
     html += `</select></div>`;
 
-    html += `<div class="report-records-wrap" id="reportRecordsWrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Distraction</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
+    const energyAtStart = buildEnergyAtEventStartsMap_();
+    html += `<div class="report-records-wrap" id="reportRecordsWrap"><table class="report-records-table"><thead><tr><th>Start</th><th>Duration</th><th>Distraction</th><th>SF</th><th>DF</th><th>Group</th><th>Layers</th><th>Cat</th><th>Sub Cat</th><th>Activity</th><th>Project</th><th>Place</th><th>GPS</th><th>Remark</th><th>With</th></tr></thead><tbody>`;
     for (let ri = 0; ri < sortedRaw.length; ri++) {
       const row = sortedRaw[ri];
       const ev = row.ev;
@@ -5793,6 +5959,9 @@
       const rowYmd = ymdFromLocalDate(new Date(ev.start));
       const durStr = durationMinutesLabel(ms);
       const distractStr = formatDistractionMmSs_(ev.distractionSec);
+      const en = energyAtStart[String(ev.id)] || null;
+      const sfStr = en ? String(en.sf) : "\u2014";
+      const dfStr = en ? String(en.df) : "\u2014";
       const mapped = reportCtx.inferred.get(ev.id);
       const g = mapped ? String(mapped.group || "").trim() || "\u2014" : "\u2014";
       const ly = mapped ? String(mapped.layer || "").trim() || "\u2014" : "\u2014";
@@ -5801,6 +5970,10 @@
       const act = activityDisplayName(ev.activityId);
       const pj = displayProjectForRawRecord(ev).trim() || "blank";
       const place = String(ev.place || "").trim() || "\u2014";
+      const gpsStr =
+        ev.lat != null && ev.lng != null && Number.isFinite(Number(ev.lat)) && Number.isFinite(Number(ev.lng))
+          ? Number(ev.lat).toFixed(5) + ", " + Number(ev.lng).toFixed(5)
+          : "\u2014";
       const remark = displayRemarkForRawRecord(ev).trim() || "\u2014";
       const withStr = ev.people && ev.people.length ? ev.people.join(", ") : "\u2014";
       const hide =
@@ -5808,8 +5981,11 @@
       html +=
         `<tr data-ymd="${escapeHtml(rowYmd)}"${hide}><td class="mono">${escapeHtml(startStr)}</td><td class="mono">${escapeHtml(durStr)}</td>` +
         `<td class="mono">${escapeHtml(distractStr)}</td>` +
+        `<td class="mono">${escapeHtml(sfStr)}</td><td class="mono">${escapeHtml(dfStr)}</td>` +
         `<td>${escapeHtml(g)}</td><td>${escapeHtml(ly)}</td><td>${escapeHtml(cj)}</td><td>${escapeHtml(sj)}</td>` +
-        `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td><td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
+        `<td>${escapeHtml(act)}</td><td>${escapeHtml(pj)}</td><td>${escapeHtml(place)}</td>` +
+        `<td class="mono">${escapeHtml(gpsStr)}</td>` +
+        `<td class="remark-cell">${escapeHtml(remark)}</td><td>${escapeHtml(withStr)}</td></tr>`;
     }
     html += `</tbody></table></div>`;
     return html;

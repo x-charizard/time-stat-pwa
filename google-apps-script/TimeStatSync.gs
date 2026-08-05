@@ -39,7 +39,8 @@
  * - 工作表 "TimeStatLog"：可讀表（Start／Activity／Place／Group／Remark…）— 你用嚟 check；每次 save 自動重寫
  * - 工作表 "TimeStatAIReports"：AI 報告歷史（persist=true）
  * - Script property AI_REPORT_PROMPT_CONFIG：Roles／periodConfig checklist／emotionKeywords（PWA 可改）
- * - 寫入 state 後會 scan remark 情緒字眼 → Emotion brief email（見 TimeStatAiPeriodKpis.gs）
+ * - 寫入 state 後會 scan remark 情緒字眼 → 入 Emotion queue；第二日 08:00 AI 分析（TimeStatAiPeriodKpis.gs）
+ * - Cap 提醒（Reviewing／Trading／DF low）：MailApp 寄去登入 email（notifyCap）
  */
 
 var DB_SHEET = "TimeStatDB";
@@ -88,8 +89,9 @@ function handleAiPing_() {
 }
 
 /**
- * Cap email：每個清醒日（wakeDayKey）每條規則最多寄一次去登入 email。
- * rule: "reviewing" | "trading"
+ * Cap email：寄去登入 Gmail。
+ * 每個清醒日（wakeDayKey）每條規則最多一次。
+ * rule: "reviewing" | "trading" | "dflow"
  */
 function handleNotifyCap_(body, email) {
   var to = String(email || "").trim().toLowerCase();
@@ -97,7 +99,7 @@ function handleNotifyCap_(body, email) {
   var wakeDayKey = String(body && body.wakeDayKey ? body.wakeDayKey : "").trim();
   if (!to) return authFail_("missing_email");
   if (!wakeDayKey) return authFail_("missing_wake_day");
-  if (rule !== "reviewing" && rule !== "trading") return authFail_("bad_rule");
+  if (rule !== "reviewing" && rule !== "trading" && rule !== "dflow") return authFail_("bad_rule");
 
   var props = PropertiesService.getScriptProperties();
   var dedupeKey = "capAlert:" + to + ":" + wakeDayKey + ":" + rule;
@@ -108,10 +110,18 @@ function handleNotifyCap_(body, email) {
   var durationMs = Number(body && body.durationMs != null ? body.durationMs : 0);
   var mins = isFinite(durationMs) ? Math.round(durationMs / 60000) : 0;
   var thresholdLabel = String(body && body.thresholdLabel ? body.thresholdLabel : "");
-  var subject =
-    rule === "reviewing"
-      ? "[Time Stat] Reviewing over 30 minutes (" + wakeDayKey + ")"
-      : "[Time Stat] Trading over 2 hours (" + wakeDayKey + ")";
+  var customTitle = String(body && body.title ? body.title : "").trim();
+  var customBody = String(body && body.body ? body.body : "").trim();
+  var subject;
+  if (customTitle) {
+    subject = "[Time Stat] " + customTitle + " (" + wakeDayKey + ")";
+  } else if (rule === "reviewing") {
+    subject = "[Time Stat] Reviewing over 30 minutes (" + wakeDayKey + ")";
+  } else if (rule === "dflow") {
+    subject = "[Time Stat] Stop working!! Save Energy for Trading!! (" + wakeDayKey + ")";
+  } else {
+    subject = "[Time Stat] Trading over 2 hours (" + wakeDayKey + ")";
+  }
   var text =
     "Time Stat cap alert\n\n" +
     "Wake day: " +
@@ -125,7 +135,8 @@ function handleNotifyCap_(body, email) {
     " minutes\n" +
     "Threshold: " +
     thresholdLabel +
-    "\n";
+    "\n" +
+    (customBody ? "\n" + customBody + "\n" : "");
 
   MailApp.sendEmail({
     to: to,

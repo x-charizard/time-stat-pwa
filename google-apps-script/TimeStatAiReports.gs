@@ -2028,8 +2028,11 @@ function installAiReportTriggers() {
     .nearMinute(0)
     .inTimezone("Asia/Hong_Kong")
     .create();
+  if (typeof installEmotionTriggerQueue === "function") {
+    installEmotionTriggerQueue();
+  }
   Logger.log(
-    "AI report triggers installed (daily 03:10/20/30 HKT month/quarter/year; Saturday 07:00 HKT week)."
+    "AI report triggers installed (daily 03:10/20/30 HKT month/quarter/year; Saturday 07:00 HKT week; emotion queue 08:00 HKT)."
   );
 }
 

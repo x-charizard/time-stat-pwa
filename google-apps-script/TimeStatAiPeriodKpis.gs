@@ -1015,29 +1015,107 @@ function aiPeriodOutlineFromSections_(periodType, sections, notes) {
   return lines.join("\n");
 }
 
-/** 情緒 brief：同一 wake-day 負面類最多一封 */
-function maybeSendEmotionBrief_(state, ev, keywordsHit) {
-  if (!ev || !keywordsHit || !keywordsHit.length) return { sent: false };
-  var t0 = aiParseStartMs_(ev.start);
-  if (isNaN(t0)) return { sent: false, error: "bad_start" };
-  var wakeYmd = aiYmdLocal_(aiWakeDayStartMs_(t0));
+var EMOTION_QUEUE_PROP_ = "emotionTriggerQueueV1";
+
+function readEmotionQueue_() {
   var props = PropertiesService.getScriptProperties();
-  var dedupeKey = "emotionBrief:" + wakeYmd + ":neg";
-  if (props.getProperty(dedupeKey)) {
-    return { sent: false, already: true, wakeYmd: wakeYmd };
+  var raw = props.getProperty(EMOTION_QUEUE_PROP_);
+  if (!raw) return [];
+  try {
+    var arr = JSON.parse(raw);
+    return Object.prototype.toString.call(arr) === "[object Array]" ? arr : [];
+  } catch (e) {
+    return [];
   }
-  var act = aiActivityName_(state, ev.activityId) || "(unknown)";
+}
+
+function writeEmotionQueue_(arr) {
+  PropertiesService.getScriptProperties().setProperty(
+    EMOTION_QUEUE_PROP_,
+    JSON.stringify(arr || [])
+  );
+}
+
+/**
+ * 負面情緒：唔即刻寄，入 queue；第二日 08:00 用過去 72h 打 AI 分析。
+ */
+function queueEmotionTrigger_(state, ev, keywordsHit) {
+  if (!ev || !keywordsHit || !keywordsHit.length) return { queued: false };
+  var t0 = aiParseStartMs_(ev.start);
+  if (isNaN(t0)) return { queued: false, error: "bad_start" };
+  var wakeYmd = aiYmdLocal_(aiWakeDayStartMs_(t0));
+  var eid = String(ev.id || ev.start || "");
+  var q = readEmotionQueue_();
+  for (var i = 0; i < q.length; i++) {
+    if (String(q[i].eventId) === eid && !q[i].sentAt) {
+      return { queued: false, already: true, wakeYmd: wakeYmd };
+    }
+  }
+  q.push({
+    eventId: eid,
+    startMs: t0,
+    wakeYmd: wakeYmd,
+    keywords: keywordsHit.slice(),
+    remark: String(ev.remark || "").trim(),
+    activityId: ev.activityId,
+    queuedAt: Date.now(),
+    sentAt: null,
+  });
+  // 只保留最近 60 日
+  var cut = Date.now() - 60 * 86400000;
+  q = q.filter(function (row) {
+    return Number(row.queuedAt) >= cut || !row.sentAt;
+  });
+  writeEmotionQueue_(q);
+  return { queued: true, wakeYmd: wakeYmd };
+}
+
+/** 舊名相容：改為入 queue。 */
+function maybeSendEmotionBrief_(state, ev, keywordsHit) {
+  var r = queueEmotionTrigger_(state, ev, keywordsHit);
+  return { sent: false, queued: !!(r && r.queued), wakeYmd: r && r.wakeYmd, already: r && r.already };
+}
+
+/**
+ * 08:00 HKT：處理「昨日或更早」入隊、未寄出嘅負面情緒 → AI 分析 72h 成因。
+ */
+function processEmotionTriggerQueue_() {
+  var state = typeof readStateFromSheet_ === "function" ? readStateFromSheet_() : null;
+  if (!state) return { processed: 0, error: "no_state" };
+  var todayWake = aiYmdLocal_(aiWakeDayStartMs_(Date.now()));
+  var q = readEmotionQueue_();
+  var processed = 0;
+  var errors = [];
+  for (var i = 0; i < q.length; i++) {
+    var row = q[i];
+    if (row.sentAt) continue;
+    // 第二日先處理：觸發當日 wakeYmd < 今日
+    if (!row.wakeYmd || String(row.wakeYmd) >= String(todayWake)) continue;
+    try {
+      var r = sendEmotionTriggerAiReport_(state, row);
+      if (r && r.ok) {
+        row.sentAt = Date.now();
+        processed++;
+      } else {
+        errors.push(String(r && r.error ? r.error : "send_failed"));
+      }
+    } catch (e) {
+      errors.push(String(e && e.message ? e.message : e));
+    }
+  }
+  writeEmotionQueue_(q);
+  return { processed: processed, errors: errors.slice(0, 5) };
+}
+
+function sendEmotionTriggerAiReport_(state, row) {
+  var t0 = Number(row.startMs);
+  if (isNaN(t0)) return { ok: false, error: "bad_start" };
+  var act = aiActivityName_(state, row.activityId) || "(unknown)";
   var ctx = aiContext72hBefore_(state, t0);
-  var lines = [];
-  lines.push("[Time Stat] Emotion brief — " + wakeYmd);
-  lines.push("觸發字眼：" + keywordsHit.join(", "));
-  lines.push("事件：" + aiLocalDateTimeStr_(t0) + " · " + act);
-  lines.push("Remark：" + String(ev.remark || "").trim());
-  lines.push("");
-  lines.push("過去 72 小時摘要：");
+  var ctxLines = [];
   for (var i = 0; i < ctx.length; i++) {
     var c = ctx[i];
-    lines.push(
+    ctxLines.push(
       "- " +
         c.startLocal +
         " · " +
@@ -1049,21 +1127,95 @@ function maybeSendEmotionBrief_(state, ev, keywordsHit) {
         (c.remark ? " — " + c.remark : "")
     );
   }
-  if (!ctx.length) lines.push("- （72h 內無其他事件）");
-  try {
-    mailAiReportToAllowed_("[Time Stat] Emotion brief " + wakeYmd, lines.join("\n"));
-    props.setProperty(dedupeKey, String(Date.now()));
-    return { sent: true, wakeYmd: wakeYmd };
-  } catch (e) {
-    return { sent: false, error: String(e && e.message ? e.message : e) };
+  if (!ctxLines.length) ctxLines.push("- （72h 內無其他事件）");
+
+  var system =
+    "你係時間／情緒分析助理。根據用戶活動日誌，分析負面情緒可能觸發原因。" +
+    "用繁體中文（可夾粵語口語）。假設→證據→可執行建議；唔好保證市場結果。" +
+    "只根據提供嘅 DATA，唔好虛構未出現嘅事件。";
+  var user =
+    "觸發字眼：" +
+    (row.keywords || []).join(", ") +
+    "\n事件時間：" +
+    aiLocalDateTimeStr_(t0) +
+    "\n活動：" +
+    act +
+    "\nRemark：" +
+    String(row.remark || "") +
+    "\n\n過去 72 小時活動摘要：\n" +
+    ctxLines.join("\n") +
+    "\n\n請輸出：\n1) 可能觸發原因（按可能性）\n2) 同 72h 事件嘅對應證據\n3) 今日可執行嘅細行動（少、小、慢）";
+
+  var md = "";
+  if (typeof callGeminiWithMessages_ === "function") {
+    var ai = callGeminiWithMessages_(system, user);
+    md = (ai && ai.markdown) || "";
   }
+  if (!md) {
+    // fallback：無 Gemini 都寄摘要
+    md =
+      "# 負面情緒延遲報告（無 AI）\n\n" +
+      "觸發：" +
+      (row.keywords || []).join(", ") +
+      "\n\n## 72h 摘要\n" +
+      ctxLines.join("\n");
+  }
+
+  var subject = "[Time Stat] Emotion trigger analysis — " + String(row.wakeYmd || "");
+  var body =
+    "Queued emotion trigger (next-day 08:00)\n\n" +
+    "Wake day: " +
+    row.wakeYmd +
+    "\nKeywords: " +
+    (row.keywords || []).join(", ") +
+    "\nEvent: " +
+    aiLocalDateTimeStr_(t0) +
+    " · " +
+    act +
+    "\nRemark: " +
+    String(row.remark || "") +
+    "\n\n" +
+    md;
+
+  if (typeof mailAiReportToAllowed_ === "function") {
+    mailAiReportToAllowed_(subject, body);
+  } else {
+    MailApp.sendEmail({
+      to: (allowedEmailsList_() || [])[0] || Session.getEffectiveUser().getEmail(),
+      subject: subject,
+      body: body,
+    });
+  }
+  return { ok: true };
+}
+
+/** 部署後跑一次：每日 08:00 HKT 處理情緒 queue */
+function installEmotionTriggerQueue() {
+  var triggers = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === "runScheduledEmotionTriggerQueue_") {
+      ScriptApp.deleteTrigger(triggers[i]);
+    }
+  }
+  ScriptApp.newTrigger("runScheduledEmotionTriggerQueue_")
+    .timeBased()
+    .atHour(8)
+    .nearMinute(0)
+    .everyDays(1)
+    .inTimezone("Asia/Hong_Kong")
+    .create();
+  Logger.log("Emotion trigger queue: daily 08:00 Asia/Hong_Kong");
+}
+
+function runScheduledEmotionTriggerQueue_() {
+  return processEmotionTriggerQueue_();
 }
 
 /**
- * 對比 prev／next state，掃新增或 remark 變更嘅負面情緒。
+ * 對比 prev／next state，掃新增或 remark 變更嘅負面情緒 → 入 queue（唔即刻寄）。
  */
 function scanIncomingForEmotionBriefs_(prevState, nextState) {
-  if (!nextState || !nextState.events) return { scanned: 0, sent: 0 };
+  if (!nextState || !nextState.events) return { scanned: 0, queued: 0 };
   var kw = ((getAiPromptConfig_() || {}).emotionKeywords) || aiDefaultEmotionKeywords_();
   var neg = kw.negative || [];
   var prevMap = {};
@@ -1072,7 +1224,7 @@ function scanIncomingForEmotionBriefs_(prevState, nextState) {
     var id = String(prevEv[i].id || prevEv[i].start || i);
     prevMap[id] = String(prevEv[i].remark || "");
   }
-  var sent = 0;
+  var queued = 0;
   var scanned = 0;
   var nextEv = nextState.events || [];
   for (var j = 0; j < nextEv.length; j++) {
@@ -1085,8 +1237,8 @@ function scanIncomingForEmotionBriefs_(prevState, nextState) {
     var hits = aiMatchKeywords_(rm, neg);
     if (!hits.length) continue;
     scanned++;
-    var r = maybeSendEmotionBrief_(nextState, ev, hits);
-    if (r && r.sent) sent++;
+    var r = queueEmotionTrigger_(nextState, ev, hits);
+    if (r && r.queued) queued++;
   }
-  return { scanned: scanned, sent: sent };
+  return { scanned: scanned, queued: queued, sent: 0 };
 }
