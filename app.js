@@ -1674,6 +1674,9 @@
   const ENERGY_SOCIAL_FATIGUE_DRAIN = 2.0;
   const ENERGY_SOCIAL_TOXIC_SF = ENERGY_HIGH_BASE;
   const ENERGY_SOCIAL_TOXIC_DF = 0.5;
+  /** 當日社交 >2h 後開始指數扣 DF：剛過 2h 約 base/min，之後每多 1h 倍率 ×2 */
+  const ENERGY_SOCIAL_DF_DRAIN_BASE = 0.25;
+  const ENERGY_SOCIAL_DF_DRAIN_K = Math.LN2 / 60;
   const ENERGY_SLEEP_FULL_MIN = 480; // DF：8h 曲線滿額 1000
   const ENERGY_SLEEP_SF_FULL_MIN = 180; // SF：3h 曲線滿額 1000（前期慢、後期快；>3h 曲線可>1000，池仍 cap 1000）
   const ENERGY_SLEEP_POWER_DEFAULT = 1.5;
@@ -2159,16 +2162,53 @@
   }
 
   /**
+   * 當日社交累積超過 2h 嘅分鐘：指數式扣 DF。
+   * rate(over) = BASE × e^(K×over)，over = 已超過 2h 嘅分鐘；每多 1h，速率約 ×2。
+   */
+  function energyApplySocialDfOverdrain_(st, beforeMin, stepMin) {
+    const s = Math.max(0, stepMin);
+    if (s <= 0) return;
+    let left = s;
+    let cursor = Math.max(0, beforeMin);
+    let drained = 0;
+    while (left > 1e-9) {
+      if (cursor + 1e-9 < ENERGY_SOCIAL_EFFICIENT_MIN) {
+        const skip = Math.min(left, ENERGY_SOCIAL_EFFICIENT_MIN - cursor);
+        cursor += skip;
+        left -= skip;
+        continue;
+      }
+      const over = cursor - ENERGY_SOCIAL_EFFICIENT_MIN;
+      const rate = ENERGY_SOCIAL_DF_DRAIN_BASE * Math.exp(ENERGY_SOCIAL_DF_DRAIN_K * over);
+      const slice = Math.min(left, 1);
+      const loss = rate * slice;
+      st.df = clampEnergyDf_(st.df - loss, st.dfMaxCap);
+      drained += loss;
+      cursor += slice;
+      left -= slice;
+    }
+    if (drained > 0) {
+      st.drainedPts += drained;
+      if (st.df <= 1e-9) {
+        st.falseFire = true;
+        st.coreDebt = true;
+      }
+    }
+  }
+
+  /**
    * Social Battery / Toxic Interaction（Friending／Familying／Socialing）。
    * score > 0：按當日累積社交分鐘分段恢復／疲勞；
    * score < 0：雙重懲罰（SF + DF）；
    * score = 0：當日社交計時仍累積，SF 不加減。
+   * 無論 score：當日社交 >2h 開始指數式扣 DF。
    */
   function energyApplySocialMinute_(st, step, score) {
     const s = Math.max(0, step);
     if (s <= 0) return;
     const sc = Number(score);
     const scoreN = Number.isFinite(sc) ? Math.max(-2, Math.min(2, sc)) : 0;
+    const before = st.socialMin;
 
     if (scoreN < 0) {
       const abs = Math.abs(scoreN);
@@ -2178,6 +2218,7 @@
       st.df = clampEnergyDf_(st.df - dfLoss, st.dfMaxCap);
       st.drainedPts += sfLoss + dfLoss;
       st.socialMin += s;
+      energyApplySocialDfOverdrain_(st, before, s);
       if (st.df <= 1e-9) {
         st.falseFire = true;
         st.coreDebt = true;
@@ -2186,43 +2227,41 @@
     }
 
     // 正向／中性：先按「累積前」所處區間結算，再累加社交分鐘
-    const before = st.socialMin;
     st.socialMin += s;
 
-    if (scoreN <= 0) {
-      // score = 0：唔恢復、唔消耗，只累積社交時數
-      return;
-    }
-
-    const mult = 1 + scoreN;
-    // 可能橫跨 2h／4h 邊界：按分鐘區間拆
-    let left = s;
-    let cursor = before;
-    while (left > 1e-9) {
-      let rate = 0;
-      let slice = left;
-      if (cursor < ENERGY_SOCIAL_EFFICIENT_MIN) {
-        rate = ENERGY_SOCIAL_EFFICIENT_RATE * mult;
-        slice = Math.min(left, ENERGY_SOCIAL_EFFICIENT_MIN - cursor);
-      } else if (cursor < ENERGY_SOCIAL_SATURATED_MIN) {
-        rate = ENERGY_SOCIAL_SATURATED_RATE * mult;
-        slice = Math.min(left, ENERGY_SOCIAL_SATURATED_MIN - cursor);
-      } else {
-        rate = -ENERGY_SOCIAL_FATIGUE_DRAIN;
-        slice = left;
+    if (scoreN > 0) {
+      const mult = 1 + scoreN;
+      // 可能橫跨 2h／4h 邊界：按分鐘區間拆（SF）
+      let left = s;
+      let cursor = before;
+      while (left > 1e-9) {
+        let rate = 0;
+        let slice = left;
+        if (cursor < ENERGY_SOCIAL_EFFICIENT_MIN) {
+          rate = ENERGY_SOCIAL_EFFICIENT_RATE * mult;
+          slice = Math.min(left, ENERGY_SOCIAL_EFFICIENT_MIN - cursor);
+        } else if (cursor < ENERGY_SOCIAL_SATURATED_MIN) {
+          rate = ENERGY_SOCIAL_SATURATED_RATE * mult;
+          slice = Math.min(left, ENERGY_SOCIAL_SATURATED_MIN - cursor);
+        } else {
+          rate = -ENERGY_SOCIAL_FATIGUE_DRAIN;
+          slice = left;
+        }
+        if (rate > 0) {
+          const gain = rate * slice;
+          st.sf = clampEnergySf_(st.sf + gain);
+          st.recoveredPts += gain;
+        } else if (rate < 0) {
+          const loss = -rate * slice;
+          st.sf = clampEnergySf_(st.sf - loss);
+          st.drainedPts += loss;
+        }
+        cursor += slice;
+        left -= slice;
       }
-      if (rate > 0) {
-        const gain = rate * slice;
-        st.sf = clampEnergySf_(st.sf + gain);
-        st.recoveredPts += gain;
-      } else if (rate < 0) {
-        const loss = -rate * slice;
-        st.sf = clampEnergySf_(st.sf - loss);
-        st.drainedPts += loss;
-      }
-      cursor += slice;
-      left -= slice;
     }
+    // score = 0：唔動 SF；>0 已處理 SF。DF：>2h 指數扣
+    energyApplySocialDfOverdrain_(st, before, s);
   }
 
   /**
