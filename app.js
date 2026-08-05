@@ -1674,7 +1674,8 @@
   const ENERGY_SOCIAL_FATIGUE_DRAIN = 2.0;
   const ENERGY_SOCIAL_TOXIC_SF = ENERGY_HIGH_BASE;
   const ENERGY_SOCIAL_TOXIC_DF = 0.5;
-  const ENERGY_SLEEP_FULL_MIN = 480;
+  const ENERGY_SLEEP_FULL_MIN = 480; // DF：8h 曲線滿額 1000
+  const ENERGY_SLEEP_SF_FULL_MIN = 180; // SF：3h 曲線滿額 1000（前期慢、後期快；>3h 曲線可>1000，池仍 cap 1000）
   const ENERGY_SLEEP_POWER_DEFAULT = 1.5;
   const ENERGY_SLEEP_POWER_FRAGMENTED = 1.1;
   const ENERGY_RECOVER_RESET_MIN = 15;
@@ -1745,12 +1746,14 @@
     return Math.max(0, dur - distractMin);
   }
 
-  function energySleepCurveTotal_(sleepMin, power, base) {
+  function energySleepCurveTotal_(sleepMin, power, base, fullMin, cap) {
     const m = Math.max(0, sleepMin);
     if (m <= 0) return 0;
     const p = power != null ? power : ENERGY_SLEEP_POWER_DEFAULT;
     const b = base != null ? base : 1;
-    return Math.pow(m / ENERGY_SLEEP_FULL_MIN, p) * ENERGY_DF_CAP * b;
+    const full = fullMin != null && fullMin > 0 ? fullMin : ENERGY_SLEEP_FULL_MIN;
+    const c = cap != null ? cap : ENERGY_DF_CAP;
+    return Math.pow(m / full, p) * c * b;
   }
 
   function energySentimentDrainMult_(score) {
@@ -2091,15 +2094,36 @@
   function energyApplySleepMinute_(st, step) {
     const s = Math.max(0, step);
     if (s <= 0) return;
-    const prevTotal = energySleepCurveTotal_(st.sleepTotalMin, st.sleepPower, st.sleepBase);
+    const prevMin = st.sleepTotalMin;
+    const prevDf = energySleepCurveTotal_(prevMin, st.sleepPower, st.sleepBase);
+    const prevSf = energySleepCurveTotal_(
+      prevMin,
+      st.sleepPower,
+      st.sleepBase,
+      ENERGY_SLEEP_SF_FULL_MIN,
+      ENERGY_SF_CAP,
+    );
     st.sleepTotalMin += s;
-    const nextTotal = energySleepCurveTotal_(st.sleepTotalMin, st.sleepPower, st.sleepBase);
-    const gain = (nextTotal - prevTotal) * st.sessionRecoverMult;
-    if (gain > 0) {
-      // Sleep：一律用絕對 1000 clamp，唔受日間 shrinking cap 卡住
-      st.df = clampEnergyDf_(st.df + gain, ENERGY_DF_CAP);
-      st.sleepRecoveredPts += gain;
-      st.recoveredPts += gain;
+    const nextDf = energySleepCurveTotal_(st.sleepTotalMin, st.sleepPower, st.sleepBase);
+    const nextSf = energySleepCurveTotal_(
+      st.sleepTotalMin,
+      st.sleepPower,
+      st.sleepBase,
+      ENERGY_SLEEP_SF_FULL_MIN,
+      ENERGY_SF_CAP,
+    );
+    const dfGain = (nextDf - prevDf) * st.sessionRecoverMult;
+    const sfGain = (nextSf - prevSf) * st.sessionRecoverMult;
+    if (dfGain > 0) {
+      // Sleep DF：絕對 1000 clamp，唔受日間 shrinking cap 卡住
+      st.df = clampEnergyDf_(st.df + dfGain, ENERGY_DF_CAP);
+      st.sleepRecoveredPts += dfGain;
+      st.recoveredPts += dfGain;
+    }
+    if (sfGain > 0) {
+      // Sleep SF：3h 曲線滿額 1000；>3h 曲線可再高，但 SF 池仍 cap 1000
+      st.sf = clampEnergySf_(st.sf + sfGain);
+      st.recoveredPts += sfGain;
     }
     if (
       st.sleepTotalMin >= ENERGY_SLEEP_FATIGUE_RESET_MIN &&

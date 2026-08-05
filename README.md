@@ -72,7 +72,7 @@ Project settings → Script properties：
 
 ## Energy Model 7.2／通知（摘要）
 
-- DF bar 以 **1000** 做滿格；Sleep 回復 = 訓前 DF + 睡眠曲線（瞓覺途中唔收窄 cap）。
+- DF bar 以 **1000** 做滿格；Sleep：**DF** 8h 曲線滿額；**SF** 3h 曲線滿額（前期慢後期快；>3h 曲線可>1000，SF 池仍 cap 1000）；瞓覺途中唔收窄 DF cap。
 - Fatigue accumulator：**唔**跟 03:00 清零；單段 Sleep **≥ 360 分** 先重置；Recovery ≥15 分可 scrub。
 - 負面情緒 keyword：**唔即刻**寄 AI；入隊後 **第二日 08:00 HKT** 用過去 72h 分析（跑 `installEmotionTriggerQueue()` 或 `installAiReportTriggers()`）。
 - **提醒用 email**（寄去你登入嘅 Gmail；每個清醒日每條規則最多一封）：
